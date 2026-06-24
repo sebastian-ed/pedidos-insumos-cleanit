@@ -1,0 +1,578 @@
+[
+  {
+    "name": "Alvarez Thomas 550- Colegiales",
+    "address": "Alvarez Thomas 550",
+    "description": "Lunes a viernes de 13 a 17 hs. Sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Colegiales",
+    "supervisor": "José"
+  },
+  {
+    "name": "America Tampas- P.Industrial Pilar",
+    "address": "Parque industrial, C. 9 1761, B1629 Pilar",
+    "description": "Lunes a viernes de 8 a 16 hs. Sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Pilar",
+    "supervisor": "José"
+  },
+  {
+    "name": "Av De los Incas 3502",
+    "address": "Av De los Incas 3502",
+    "description": "Lunes, miércoles y viernes de 13 a 17 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Belgrano",
+    "supervisor": "José"
+  },
+  {
+    "name": "Av MITRE 5834 - Caseros",
+    "address": "Av MITRE 5834 - Caseros",
+    "description": "Lunes, miércoles y viernes de 7:30 a 11:30 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Caseros",
+    "supervisor": "Andres"
+  },
+  {
+    "name": "Av. San Juan 440",
+    "address": "Av. San Juan 440",
+    "description": "Martes, jueves y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "San Telmo",
+    "supervisor": null
+  },
+  {
+    "name": "Callao 441 - Centro",
+    "address": "Callao 441 - Centro",
+    "description": "Lunes a viernes de 13 a 17 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Centro",
+    "supervisor": "Leo"
+  },
+  {
+    "name": "Ceretti 2161 - Villa Urquiza",
+    "address": "Ceretti 2161",
+    "description": "Lunes a sábados de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Urquiza",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Céspedes 2524, CABA",
+    "address": "Céspedes 2524 - Adm Holmberg/Cespedes - Fernando",
+    "description": "Lunes a viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Colegiales",
+    "supervisor": "José"
+  },
+  {
+    "name": "cons Cabildo 2659",
+    "address": "Cabildo 2659",
+    "description": "Lunes a viernes de 13 a 16 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Belgrano",
+    "supervisor": "José"
+  },
+  {
+    "name": "Cons. Agrelo 3641- Boedo",
+    "address": "Agrelo 3641",
+    "description": "Lunes, miércoles y viernes de 11:30 a 13:30 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Boedo",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Araujo 61-Villa Luro",
+    "address": "Araujo 61",
+    "description": "Lunes, miércoles y viernes de 9 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Luro",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Av Directorio 1821",
+    "address": "Av Directorio 1821",
+    "description": "Viernes de 12:30 a 15:30 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Flores",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Av Los Incas 3501",
+    "address": "Av Los Incas 3501",
+    "description": "Lunes a sábados de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Belgrano R",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Beiro 4545- Villa Devoto",
+    "address": "Avenida Beiro 4545",
+    "description": "Lunes a sábados de 8:30 a 12:30 hs.",
+    "notes": "Lunes a sábados 8:30 a 12:30",
+    "active": true,
+    "zone": "Villa Devoto",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Cabildo 2737- Nuñez",
+    "address": "Cabildo 2737",
+    "description": "Lunes a viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Nuñez",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Cachimayo 748- Parque Chacabuco",
+    "address": "Cachimayo 748",
+    "description": "Lunes a sábados de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Parque Chacabuco",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Catamarca 586- San Cristóbal",
+    "address": "Catamarca 586",
+    "description": "Lunes, miércoles y viernes de 13 a 16 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "San Cristóbal",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Cnel Diaz 1450",
+    "address": "Coronel Diaz 1450",
+    "description": "Lunes, miércoles y viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Recoleta/Palermo",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Darwin 524- Villa Crespo",
+    "address": "Darwin 524",
+    "description": "Martes, jueves y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Crespo",
+    "supervisor": "José"
+  },
+  {
+    "name": "Cons. Gualeguaychú 1938- Villa Devoto",
+    "address": "Gualeguaychú 1938",
+    "description": "Martes, jueves y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Devoto",
+    "supervisor": "Leo"
+  },
+  {
+    "name": "Cons. Gualeguaychú 3809/11 caba",
+    "address": "Gualeguaychú 3809",
+    "description": "Martes y jueves de 8 a 11 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Devoto",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Guardia Vieja 3919-Villa Crespo",
+    "address": "Guardia Vieja 3919",
+    "description": "Martes y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Crespo",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Hipólito Yrigoyen 3132- Once",
+    "address": "Hipólito Yrigoyen 3132",
+    "description": "Martes y jueves de 13 a 17 hs. Sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Once",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Jose Hernández 2678- Belgrano",
+    "address": "Jose Hernández 2678",
+    "description": "Lunes y viernes de 8 a 11 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Belgrano",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. José Marmol 2134 CABA",
+    "address": "José Marmol 2134",
+    "description": "Lunes, miércoles y viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Boedo",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Juian Álvarez 1340- Villa Crespo",
+    "address": "Julian Álvarez 1340",
+    "description": "Martes y jueves de 7 a 12 hs. Sábado de 7 a 13 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Crespo",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Juncal 2899",
+    "address": "Juncal 2899",
+    "description": "Lunes a sábados de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Palermo",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Lascano 4032",
+    "address": "Lascano 4032",
+    "description": "Miércoles y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Monte Castro",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Lezica 4475",
+    "address": "Lezica 4475",
+    "description": "Lunes a sábados de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Almagro",
+    "supervisor": "Leonardo"
+  },
+  {
+    "name": "Cons. Luis M Campos 1027",
+    "address": "Luis M Campos 1027",
+    "description": "Lunes a viernes de 8 a 14 hs. Sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Palermo",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Manzanares 1753",
+    "address": "Manzanares 1753",
+    "description": "Martes, jueves y sábado de 13 a 17 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Nuñez",
+    "supervisor": "José"
+  },
+  {
+    "name": "Cons. Migueletes 1762",
+    "address": "Migueletes 1762",
+    "description": "Martes, jueves y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Belgrano",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. MIRABILA Humboldt 2045 CABA",
+    "address": "Humboldt 2045",
+    "description": "Sin cobertura activa informada en el archivo.",
+    "notes": null,
+    "active": true,
+    "zone": "Palermo",
+    "supervisor": "Jose/Leo"
+  },
+  {
+    "name": "Cons. Moldes 1648- Nuñez",
+    "address": "Moldes 1648",
+    "description": "Lunes, miércoles y viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Nuñez",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Olagüer y Feliu 2970- Colegiales",
+    "address": "Olagüer y Feliu 2970",
+    "description": "Lunes a sábados de 13 a 16 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Colegiales",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Plaza 3547- Coghlan",
+    "address": "Plaza 3547",
+    "description": "Martes y viernes de 16 a 19 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Coghlan",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons. Puan 256/60- Caballito",
+    "address": "Puan 256/60",
+    "description": "Martes, jueves y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Caballito",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Rivadavia 9037-Floresta",
+    "address": "Rivadavia 9037",
+    "description": "Martes, jueves y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Floresta",
+    "supervisor": null
+  },
+  {
+    "name": "Cons. Roosevelt 1926- Belgrano",
+    "address": "Roosevelt 1926",
+    "description": "Lunes, miércoles y viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Belgrano",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons.Aristobulo del Valle 1301-La Boca.",
+    "address": "Aristobulo del Valle 1301",
+    "description": "Lunes a viernes de 8 a 16 hs. Sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "La Boca",
+    "supervisor": null
+  },
+  {
+    "name": "Cons.Ciudad de la Paz 575",
+    "address": "Ciudad de la Paz 575",
+    "description": "Martes, jueves y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Palermo",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons.Palacio Cabrera 5356- Palermo",
+    "address": "Cabrera 5356",
+    "description": "Lunes a viernes de 8 a 14 hs. Sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Palermo",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Cons.Thomas Le Bretón 5153 - Villa Urquiza",
+    "address": "Le Bretón 5153",
+    "description": "Martes, jueves y sábado de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Urquiza",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Florentino Ameghino 680",
+    "address": "Florentino Ameghino 680",
+    "description": "Lunes, miércoles y viernes de 12 a 16 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Parque Avellaneda",
+    "supervisor": null
+  },
+  {
+    "name": "Gym Formosa 168- Parque Chacabuco",
+    "address": "Formosa 168",
+    "description": "Martes y jueves de 13 a 17 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Parque Chacabuco",
+    "supervisor": null
+  },
+  {
+    "name": "Holmberg 4150 - Saavedra",
+    "address": "Holmberg 4150",
+    "description": "Miércoles y viernes de 13 a 17 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Saavedra",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "ISEM SA",
+    "address": "Emilio Mitre 1970",
+    "description": "Lunes, miércoles y jueves de 12:30 a 16:30 hs.",
+    "notes": "DE BAJA",
+    "active": true,
+    "zone": "Parque Chacabuco",
+    "supervisor": null
+  },
+  {
+    "name": "Laboratorio Eurolab -Juan de Garay 3831-Boedo",
+    "address": "Juan de Garay 3831",
+    "description": "Lunes a viernes de 8 a 11 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Boedo",
+    "supervisor": null
+  },
+  {
+    "name": "Ludoplast Caseros LEONISMO ARGENTINO 3264 -CASEROS",
+    "address": "LEONISMO ARGENTINO 3264",
+    "description": "Lunes, miércoles y viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "CASEROS",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Martinez castro 263",
+    "address": "Martinez castro 263",
+    "description": "Lunes y miércoles de 9 a 12 hs. Viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Velez Sarfield",
+    "supervisor": null
+  },
+  {
+    "name": "Molycentro - A- Lamas 2135- V- Crespo",
+    "address": "Andres Lamas 2135",
+    "description": "Lunes, miércoles y viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Crespo",
+    "supervisor": null
+  },
+  {
+    "name": "Molysil Avellaneda - Catamarca 1856",
+    "address": "Catamarca 1856",
+    "description": "Martes y jueves de 12 a 17 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Avellaneda",
+    "supervisor": null
+  },
+  {
+    "name": "Molysil- Olagüer y Feliü 3398 Colegiales",
+    "address": "Olagüer y Feliü 3398",
+    "description": "Martes y jueves de 7:30 a 11:30 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Colegiales",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Monteagudo 121 Ramos Mejia",
+    "address": "Monteagudo 121 Ramos Mejia - Adrián Palumbo",
+    "description": "Lunes a sábados de 13 a 19 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Ramos Mejía",
+    "supervisor": "José"
+  },
+  {
+    "name": "mundo chipa",
+    "address": "Estrada 1859, villa maipú",
+    "description": "Lunes a viernes de 13 a 17 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "villa maipú",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Oficina Av Cordoba 1309",
+    "address": "Av Cordoba 1309",
+    "description": "Lunes, miércoles y viernes de 14 a 18 hs. Martes y jueves de 16 a 18 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Retiro",
+    "supervisor": null
+  },
+  {
+    "name": "Oficina Naon Casa Central",
+    "address": "Naon 3475",
+    "description": "Lunes, miércoles y viernes de 12:30 a 16:30 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Coghlan",
+    "supervisor": "Jose/Leo"
+  },
+  {
+    "name": "Pergamino 160",
+    "address": "Pergamino 160",
+    "description": "Lunes, miércoles y viernes de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Floresta",
+    "supervisor": null
+  },
+  {
+    "name": "Peru 1566",
+    "address": "Peru 1566",
+    "description": "Sin cobertura activa informada en el archivo.",
+    "notes": "BAJA A PARTIR DEL 5/6",
+    "active": true,
+    "zone": "San Telmo",
+    "supervisor": null
+  },
+  {
+    "name": "Serv Warnes 1243 caba",
+    "address": "Warnes 1243",
+    "description": "Lunes, miércoles y viernes de 8 a 13 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Crespo",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "sp . Vte López. Libertad 1650",
+    "address": "Libertad 1650",
+    "description": "Lunes a viernes de 7 a 15 hs. Sábado de 9 a 13 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Vicente Lopez",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "SP Const - Pueyrredón",
+    "address": "Av. de los Constituyentes 6020",
+    "description": "Lunes a viernes de 9 a 13 y 17 a 22 hs. Sábado de 10 a 14 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Villa Pueyrredón",
+    "supervisor": "Jose"
+  },
+  {
+    "name": "Spital Hnos",
+    "address": "COLECTORA, Acceso Sudeste KM. 12, Los Ciruelos 3748, B1874 Sarandí",
+    "description": "Lunes, martes, miércoles y viernes de 9 a 14 hs. Jueves de 9 a 13 hs.",
+    "notes": "BAJA",
+    "active": true,
+    "zone": "Sarandí",
+    "supervisor": "Leonardo"
+  },
+  {
+    "name": "Virrey Olaguer y Feliu 2453 CABA",
+    "address": "Virrey Olaguer y Feliu 2453 - Kestelboim",
+    "description": "Lunes a sábados de 8 a 12 hs.",
+    "notes": null,
+    "active": true,
+    "zone": "Colegiales",
+    "supervisor": "José"
+  }
+]

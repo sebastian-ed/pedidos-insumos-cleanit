@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d6efd">
+  <title>Pedidos Clean It</title>
+  <meta name="description" content="Pedidos visuales de insumos por servicio para Clean It.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="loadingScreen" class="loading-screen">
+    <div class="brand-mark mb-3">CI</div>
+    <div class="spinner-border text-primary" role="status" aria-label="Cargando"></div>
+    <p class="mt-3 mb-0 text-secondary fw-bold">Cargando pedidos...</p>
+  </div>
+
+  <main id="authView" class="auth-view d-none">
+    <section class="auth-panel">
+      <div class="auth-copy">
+        <span class="eyebrow">Clean It · Operaciones</span>
+        <h1>Pedidos claros, sin cadenas de WhatsApp.</h1>
+        <p>El operario selecciona visualmente los insumos que necesita. Administración recibe un pedido completo, trazable y listo para preparar.</p>
+        <div class="auth-feature"><i class="bi bi-building-check"></i><span>Acceso público por servicio, sin crear una cuenta</span></div>
+        <div class="auth-feature"><i class="bi bi-grid-3x3-gap"></i><span>Catálogo visual con cantidades por insumo</span></div>
+        <div class="auth-feature"><i class="bi bi-broadcast-pin"></i><span>Seguimiento en vivo para administración</span></div>
+      </div>
+
+      <div class="auth-card shadow-lg">
+        <div class="d-flex align-items-center gap-3 mb-4">
+          <div class="brand-mark brand-mark-sm">CI</div>
+          <div><div class="fw-black fs-4">Pedidos Clean It</div><div class="text-secondary small">Solicitud pública de insumos</div></div>
+        </div>
+        <div id="setupWarning" class="alert alert-warning d-none" role="alert">
+          <strong>Falta configurar Supabase.</strong>
+          <div class="small mt-1">Editá <code>config.js</code> con la URL y la clave pública anon del nuevo proyecto.</div>
+        </div>
+        <form id="publicEntryForm" novalidate>
+          <label for="publicServiceSelect" class="form-label">Servicio o consorcio</label>
+          <select id="publicServiceSelect" class="form-select form-select-lg mb-3" required>
+            <option value="">Cargando servicios...</option>
+          </select>
+          <label for="publicReporterName" class="form-label">Tu nombre</label>
+          <input id="publicReporterName" class="form-control mb-3" maxlength="100" autocomplete="name" placeholder="Nombre del operario" required>
+          <div id="publicEntryError" class="alert alert-danger py-2 d-none"></div>
+          <button id="publicStartButton" class="btn btn-primary btn-lg w-100 fw-bold" type="submit"><i class="bi bi-cart-plus me-2"></i>Armar pedido</button>
+        </form>
+        <div class="public-admin-link">
+          <span>Uso administrativo</span>
+          <button id="openAdminLoginButton" class="btn btn-link fw-bold p-0" type="button">Ingresar como administrador</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="appShell" class="app-shell d-none">
+    <header class="topbar sticky-top">
+      <div class="container-fluid px-3 px-lg-4 d-flex align-items-center justify-content-between gap-3">
+        <div class="d-flex align-items-center gap-3 min-w-0">
+          <button id="adminMenuButton" class="btn btn-light btn-icon d-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#adminSidebarMobile" aria-label="Abrir menú"><i class="bi bi-list"></i></button>
+          <div class="brand-mark brand-mark-nav">CI</div>
+          <div class="min-w-0"><div class="fw-black text-truncate" id="appTitle">Pedidos Clean It</div><div class="small text-secondary text-truncate" id="appSubtitle">Gestión de insumos</div></div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <button id="switchServiceButton" class="btn btn-outline-primary d-none" type="button"><i class="bi bi-buildings me-sm-2"></i><span class="d-none d-sm-inline">Cambiar servicio</span></button>
+          <button id="headerAdminLoginButton" class="btn btn-outline-secondary d-none" type="button"><i class="bi bi-shield-lock me-sm-2"></i><span class="d-none d-sm-inline">Administración</span></button>
+          <div id="headerUserChip" class="user-chip d-none d-sm-flex"><i class="bi bi-person-circle"></i><div class="min-w-0"><div id="headerUserName" class="small fw-bold text-truncate">Usuario</div><div id="headerUserRole" class="micro text-secondary text-truncate">Carga pública</div></div></div>
+          <button id="logoutButton" class="btn btn-outline-secondary btn-icon d-none" type="button" title="Cerrar sesión"><i class="bi bi-box-arrow-right"></i></button>
+        </div>
+      </div>
+    </header>
+
+    <section id="operatorView" class="d-none">
+      <div class="container py-4 pb-6">
+        <div id="operatorNoService" class="empty-state d-none"><i class="bi bi-building-exclamation"></i><h2>No hay un servicio seleccionado</h2><p>Volvé al selector y elegí el servicio para el que necesitás pedir materiales.</p><button id="emptySwitchServiceButton" class="btn btn-primary">Elegir servicio</button></div>
+        <div id="operatorContent">
+          <div class="hero-card mb-4">
+            <div class="min-w-0 flex-grow-1">
+              <span class="eyebrow text-white-50">Pedido actual</span>
+              <h1 id="operatorServiceName" class="mb-1">Servicio</h1>
+              <p id="operatorServiceAddress" class="mb-0 text-white-50">Dirección</p>
+              <div id="operatorServiceDescription" class="service-frequency-card d-none"><i class="bi bi-calendar-week"></i><span></span></div>
+            </div>
+            <div class="hero-meta"><div class="hero-meta-label">Responsable</div><div id="operatorReporter" class="hero-meta-value">Operario</div></div>
+          </div>
+
+          <div class="row g-3 mb-4">
+            <div class="col-6 col-lg-3"><div class="metric-card"><span class="metric-icon bg-primary-subtle text-primary"><i class="bi bi-box-seam"></i></span><div><div id="operatorSelectedCount" class="metric-value">0</div><div class="metric-label">Insumos</div></div></div></div>
+            <div class="col-6 col-lg-3"><div class="metric-card"><span class="metric-icon bg-success-subtle text-success"><i class="bi bi-123"></i></span><div><div id="operatorUnitsCount" class="metric-value">0</div><div class="metric-label">Unidades</div></div></div></div>
+            <div class="col-6 col-lg-3"><div class="metric-card"><span class="metric-icon bg-warning-subtle text-warning-emphasis"><i class="bi bi-plus-circle"></i></span><div><div id="operatorCustomCount" class="metric-value">0</div><div class="metric-label">No listados</div></div></div></div>
+            <div class="col-6 col-lg-3"><div class="metric-card"><span class="metric-icon bg-danger-subtle text-danger"><i class="bi bi-lightning-charge"></i></span><div><div id="operatorPriorityLabel" class="metric-value metric-value-text">Normal</div><div class="metric-label">Prioridad</div></div></div></div>
+          </div>
+
+          <div class="section-card mb-3">
+            <div class="row g-3 align-items-end">
+              <div class="col-lg-3">
+                <label for="operatorPriority" class="form-label">Prioridad</label>
+                <select id="operatorPriority" class="form-select">
+                  <option value="normal">Normal</option>
+                  <option value="urgente">Urgente</option>
+                </select>
+              </div>
+              <div class="col-lg-9">
+                <label for="operatorNotes" class="form-label">Observación general</label>
+                <input id="operatorNotes" class="form-control" maxlength="500" placeholder="Ej.: entregar antes del viernes, dejar en seguridad...">
+              </div>
+            </div>
+          </div>
+
+          <div class="section-card mb-3">
+            <div class="d-flex flex-column flex-lg-row gap-3 justify-content-between align-items-lg-center">
+              <div><h2 class="section-title mb-1">Seleccioná los insumos</h2><p class="text-secondary mb-0">Usá los botones + y − para indicar exactamente cuánto necesitás.</p></div>
+              <div class="operator-actions">
+                <button id="addExtraMaterialButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-plus-circle me-2"></i>Agregar insumo no listado</button>
+                <div class="inventory-filters"><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="operatorSearch" class="form-control" type="search" placeholder="Buscar insumo"></div><select id="operatorCategory" class="form-select" aria-label="Filtrar categoría"></select></div>
+              </div>
+            </div>
+          </div>
+          <div id="operatorInventoryGrid" class="inventory-grid" data-context="operator"></div>
+        </div>
+      </div>
+      <div id="operatorSaveBar" class="save-bar"><div class="container d-flex align-items-center justify-content-between gap-3"><div class="d-none d-md-block"><strong id="operatorDraftCount">0 insumos seleccionados</strong><div class="small text-secondary">El pedido quedará registrado con fecha, hora y responsable.</div></div><button id="operatorSaveButton" class="btn btn-primary btn-lg fw-bold flex-grow-1 flex-md-grow-0" type="button"><i class="bi bi-send-check me-2"></i>Enviar pedido</button></div></div>
+    </section>
+
+    <section id="adminView" class="d-none admin-layout">
+      <aside class="admin-sidebar d-none d-lg-flex">
+        <nav class="admin-nav" aria-label="Administración">
+          <button class="admin-nav-item active" data-admin-tab="dashboard"><i class="bi bi-grid-1x2"></i><span>Panel general</span></button>
+          <button class="admin-nav-item" data-admin-tab="orders"><i class="bi bi-clipboard-check"></i><span>Pedidos</span></button>
+          <button class="admin-nav-item" data-admin-tab="materials"><i class="bi bi-droplet"></i><span>Insumos</span></button>
+          <button class="admin-nav-item" data-admin-tab="services"><i class="bi bi-buildings"></i><span>Servicios</span></button>
+          <button class="admin-nav-item" data-admin-tab="users"><i class="bi bi-people"></i><span>Usuarios</span></button>
+          <button class="admin-nav-item" data-admin-tab="history"><i class="bi bi-clock-history"></i><span>Historial</span></button>
+        </nav>
+      </aside>
+
+      <main class="admin-main">
+        <section id="adminDashboard" class="admin-panel">
+          <div class="panel-heading"><div><span class="eyebrow">Administración</span><h1>Panel general</h1><p>Prioridades, volumen y pedidos que requieren acción.</p></div><button id="refreshAdminButton" class="btn btn-outline-primary fw-bold"><i class="bi bi-arrow-clockwise me-2"></i>Actualizar</button></div>
+          <div class="row g-3 mb-4">
+            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card danger"><div class="kpi-label">Pendientes</div><div id="kpiPending" class="kpi-value">0</div><div class="kpi-foot">Pedidos sin preparar</div></div></div>
+            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card warning"><div class="kpi-label">Urgentes</div><div id="kpiUrgent" class="kpi-value">0</div><div class="kpi-foot">Prioridad inmediata</div></div></div>
+            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Ingresados hoy</div><div id="kpiToday" class="kpi-value">0</div><div class="kpi-foot">Nuevas solicitudes</div></div></div>
+            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">En proceso</div><div id="kpiInProgress" class="kpi-value">0</div><div class="kpi-foot">Preparación o envío</div></div></div>
+          </div>
+          <div class="row g-4">
+            <div class="col-xl-8"><div class="section-card h-100"><div class="d-flex justify-content-between align-items-center gap-3 mb-3"><div><h2 class="section-title mb-1">Pedidos recientes</h2><p class="text-secondary mb-0">Ordenados por fecha y prioridad.</p></div><button class="btn btn-sm btn-outline-primary" data-go-tab="orders">Ver todos</button></div><div id="dashboardRecentOrders" class="service-health-list"></div></div></div>
+            <div class="col-xl-4"><div class="section-card h-100"><div class="mb-3"><h2 class="section-title mb-1">Servicios con actividad</h2><p class="text-secondary mb-0">Pedidos abiertos por ubicación.</p></div><div id="dashboardServices" class="priority-list"></div></div></div>
+          </div>
+        </section>
+
+        <section id="adminOrders" class="admin-panel d-none">
+          <div class="panel-heading"><div><span class="eyebrow">Operación</span><h1>Pedidos</h1><p>Filtrá, revisá, copiá y actualizá el estado de cada pedido.</p></div></div>
+          <div class="section-card mb-4">
+            <div class="row g-3">
+              <div class="col-lg-4"><label for="ordersSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="ordersSearch" class="form-control" type="search" placeholder="Código, servicio o responsable"></div></div>
+              <div class="col-lg-3"><label for="ordersServiceFilter" class="form-label">Servicio</label><select id="ordersServiceFilter" class="form-select"></select></div>
+              <div class="col-lg-3"><label for="ordersStatusFilter" class="form-label">Estado</label><select id="ordersStatusFilter" class="form-select"><option value="">Todos</option><option value="pendiente">Pendiente</option><option value="preparacion">En preparación</option><option value="enviado">Enviado</option><option value="entregado">Entregado</option><option value="cancelado">Cancelado</option></select></div>
+              <div class="col-lg-2"><label for="ordersPriorityFilter" class="form-label">Prioridad</label><select id="ordersPriorityFilter" class="form-select"><option value="">Todas</option><option value="normal">Normal</option><option value="urgente">Urgente</option></select></div>
+            </div>
+          </div>
+          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Pedido</th><th>Servicio</th><th>Responsable</th><th>Contenido</th><th>Prioridad</th><th>Estado</th><th></th></tr></thead><tbody id="ordersTableBody"></tbody></table></div></div>
+        </section>
+
+        <section id="adminMaterials" class="admin-panel d-none">
+          <div class="panel-heading"><div><span class="eyebrow">Catálogo maestro</span><h1>Insumos</h1><p>Gestioná nombres, imágenes, unidades y cantidad sugerida.</p></div><button id="addMaterialButton" class="btn btn-primary fw-bold"><i class="bi bi-plus-lg me-2"></i>Nuevo insumo</button></div>
+          <div class="section-card mb-4"><div class="row g-3"><div class="col-lg-8"><label for="materialsSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="materialsSearch" class="form-control" type="search" placeholder="Nombre, categoría o detalle"></div></div><div class="col-lg-4"><label for="materialsStatusFilter" class="form-label">Estado</label><select id="materialsStatusFilter" class="form-select"><option value="all">Todos</option><option value="active">Activos</option><option value="inactive">Inactivos</option></select></div></div></div>
+          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Insumo</th><th>Categoría</th><th>Unidad</th><th>Sugerido</th><th>Estado</th><th></th></tr></thead><tbody id="materialsTableBody"></tbody></table></div></div>
+        </section>
+
+        <section id="adminServices" class="admin-panel d-none">
+          <div class="panel-heading"><div><span class="eyebrow">Estructura operativa</span><h1>Servicios</h1><p>Alta, dirección, frecuencia y mantenimiento de establecimientos.</p></div><button id="addServiceButton" class="btn btn-primary fw-bold"><i class="bi bi-plus-lg me-2"></i>Nuevo servicio</button></div>
+          <div class="section-card mb-4"><label for="adminServiceSearch" class="form-label">Buscar servicio</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="adminServiceSearch" class="form-control" type="search" placeholder="Nombre, zona, dirección o supervisor"></div></div>
+          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Servicio</th><th>Zona</th><th>Frecuencia</th><th>Supervisor</th><th>Pedidos</th><th>Estado</th><th></th></tr></thead><tbody id="servicesTableBody"></tbody></table></div></div>
+        </section>
+
+        <section id="adminUsers" class="admin-panel d-none">
+          <div class="panel-heading"><div><span class="eyebrow">Accesos y permisos</span><h1>Usuarios</h1><p>Los operarios no necesitan usuario. Conservá aquí accesos administrativos o especiales.</p></div></div>
+          <div class="alert alert-info">Los usuarios se crean en <strong>Supabase → Authentication → Users</strong>. Luego podés promoverlos o asignarlos desde esta pantalla.</div>
+          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Usuario</th><th>Correo</th><th>Rol</th><th>Servicio asignado</th><th></th></tr></thead><tbody id="usersTableBody"></tbody></table></div></div>
+        </section>
+
+        <section id="adminHistory" class="admin-panel d-none">
+          <div class="panel-heading"><div><span class="eyebrow">Trazabilidad</span><h1>Historial</h1><p>Cambios de estado con fecha, pedido y responsable.</p></div></div>
+          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Fecha</th><th>Pedido</th><th>Servicio</th><th>Cambio</th><th>Usuario</th><th>Detalle</th></tr></thead><tbody id="historyTableBody"></tbody></table></div></div>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <div class="offcanvas offcanvas-start" tabindex="-1" id="adminSidebarMobile" aria-labelledby="adminSidebarMobileLabel">
+    <div class="offcanvas-header"><h5 class="offcanvas-title fw-black" id="adminSidebarMobileLabel">Administración</h5><button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button></div>
+    <div class="offcanvas-body"><nav class="admin-nav">
+      <button class="admin-nav-item active" data-admin-tab="dashboard" data-bs-dismiss="offcanvas"><i class="bi bi-grid-1x2"></i><span>Panel general</span></button>
+      <button class="admin-nav-item" data-admin-tab="orders" data-bs-dismiss="offcanvas"><i class="bi bi-clipboard-check"></i><span>Pedidos</span></button>
+      <button class="admin-nav-item" data-admin-tab="materials" data-bs-dismiss="offcanvas"><i class="bi bi-droplet"></i><span>Insumos</span></button>
+      <button class="admin-nav-item" data-admin-tab="services" data-bs-dismiss="offcanvas"><i class="bi bi-buildings"></i><span>Servicios</span></button>
+      <button class="admin-nav-item" data-admin-tab="users" data-bs-dismiss="offcanvas"><i class="bi bi-people"></i><span>Usuarios</span></button>
+      <button class="admin-nav-item" data-admin-tab="history" data-bs-dismiss="offcanvas"><i class="bi bi-clock-history"></i><span>Historial</span></button>
+    </nav></div>
+  </div>
+
+  <div class="modal fade" id="adminLoginModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Acceso administrativo</div><h5 class="modal-title fw-black">Ingresar</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="loginForm"><div class="modal-body"><label for="loginEmail" class="form-label">Correo</label><input id="loginEmail" class="form-control mb-3" type="email" autocomplete="email" required><label for="loginPassword" class="form-label">Contraseña</label><div class="input-group"><input id="loginPassword" class="form-control" type="password" autocomplete="current-password" required><button id="togglePassword" class="btn btn-outline-secondary" type="button" aria-label="Mostrar contraseña"><i class="bi bi-eye"></i></button></div><div id="loginError" class="alert alert-danger py-2 mt-3 mb-0 d-none"></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="loginButton" type="submit" class="btn btn-primary fw-bold">Ingresar</button></div></form></div></div></div>
+
+  <div class="modal fade" id="extraMaterialModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Excepción</div><h5 class="modal-title fw-black">Agregar insumo no listado</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="extraMaterialForm"><div class="modal-body"><label for="extraName" class="form-label">Nombre del insumo</label><input id="extraName" class="form-control mb-3" maxlength="120" required><div class="row g-3"><div class="col-6"><label for="extraQuantity" class="form-label">Cantidad</label><input id="extraQuantity" class="form-control" type="number" min="0.01" max="999" step="0.01" value="1" required></div><div class="col-6"><label for="extraUnit" class="form-label">Unidad</label><input id="extraUnit" class="form-control" maxlength="60" value="unidad" required></div></div><label for="extraNotes" class="form-label mt-3">Motivo o detalle</label><textarea id="extraNotes" class="form-control" rows="3" maxlength="300" placeholder="Explicá por qué se necesita o qué presentación corresponde"></textarea></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary fw-bold">Agregar al pedido</button></div></form></div></div></div>
+
+  <div class="modal fade" id="orderSuccessModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-body text-center p-4 p-lg-5"><div class="success-icon mb-3"><i class="bi bi-check2-circle"></i></div><div class="eyebrow">Pedido enviado</div><h2 class="fw-black mt-2">Listo. Ya quedó registrado.</h2><p class="text-secondary">Guardá este código para identificarlo:</p><div id="successOrderCode" class="order-code-display">PED-000000</div><div id="successOrderSummary" class="small text-secondary mt-3"></div><div class="d-grid gap-2 mt-4"><button id="copySuccessButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-copy me-2"></i>Copiar comprobante</button><button id="newOrderButton" class="btn btn-primary fw-bold" type="button">Hacer otro pedido</button></div></div></div></div></div>
+
+  <div class="modal fade" id="orderDetailModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Detalle del pedido</div><h5 id="orderDetailTitle" class="modal-title fw-black">PED-000000</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div id="orderDetailMeta" class="order-detail-meta mb-4"></div><div id="orderDetailItems" class="order-detail-items"></div><div id="orderDetailNotesWrap" class="alert alert-light border mt-3 d-none"><strong>Observación:</strong><div id="orderDetailNotes" class="mt-1"></div></div></div><div class="modal-footer flex-column flex-sm-row align-items-stretch align-items-sm-center"><div class="me-auto d-flex gap-2"><button id="copyOrderButton" class="btn btn-outline-primary" type="button"><i class="bi bi-copy me-2"></i>Copiar</button><button id="whatsappOrderButton" class="btn btn-outline-success" type="button"><i class="bi bi-whatsapp me-2"></i>WhatsApp</button></div><select id="orderDetailStatus" class="form-select order-status-select"></select><button id="saveOrderStatusButton" class="btn btn-primary fw-bold" type="button">Guardar estado</button></div></div></div></div>
+
+  <div class="modal fade" id="serviceModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Servicio</div><h5 id="serviceModalTitle" class="modal-title fw-black">Nuevo servicio</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="serviceForm"><input id="serviceId" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="serviceName" class="form-label">Nombre</label><input id="serviceName" class="form-control" maxlength="150" required><div class="form-text">Es el texto que verá el operario en el selector.</div></div><div class="col-md-5"><label for="serviceAddress" class="form-label">Dirección</label><input id="serviceAddress" class="form-control" maxlength="200"></div><div class="col-md-6"><label for="serviceZone" class="form-label">Zona</label><input id="serviceZone" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceSupervisor" class="form-label">Supervisor</label><input id="serviceSupervisor" class="form-control" maxlength="100"></div><div class="col-12"><label for="serviceDescription" class="form-label">Descripción o frecuencia</label><textarea id="serviceDescription" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><label for="serviceNotes" class="form-label">Observaciones internas</label><textarea id="serviceNotes" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><div class="form-check form-switch"><input id="serviceActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="serviceActive">Servicio activo</label></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveServiceButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
+
+  <div class="modal fade" id="materialModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Catálogo</div><h5 id="materialModalTitle" class="modal-title fw-black">Nuevo insumo</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="materialForm"><input id="materialId" type="hidden"><input id="materialCurrentImage" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="materialName" class="form-label">Nombre</label><input id="materialName" class="form-control" maxlength="150" required></div><div class="col-md-5"><label for="materialCategory" class="form-label">Categoría</label><input id="materialCategory" class="form-control" maxlength="100" required></div><div class="col-md-8"><label for="materialDetail" class="form-label">Detalle / marca</label><input id="materialDetail" class="form-control" maxlength="200"></div><div class="col-md-4"><label for="materialUnit" class="form-label">Unidad de pedido</label><input id="materialUnit" class="form-control" maxlength="80" value="unidad" required></div><div class="col-md-4"><label for="materialSuggestedQuantity" class="form-label">Cantidad sugerida</label><input id="materialSuggestedQuantity" class="form-control" type="number" min="0.01" max="999" step="0.01" value="1" required></div><div class="col-md-4"><label for="materialSortOrder" class="form-label">Orden</label><input id="materialSortOrder" class="form-control" type="number" min="0" step="1" value="100" required></div><div class="col-md-4 d-flex align-items-end"><div class="form-check form-switch mb-2"><input id="materialActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="materialActive">Insumo activo</label></div></div><div class="col-md-7"><label for="materialImageFile" class="form-label">Foto del insumo</label><input id="materialImageFile" class="form-control" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><div class="form-text">Podés conservar la imagen actual o cargar una nueva.</div></div><div class="col-md-5"><div class="material-image-preview-wrap"><img id="materialImagePreview" class="material-image-preview" src="assets/materials/default.svg" alt="Vista previa"></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveMaterialButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
+
+  <div class="modal fade" id="userModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Acceso</div><h5 class="modal-title fw-black">Editar usuario</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="userForm"><input id="userId" type="hidden"><div class="modal-body"><label for="userName" class="form-label">Nombre</label><input id="userName" class="form-control mb-3" maxlength="120"><label for="userRole" class="form-label">Rol</label><select id="userRole" class="form-select mb-3"><option value="operator">Operario especial</option><option value="admin">Administrador</option></select><label for="userService" class="form-label">Servicio asignado</label><select id="userService" class="form-select"></select><div class="form-text">Los administradores pueden quedar sin servicio.</div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
+
+  <div class="toast-container position-fixed bottom-0 end-0 p-3"><div id="appToast" class="toast border-0 shadow" role="alert"><div class="d-flex"><div id="toastBody" class="toast-body fw-bold">Listo</div><button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div></div></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
