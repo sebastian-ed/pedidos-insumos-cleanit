@@ -24,6 +24,7 @@ Web app responsive para que los operarios soliciten insumos de manera visual por
 - Detalle completo de cada pedido.
 - Copia del pedido para WhatsApp o portapapeles.
 - Gestión de insumos, imágenes, servicios y usuarios.
+- Habilitación u ocultamiento de insumos por servicio, con catálogo completo por defecto.
 - Historial de cambios de estado.
 - Actualización en vivo mediante Supabase Realtime.
 
@@ -66,6 +67,7 @@ Se utilizan únicamente la **Project URL** y la clave pública **anon/publishabl
 - `app.js`: lógica de pedidos y administración.
 - `config.js`: conexión con el nuevo proyecto Supabase.
 - `supabase-schema.sql`: tablas, seguridad, RPC, Realtime, storage y datos iniciales.
+- `actualizar-visibilidad-por-servicio.sql`: actualización incremental para bases ya instaladas.
 - `servicios-precargados.json`: respaldo de los 64 servicios.
 - `seed-materials.json`: respaldo del catálogo inicial.
 - `assets/materials/`: imágenes visuales de los insumos.
@@ -80,3 +82,24 @@ Los operarios no leen ni escriben directamente las tablas. La vista pública usa
 - no permiten consultar otros pedidos, usuarios ni historial.
 
 Las tablas administrativas están protegidas con Row Level Security y sólo son accesibles para perfiles con rol `admin`.
+
+
+## Visibilidad de insumos por servicio
+
+La aplicación permite configurar el catálogo que ve cada servicio:
+
+- Todos los insumos activos son visibles por defecto.
+- En `Administración → Servicios`, usá el botón de controles deslizantes de cada servicio.
+- Desactivá únicamente los insumos que ese establecimiento no utiliza.
+- Los nuevos insumos quedan automáticamente visibles en todos los servicios.
+- La validación también se aplica en la base de datos: un pedido manipulado no puede incluir un insumo oculto.
+
+### Proyecto Supabase ya instalado
+
+Antes de publicar esta versión, ejecutá una vez:
+
+```text
+actualizar-visibilidad-por-servicio.sql
+```
+
+El script es incremental: no elimina ni modifica pedidos, servicios, materiales o imágenes existentes.

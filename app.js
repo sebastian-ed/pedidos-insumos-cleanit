@@ -33,6 +33,9 @@
     orderItems: [],
     profiles: [],
     history: [],
+    serviceMaterialExclusions: [],
+    selectedServiceMaterialsId: null,
+    serviceMaterialsDraftHidden: new Set(),
     publicServiceId: null,
     draft: new Map(),
     extras: [],
@@ -61,6 +64,7 @@
     M.orderSuccess = new bootstrap.Modal(E.orderSuccessModal);
     M.orderDetail = new bootstrap.Modal(E.orderDetailModal);
     M.service = new bootstrap.Modal(E.serviceModal);
+    M.serviceMaterials = new bootstrap.Modal(E.serviceMaterialsModal);
     M.material = new bootstrap.Modal(E.materialModal);
     M.user = new bootstrap.Modal(E.userModal);
     M.toast = new bootstrap.Toast(E.appToast, { delay: 3200 });
@@ -136,6 +140,12 @@
     E.materialImageFile.addEventListener('change', previewMaterialImage);
     E.addServiceButton.addEventListener('click', () => openService());
     E.serviceForm.addEventListener('submit', saveService);
+    E.serviceMaterialsSearch.addEventListener('input', renderServiceMaterials);
+    E.serviceMaterialsFilter.addEventListener('change', renderServiceMaterials);
+    E.serviceMaterialsList.addEventListener('change', handleServiceMaterialToggle);
+    E.showAllServiceMaterialsButton.addEventListener('click', () => setAllServiceMaterialsVisible(true));
+    E.hideAllServiceMaterialsButton.addEventListener('click', () => setAllServiceMaterialsVisible(false));
+    E.saveServiceMaterialsButton.addEventListener('click', saveServiceMaterials);
     E.userForm.addEventListener('submit', saveUser);
 
     E.copyOrderButton.addEventListener('click', () => {
@@ -163,6 +173,7 @@
     const payload = typeof data === 'string' ? JSON.parse(data) : (data || {});
     S.services = Array.isArray(payload.services) ? payload.services : [];
     S.materials = Array.isArray(payload.materials) ? payload.materials : [];
+    S.serviceMaterialExclusions = Array.isArray(payload.hidden_materials) ? payload.hidden_materials : [];
     populatePublicServiceSelect();
     populateOperatorCategories();
   }
@@ -187,7 +198,8 @@
 
   function populateOperatorCategories() {
     const current = E.operatorCategory?.value || '';
-    const categories = [...new Set(S.materials.filter((m) => m.active !== false).map((m) => m.category).filter(Boolean))]
+    const source = S.publicServiceId ? visibleMaterialsForService(S.publicServiceId) : S.materials.filter((m) => m.active !== false);
+    const categories = [...new Set(source.map((m) => m.category).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, 'es'));
     E.operatorCategory.innerHTML = '<option value="">Todas las categorías</option>' + categories
       .map((category) => `<option value="${ea(category)}">${eh(category)}</option>`)
@@ -221,6 +233,7 @@
     E.operatorNotes.value = '';
     E.operatorSearch.value = '';
     E.operatorCategory.value = '';
+    populateOperatorCategories();
 
     showOperatorApp();
   }
@@ -276,8 +289,7 @@
   function renderOperatorGrid() {
     const query = normalize(E.operatorSearch.value);
     const category = E.operatorCategory.value;
-    const materials = S.materials
-      .filter((item) => item.active !== false)
+    const materials = visibleMaterialsForService(S.publicServiceId)
       .filter((item) => !category || item.category === category)
       .filter((item) => !query || normalize(`${item.name} ${item.category} ${item.detail || ''}`).includes(query))
       .sort(materialSort);
@@ -396,6 +408,12 @@
     const deleteMaterialButton = event.target.closest('[data-delete-material]');
     if (deleteMaterialButton) {
       deleteMaterial(deleteMaterialButton.dataset.deleteMaterial);
+      return;
+    }
+
+    const configureServiceMaterialsButton = event.target.closest('[data-configure-service-materials]');
+    if (configureServiceMaterialsButton) {
+      openServiceMaterials(configureServiceMaterialsButton.dataset.configureServiceMaterials);
       return;
     }
 
@@ -649,6 +667,7 @@
     S.orderItems = [];
     S.profiles = [];
     S.history = [];
+    S.serviceMaterialExclusions = [];
     try { await loadPublicData(); } catch (error) { console.error(error); }
     showPublicEntry();
   }
@@ -674,20 +693,22 @@
     if (feedback) buttonBusy(E.refreshAdminButton, true, 'Actualizando...');
 
     try {
-      const [servicesResult, materialsResult, ordersResult, itemsResult, profilesResult, historyResult] = await Promise.all([
+      const [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult] = await Promise.all([
         S.sb.from('services').select('*').order('name'),
         S.sb.from('materials').select('*').order('category').order('sort_order').order('name'),
+        S.sb.from('service_material_exclusions').select('service_id,material_id'),
         S.sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
         S.sb.from('order_items').select('*').order('sort_order').order('created_at'),
         S.sb.from('profiles').select('*').order('full_name'),
         S.sb.from('order_status_history').select('*').order('changed_at', { ascending: false }).limit(500)
       ]);
 
-      [servicesResult, materialsResult, ordersResult, itemsResult, profilesResult, historyResult]
+      [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult]
         .forEach((result) => { if (result.error) throw result.error; });
 
       S.services = servicesResult.data || [];
       S.materials = materialsResult.data || [];
+      S.serviceMaterialExclusions = exclusionsResult.data || [];
       S.orders = ordersResult.data || [];
       S.orderItems = itemsResult.data || [];
       S.profiles = profilesResult.data || [];
@@ -713,6 +734,7 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_status_history' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'materials' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, scheduleAdminRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_material_exclusions' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, scheduleAdminRefresh)
       .subscribe();
   }
@@ -1044,19 +1066,109 @@
   function renderServices() {
     const query = normalize(E.adminServiceSearch.value);
     const filtered = S.services.filter((service) => !query || normalize(`${service.name} ${service.zone || ''} ${service.address || ''} ${service.supervisor || ''}`).includes(query));
+    const activeMaterials = S.materials.filter((material) => material.active !== false);
 
     E.servicesTableBody.innerHTML = filtered.map((service) => {
       const orderCount = S.orders.filter((order) => order.service_id === service.id).length;
+      const hiddenCount = activeMaterials.filter((material) => isMaterialHiddenForService(material.id, service.id)).length;
+      const visibleCount = Math.max(0, activeMaterials.length - hiddenCount);
       return `<tr>
         <td><div class="table-title">${eh(service.name)}</div><div class="table-subtitle">${eh(service.address || '')}</div></td>
         <td>${eh(service.zone || '—')}</td>
         <td><div class="service-description-preview">${eh(service.description || '—')}</div></td>
         <td>${eh(service.supervisor || '—')}</td>
+        <td><div class="service-material-count">${visibleCount} de ${activeMaterials.length}</div><div class="table-subtitle">${hiddenCount ? `${hiddenCount} oculto${hiddenCount === 1 ? '' : 's'}` : 'Catálogo completo'}</div></td>
         <td>${orderCount}</td>
         <td><span class="badge ${service.active ? 'text-bg-success' : 'text-bg-secondary'}">${service.active ? 'Activo' : 'Inactivo'}</span></td>
-        <td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-edit-service="${ea(service.id)}"><i class="bi bi-pencil"></i></button><button class="btn btn-outline-secondary" type="button" data-toggle-service="${ea(service.id)}"><i class="bi ${service.active ? 'bi-pause-circle' : 'bi-play-circle'}"></i></button><button class="btn btn-outline-danger" type="button" data-delete-service="${ea(service.id)}"><i class="bi bi-trash3"></i></button></div></td>
+        <td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-configure-service-materials="${ea(service.id)}" title="Configurar insumos"><i class="bi bi-sliders"></i></button><button class="btn btn-outline-primary" type="button" data-edit-service="${ea(service.id)}" title="Editar servicio"><i class="bi bi-pencil"></i></button><button class="btn btn-outline-secondary" type="button" data-toggle-service="${ea(service.id)}" title="${service.active ? 'Desactivar' : 'Activar'}"><i class="bi ${service.active ? 'bi-pause-circle' : 'bi-play-circle'}"></i></button><button class="btn btn-outline-danger" type="button" data-delete-service="${ea(service.id)}" title="Eliminar"><i class="bi bi-trash3"></i></button></div></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="7"><div class="empty-inline">No hay servicios para mostrar.</div></td></tr>';
+    }).join('') || '<tr><td colspan="8"><div class="empty-inline">No hay servicios para mostrar.</div></td></tr>';
+  }
+
+  function openServiceMaterials(serviceId) {
+    const service = serviceById(serviceId);
+    if (!service) return;
+    S.selectedServiceMaterialsId = serviceId;
+    S.serviceMaterialsDraftHidden = new Set(
+      S.serviceMaterialExclusions
+        .filter((item) => item.service_id === serviceId)
+        .map((item) => item.material_id)
+    );
+    E.serviceMaterialsModalTitle.textContent = `Insumos de ${service.name}`;
+    E.serviceMaterialsModalSubtitle.textContent = 'Activá o desactivá lo que el operario podrá ver y pedir.';
+    E.serviceMaterialsSearch.value = '';
+    E.serviceMaterialsFilter.value = 'all';
+    renderServiceMaterials();
+    M.serviceMaterials.show();
+  }
+
+  function renderServiceMaterials() {
+    const serviceId = S.selectedServiceMaterialsId;
+    if (!serviceId) return;
+    const query = normalize(E.serviceMaterialsSearch.value);
+    const filter = E.serviceMaterialsFilter.value;
+    const allMaterials = [...S.materials].sort(materialSort);
+    const filtered = allMaterials.filter((material) => {
+      const hidden = S.serviceMaterialsDraftHidden.has(material.id);
+      const matchesQuery = !query || normalize(`${material.name} ${material.category} ${material.detail || ''}`).includes(query);
+      const matchesFilter = filter === 'all' || (filter === 'visible' ? !hidden : hidden);
+      return matchesQuery && matchesFilter;
+    });
+
+    const activeMaterials = allMaterials.filter((material) => material.active !== false);
+    const hiddenActive = activeMaterials.filter((material) => S.serviceMaterialsDraftHidden.has(material.id)).length;
+    E.serviceMaterialsVisibleCount.textContent = `${activeMaterials.length - hiddenActive} visibles`;
+    E.serviceMaterialsHiddenCount.textContent = `${hiddenActive} ocultos`;
+
+    E.serviceMaterialsList.innerHTML = filtered.map((material) => {
+      const hidden = S.serviceMaterialsDraftHidden.has(material.id);
+      return `<label class="service-material-row ${hidden ? 'is-hidden' : ''}">
+        <img class="service-material-thumb" src="${ea(material.image_url || 'assets/materials/default.svg')}" alt="${ea(material.name)}" onerror="this.src='assets/materials/default.svg'">
+        <span class="service-material-main"><span class="service-material-name">${eh(material.name)}</span><span class="service-material-meta">${eh(material.category || 'General')}${material.detail ? ` · ${eh(material.detail)}` : ''}${material.active === false ? ' · Inactivo globalmente' : ''}</span></span>
+        <span class="form-check form-switch service-material-switch"><input class="form-check-input" type="checkbox" data-service-material-toggle="${ea(material.id)}" ${hidden ? '' : 'checked'}><span class="form-check-label">${hidden ? 'Oculto' : 'Visible'}</span></span>
+      </label>`;
+    }).join('') || '<div class="empty-inline">No hay insumos que coincidan con el filtro.</div>';
+  }
+
+  function handleServiceMaterialToggle(event) {
+    const input = event.target.closest('[data-service-material-toggle]');
+    if (!input) return;
+    const materialId = input.dataset.serviceMaterialToggle;
+    if (input.checked) S.serviceMaterialsDraftHidden.delete(materialId);
+    else S.serviceMaterialsDraftHidden.add(materialId);
+    renderServiceMaterials();
+  }
+
+  function setAllServiceMaterialsVisible(visible) {
+    S.materials.forEach((material) => {
+      if (visible) S.serviceMaterialsDraftHidden.delete(material.id);
+      else S.serviceMaterialsDraftHidden.add(material.id);
+    });
+    renderServiceMaterials();
+  }
+
+  async function saveServiceMaterials() {
+    const serviceId = S.selectedServiceMaterialsId;
+    const service = serviceById(serviceId);
+    if (!service) return;
+    buttonBusy(E.saveServiceMaterialsButton, true, 'Guardando...');
+    try {
+      const { error } = await S.sb.rpc('admin_set_service_hidden_materials', {
+        p_service_id: serviceId,
+        p_hidden_material_ids: [...S.serviceMaterialsDraftHidden]
+      });
+      if (error) throw error;
+
+      M.serviceMaterials.hide();
+      S.selectedServiceMaterialsId = null;
+      await refreshAdmin(false);
+      toast(`Configuración de ${service.name} actualizada.`, 'success');
+    } catch (error) {
+      console.error(error);
+      toast(error.message || 'No se pudo guardar la configuración.', 'error');
+    } finally {
+      buttonBusy(E.saveServiceMaterialsButton, false);
+    }
   }
 
   function openService(serviceId = null) {
@@ -1176,6 +1288,15 @@
     return S.services.find((item) => item.id === S.publicServiceId) || null;
   }
 
+  function isMaterialHiddenForService(materialId, serviceId) {
+    if (!serviceId) return false;
+    return S.serviceMaterialExclusions.some((item) => item.service_id === serviceId && item.material_id === materialId);
+  }
+
+  function visibleMaterialsForService(serviceId) {
+    return S.materials.filter((material) => material.active !== false && !isMaterialHiddenForService(material.id, serviceId));
+  }
+
   function serviceById(id) {
     return S.services.find((item) => item.id === id) || null;
   }
@@ -1273,7 +1394,7 @@
 
   function publicErrorMessage(error) {
     const message = String(error?.message || '');
-    if (message.includes('public_order_bootstrap') || message.includes('schema cache')) return 'La base de datos todavía no tiene instalado el esquema de pedidos. Ejecutá supabase-schema.sql.';
+    if (message.includes('public_order_bootstrap') || message.includes('schema cache')) return 'La base de datos todavía no tiene instalada la última versión del esquema. Ejecutá actualizar-visibilidad-por-servicio.sql.';
     return message || 'No se pudieron cargar los servicios.';
   }
 

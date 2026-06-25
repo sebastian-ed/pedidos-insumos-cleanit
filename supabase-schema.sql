@@ -1,4 +1,4 @@
--- Pedidos Clean It · esquema Supabase v1
+-- Pedidos Clean It · esquema Supabase v2
 -- Ejecutar completo en Supabase > SQL Editor sobre un proyecto nuevo.
 -- La aplicación pública usa únicamente funciones RPC seguras; no expone las tablas al rol anon.
 
@@ -31,6 +31,15 @@ create table if not exists public.materials(
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+-- Una fila representa que un insumo está oculto para un servicio.
+-- La ausencia de fila significa visible, por lo que todos los insumos quedan habilitados por defecto.
+create table if not exists public.service_material_exclusions(
+  service_id uuid not null references public.services(id) on delete cascade,
+  material_id uuid not null references public.materials(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key(service_id,material_id)
 );
 
 create table if not exists public.profiles(
@@ -84,6 +93,7 @@ create table if not exists public.order_status_history(
   changed_at timestamptz not null default now()
 );
 
+create index if not exists idx_service_material_exclusions_material on public.service_material_exclusions(material_id);
 create index if not exists idx_profiles_service on public.profiles(service_id);
 create index if not exists idx_orders_service on public.orders(service_id);
 create index if not exists idx_orders_status on public.orders(status);
@@ -144,6 +154,39 @@ as $$
   select exists(select 1 from public.profiles where id=auth.uid() and role='admin');
 $$;
 
+-- Reemplazo atómico del catálogo oculto de un servicio.
+create or replace function public.admin_set_service_hidden_materials(
+  p_service_id uuid,
+  p_hidden_material_ids uuid[]
+)
+returns integer
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_count integer;
+begin
+  if not public.is_admin() then
+    raise exception 'No tenés permisos de administrador.';
+  end if;
+  if not exists(select 1 from public.services where id=p_service_id) then
+    raise exception 'El servicio no existe.';
+  end if;
+
+  delete from public.service_material_exclusions where service_id=p_service_id;
+
+  insert into public.service_material_exclusions(service_id,material_id)
+  select p_service_id,m.id
+  from public.materials m
+  where m.id=any(coalesce(p_hidden_material_ids,array[]::uuid[]))
+  on conflict(service_id,material_id) do nothing;
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
 create or replace function public.prepare_order_status()
 returns trigger
 language plpgsql
@@ -184,6 +227,7 @@ create trigger orders_status_audit after insert or update of status on public.or
 
 alter table public.services enable row level security;
 alter table public.materials enable row level security;
+alter table public.service_material_exclusions enable row level security;
 alter table public.profiles enable row level security;
 alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
@@ -193,6 +237,7 @@ drop policy if exists services_admin_read on public.services;
 drop policy if exists services_admin_write on public.services;
 drop policy if exists materials_admin_read on public.materials;
 drop policy if exists materials_admin_write on public.materials;
+drop policy if exists service_material_exclusions_admin_all on public.service_material_exclusions;
 drop policy if exists profiles_self_admin_read on public.profiles;
 drop policy if exists profiles_admin_update on public.profiles;
 drop policy if exists orders_admin_all on public.orders;
@@ -203,6 +248,7 @@ create policy services_admin_read on public.services for select to authenticated
 create policy services_admin_write on public.services for all to authenticated using(public.is_admin()) with check(public.is_admin());
 create policy materials_admin_read on public.materials for select to authenticated using(public.is_admin());
 create policy materials_admin_write on public.materials for all to authenticated using(public.is_admin()) with check(public.is_admin());
+create policy service_material_exclusions_admin_all on public.service_material_exclusions for all to authenticated using(public.is_admin()) with check(public.is_admin());
 create policy profiles_self_admin_read on public.profiles for select to authenticated using(id=auth.uid() or public.is_admin());
 create policy profiles_admin_update on public.profiles for update to authenticated using(public.is_admin()) with check(public.is_admin());
 create policy orders_admin_all on public.orders for all to authenticated using(public.is_admin()) with check(public.is_admin());
@@ -233,6 +279,12 @@ as $$
         from public.materials
         where active=true
       ) m
+    ), '[]'::jsonb),
+    'hidden_materials', coalesce((
+      select jsonb_agg(jsonb_build_object('service_id',x.service_id,'material_id',x.material_id))
+      from public.service_material_exclusions x
+      join public.services s on s.id=x.service_id and s.active=true
+      join public.materials m on m.id=x.material_id and m.active=true
     ), '[]'::jsonb)
   );
 $$;
@@ -312,6 +364,13 @@ begin
         raise exception 'Uno de los insumos ya no está disponible.';
       end if;
 
+      if exists(
+        select 1 from public.service_material_exclusions
+        where service_id=p_service_id and material_id=v_material_id
+      ) then
+        raise exception 'Uno de los insumos no está habilitado para este servicio.';
+      end if;
+
       insert into public.order_items(order_id,material_id,item_name,category,unit,quantity,notes,image_url,is_custom,sort_order)
       values(v_order.id,v_material.id,v_material.name,v_material.category,v_material.unit,v_quantity,null,v_material.image_url,false,v_material.sort_order);
     else
@@ -354,11 +413,13 @@ exception when others then
 end;
 $$;
 
-revoke all on public.services, public.materials, public.profiles, public.orders, public.order_items, public.order_status_history from anon;
-grant select,insert,update,delete on public.services, public.materials, public.profiles, public.orders, public.order_items, public.order_status_history to authenticated;
+revoke all on public.services, public.materials, public.service_material_exclusions, public.profiles, public.orders, public.order_items, public.order_status_history from anon;
+grant select,insert,update,delete on public.services, public.materials, public.service_material_exclusions, public.profiles, public.orders, public.order_items, public.order_status_history to authenticated;
 grant usage,select on all sequences in schema public to authenticated;
 grant execute on function public.public_order_bootstrap() to anon,authenticated;
 grant execute on function public.public_create_order(uuid,text,text,text,jsonb) to anon,authenticated;
+revoke all on function public.admin_set_service_hidden_materials(uuid,uuid[]) from public;
+grant execute on function public.admin_set_service_hidden_materials(uuid,uuid[]) to authenticated;
 
 -- Bucket público para imágenes cargadas desde Administración.
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
@@ -379,7 +440,7 @@ do $$
 declare
   v_table text;
 begin
-  foreach v_table in array array['orders','order_items','order_status_history','materials','services','profiles']
+  foreach v_table in array array['orders','order_items','order_status_history','materials','services','service_material_exclusions','profiles']
   loop
     if not exists(
       select 1 from pg_publication_tables
