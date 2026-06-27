@@ -18,6 +18,9 @@
   };
 
   const PRIORITY_LABELS = { normal: 'Normal', urgente: 'Urgente' };
+  const ROLE_LABELS = { admin: 'Administrador', supplier: 'Proveedor', operator: 'Operario especial' };
+  const FULL_ADMIN_ROLE = 'admin';
+
   const STATUS_OPTIONS = Object.entries(STATUS_LABELS)
     .map(([value, label]) => `<option value="${value}">${label}</option>`)
     .join('');
@@ -50,6 +53,13 @@
   const E = {};
   const M = {};
   const dtf = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+
+  function isFullAdmin() { return S.profile?.role === FULL_ADMIN_ROLE; }
+  function isSupplier() { return S.profile?.role === 'supplier'; }
+  function canOperateOrders() { return ['admin', 'supplier'].includes(S.profile?.role); }
+  function canManageMasterData() { return isFullAdmin(); }
+  function canManageUsers() { return isFullAdmin(); }
+  function allowedTabs() { return isFullAdmin() ? ['dashboard','orders','materials','services','users','history'] : ['dashboard','orders','history']; }
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -633,7 +643,7 @@
     try {
       const { data: profile, error } = await S.sb.from('profiles').select('*').eq('id', session.user.id).single();
       if (error || !profile) throw new Error('El usuario no tiene perfil. Ejecutá el esquema SQL y revisá el trigger.');
-      if (profile.role !== 'admin') throw new Error('Este acceso es exclusivo para administradores.');
+      if (!['admin', 'supplier'].includes(profile.role)) throw new Error('Este acceso es exclusivo para usuarios administrativos o proveedores habilitados.');
 
       S.session = session;
       S.profile = profile;
@@ -683,13 +693,33 @@
     E.logoutButton.classList.remove('d-none');
     E.headerUserChip.classList.remove('d-none');
     E.headerUserName.textContent = S.profile?.full_name || S.profile?.email || 'Administrador';
-    E.headerUserRole.textContent = 'Administrador';
-    E.appSubtitle.textContent = 'Administración de pedidos';
+    E.headerUserRole.textContent = ROLE_LABELS[S.profile?.role] || 'Usuario';
+    E.appSubtitle.textContent = isSupplier() ? 'Panel proveedor · seguimiento de pedidos' : 'Administración de pedidos';
+    applyRolePermissions();
     renderAdmin();
   }
 
+  function applyRolePermissions() {
+    const allowed = new Set(allowedTabs());
+    document.querySelectorAll('[data-admin-tab]').forEach((button) => {
+      const tab = button.dataset.adminTab;
+      const permitted = allowed.has(tab);
+      button.classList.toggle('d-none', !permitted);
+      if (!permitted) button.classList.remove('active');
+      else button.classList.toggle('active', tab === S.tab);
+    });
+
+    const masterButtons = [
+      E.addMaterialButton, E.addServiceButton, E.saveMaterialButton, E.saveServiceButton,
+      E.saveServiceMaterialsButton, E.showAllServiceMaterialsButton, E.hideAllServiceMaterialsButton
+    ];
+    masterButtons.forEach((button) => { if (button) button.disabled = !canManageMasterData(); });
+
+    if (!allowed.has(S.tab)) S.tab = 'dashboard';
+  }
+
   async function refreshAdmin(feedback = false) {
-    if (S.mode !== 'admin') return;
+    if (S.mode !== 'admin' || !canOperateOrders()) return;
     if (feedback) buttonBusy(E.refreshAdminButton, true, 'Actualizando...');
 
     try {
@@ -727,7 +757,7 @@
 
   function setupRealtime() {
     teardownRealtime();
-    if (!S.sb || S.mode !== 'admin') return;
+    if (!S.sb || S.mode !== 'admin' || !canOperateOrders()) return;
     S.channel = S.sb.channel(`pedidos-admin-${S.profile.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, scheduleAdminRefresh)
@@ -766,6 +796,7 @@
   }
 
   function switchTab(tab) {
+    if (!allowedTabs().includes(tab)) tab = 'dashboard';
     S.tab = tab;
     document.querySelectorAll('[data-admin-tab]').forEach((button) => {
       button.classList.toggle('active', button.dataset.adminTab === tab);
@@ -775,6 +806,8 @@
 
   function renderAdmin() {
     if (S.mode !== 'admin') return;
+    if (!allowedTabs().includes(S.tab)) S.tab = 'dashboard';
+    applyRolePermissions();
     const panels = {
       dashboard: E.adminDashboard,
       orders: E.adminOrders,
@@ -850,7 +883,7 @@
         <td><strong>${order.total_items}</strong> insumos<div class="order-content-summary">${formatQty(order.total_units)} unidades</div></td>
         <td><span class="priority-badge ${ea(order.priority)}">${eh(PRIORITY_LABELS[order.priority] || order.priority)}</span></td>
         <td><span class="status-badge ${ea(order.status)}">${eh(STATUS_LABELS[order.status] || order.status)}</span></td>
-        <td><div class="action-group"><button class="btn btn-outline-primary" type="button" title="Ver pedido" data-order-open="${ea(order.id)}"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary" type="button" title="Copiar" data-order-copy="${ea(order.id)}"><i class="bi bi-copy"></i></button><button class="btn btn-outline-danger" type="button" title="Eliminar" data-order-delete="${ea(order.id)}"><i class="bi bi-trash3"></i></button></div></td>
+        <td><div class="action-group"><button class="btn btn-outline-primary" type="button" title="Ver pedido" data-order-open="${ea(order.id)}"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary" type="button" title="Copiar" data-order-copy="${ea(order.id)}"><i class="bi bi-copy"></i></button>${isFullAdmin() ? `<button class="btn btn-outline-danger" type="button" title="Eliminar" data-order-delete="${ea(order.id)}"><i class="bi bi-trash3"></i></button>` : ''}</div></td>
       </tr>`;
     }).join('') || '<tr><td colspan="7"><div class="empty-inline">No hay pedidos que coincidan con los filtros.</div></td></tr>';
   }
@@ -886,6 +919,7 @@
   }
 
   async function saveSelectedOrderStatus() {
+    if (!canOperateOrders()) { toast('No tenés permisos para cambiar estados.', 'error'); return; }
     const order = getSelectedOrder();
     if (!order) return;
     const nextStatus = E.orderDetailStatus.value;
@@ -896,7 +930,11 @@
 
     buttonBusy(E.saveOrderStatusButton, true, 'Guardando...');
     try {
-      const { error } = await S.sb.from('orders').update({ status: nextStatus }).eq('id', order.id);
+      const { error } = await S.sb.rpc('staff_update_order_status', {
+        p_order_id: order.id,
+        p_status: nextStatus,
+        p_notes: null
+      });
       if (error) throw error;
       M.orderDetail.hide();
       await refreshAdmin(false);
@@ -910,6 +948,7 @@
   }
 
   async function deleteOrder(orderId) {
+    if (!isFullAdmin()) { toast('El proveedor no puede eliminar pedidos.', 'error'); return; }
     const order = S.orders.find((item) => item.id === orderId);
     if (!order || !confirm(`¿Eliminar definitivamente el pedido ${order.order_code}? Esta acción no se puede deshacer.`)) return;
     try {
@@ -946,6 +985,7 @@
   }
 
   function renderMaterials() {
+    if (!canManageMasterData()) return;
     const query = normalize(E.materialsSearch.value);
     const status = E.materialsStatusFilter.value;
     const filtered = S.materials.filter((material) => {
@@ -966,6 +1006,7 @@
   }
 
   function openMaterial(materialId = null) {
+    if (!canManageMasterData()) { toast('No tenés permisos para gestionar insumos.', 'error'); return; }
     const material = materialId ? S.materials.find((item) => item.id === materialId) : null;
     E.materialForm.reset();
     E.materialId.value = material?.id || '';
@@ -994,6 +1035,7 @@
 
   async function saveMaterial(event) {
     event.preventDefault();
+    if (!canManageMasterData()) { toast('No tenés permisos para guardar insumos.', 'error'); return; }
     buttonBusy(E.saveMaterialButton, true, 'Guardando...');
     try {
       let imageUrl = E.materialCurrentImage.value || 'assets/materials/default.svg';
@@ -1038,6 +1080,7 @@
   }
 
   async function toggleMaterial(materialId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para cambiar insumos.', 'error'); return; }
     const material = S.materials.find((item) => item.id === materialId);
     if (!material) return;
     try {
@@ -1051,6 +1094,7 @@
   }
 
   async function deleteMaterial(materialId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para eliminar insumos.', 'error'); return; }
     const material = S.materials.find((item) => item.id === materialId);
     if (!material || !confirm(`¿Eliminar ${material.name}? Los pedidos anteriores conservarán el nombre y la imagen registrados.`)) return;
     try {
@@ -1064,6 +1108,7 @@
   }
 
   function renderServices() {
+    if (!canManageMasterData()) return;
     const query = normalize(E.adminServiceSearch.value);
     const filtered = S.services.filter((service) => !query || normalize(`${service.name} ${service.zone || ''} ${service.address || ''} ${service.supervisor || ''}`).includes(query));
     const activeMaterials = S.materials.filter((material) => material.active !== false);
@@ -1086,6 +1131,7 @@
   }
 
   function openServiceMaterials(serviceId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para configurar insumos por servicio.', 'error'); return; }
     const service = serviceById(serviceId);
     if (!service) return;
     S.selectedServiceMaterialsId = serviceId;
@@ -1148,6 +1194,7 @@
   }
 
   async function saveServiceMaterials() {
+    if (!canManageMasterData()) { toast('No tenés permisos para guardar esta configuración.', 'error'); return; }
     const serviceId = S.selectedServiceMaterialsId;
     const service = serviceById(serviceId);
     if (!service) return;
@@ -1172,6 +1219,7 @@
   }
 
   function openService(serviceId = null) {
+    if (!canManageMasterData()) { toast('No tenés permisos para gestionar servicios.', 'error'); return; }
     const service = serviceId ? S.services.find((item) => item.id === serviceId) : null;
     E.serviceForm.reset();
     E.serviceId.value = service?.id || '';
@@ -1188,6 +1236,7 @@
 
   async function saveService(event) {
     event.preventDefault();
+    if (!canManageMasterData()) { toast('No tenés permisos para guardar servicios.', 'error'); return; }
     buttonBusy(E.saveServiceButton, true, 'Guardando...');
     try {
       const payload = {
@@ -1215,6 +1264,7 @@
   }
 
   async function toggleService(serviceId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para cambiar servicios.', 'error'); return; }
     const service = S.services.find((item) => item.id === serviceId);
     if (!service) return;
     try {
@@ -1228,6 +1278,7 @@
   }
 
   async function deleteService(serviceId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para eliminar servicios.', 'error'); return; }
     const service = S.services.find((item) => item.id === serviceId);
     if (!service || !confirm(`¿Eliminar ${service.name}? Solo será posible si no tiene pedidos asociados.`)) return;
     try {
@@ -1241,13 +1292,15 @@
   }
 
   function renderUsers() {
+    if (!canManageUsers()) return;
     E.usersTableBody.innerHTML = S.profiles.map((profile) => {
       const service = serviceById(profile.service_id);
-      return `<tr><td><div class="table-title">${eh(profile.full_name || 'Sin nombre')}</div></td><td>${eh(profile.email || '—')}</td><td><span class="badge ${profile.role === 'admin' ? 'text-bg-primary' : 'text-bg-secondary'}">${profile.role === 'admin' ? 'Administrador' : 'Operario especial'}</span></td><td>${eh(service?.name || 'Sin asignar')}</td><td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-edit-user="${ea(profile.id)}"><i class="bi bi-pencil"></i></button></div></td></tr>`;
+      return `<tr><td><div class="table-title">${eh(profile.full_name || 'Sin nombre')}</div></td><td>${eh(profile.email || '—')}</td><td><span class="badge ${profile.role === 'admin' ? 'text-bg-primary' : (profile.role === 'supplier' ? 'text-bg-info' : 'text-bg-secondary')}">${eh(ROLE_LABELS[profile.role] || profile.role)}</span></td><td>${eh(service?.name || 'Sin asignar')}</td><td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-edit-user="${ea(profile.id)}"><i class="bi bi-pencil"></i></button></div></td></tr>`;
     }).join('') || '<tr><td colspan="5"><div class="empty-inline">No hay usuarios.</div></td></tr>';
   }
 
   function openUser(userId) {
+    if (!canManageUsers()) { toast('No tenés permisos para gestionar usuarios.', 'error'); return; }
     const profile = S.profiles.find((item) => item.id === userId);
     if (!profile) return;
     E.userId.value = profile.id;
@@ -1259,6 +1312,7 @@
 
   async function saveUser(event) {
     event.preventDefault();
+    if (!canManageUsers()) { toast('No tenés permisos para modificar usuarios.', 'error'); return; }
     try {
       const payload = {
         full_name: E.userName.value.trim() || null,

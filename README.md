@@ -103,3 +103,54 @@ actualizar-visibilidad-por-servicio.sql
 ```
 
 El script es incremental: no elimina ni modifica pedidos, servicios, materiales o imágenes existentes.
+
+## Actualización v4 · Roles y proveedor
+
+Esta versión incorpora un rol `Proveedor` para delegar la gestión operativa de pedidos sin entregar control total del sistema.
+
+### Permisos por rol
+
+| Función | Administrador | Proveedor |
+|---|---:|---:|
+| Ver panel general | Sí | Sí |
+| Ver pedidos | Sí | Sí |
+| Copiar / compartir pedidos | Sí | Sí |
+| Cambiar estado de pedidos | Sí | Sí |
+| Ver historial | Sí | Sí |
+| Crear / editar / eliminar insumos | Sí | No |
+| Cargar imágenes de insumos | Sí | No |
+| Crear / editar / eliminar servicios | Sí | No |
+| Configurar insumos visibles por servicio | Sí | No |
+| Eliminar pedidos | Sí | No |
+| Cambiar roles de usuarios | Sí | No |
+
+### Instalación sobre un proyecto existente
+
+Ejecutar en Supabase SQL Editor:
+
+```sql
+-- usar el archivo incluido:
+-- actualizar-roles-proveedor.sql
+```
+
+Luego subir los archivos actualizados a GitHub Pages.
+
+### Crear usuario proveedor
+
+Por seguridad, la app no crea usuarios desde el frontend. Crear usuarios requeriría exponer la `service_role key`, lo cual sería un riesgo crítico.
+
+Flujo recomendado:
+
+1. Supabase → Authentication → Users → Add user.
+2. Crear email y contraseña.
+3. Entrar a la app como administrador.
+4. Ir a Usuarios.
+5. Editar el usuario y asignar rol `Proveedor`.
+
+Alternativa rápida por SQL:
+
+```sql
+update public.profiles
+set role = 'supplier', full_name = 'Proveedor'
+where email = 'proveedor@dominio.com';
+```
