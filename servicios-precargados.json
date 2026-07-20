@@ -6,7 +6,9 @@
     "notes": null,
     "active": true,
     "zone": "Colegiales",
-    "supervisor": "José"
+    "supervisor": "José",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "America Tampas- P.Industrial Pilar",
@@ -15,7 +17,9 @@
     "notes": null,
     "active": true,
     "zone": "Pilar",
-    "supervisor": "José"
+    "supervisor": "José",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Av De los Incas 3502",
@@ -24,7 +28,9 @@
     "notes": null,
     "active": true,
     "zone": "Belgrano",
-    "supervisor": "José"
+    "supervisor": "José",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Av MITRE 5834 - Caseros",
@@ -33,7 +39,9 @@
     "notes": null,
     "active": true,
     "zone": "Caseros",
-    "supervisor": "Andres"
+    "supervisor": "Andres",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Av. San Juan 440",
@@ -42,7 +50,9 @@
     "notes": null,
     "active": true,
     "zone": "San Telmo",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Callao 441 - Centro",
@@ -51,7 +61,9 @@
     "notes": null,
     "active": true,
     "zone": "Centro",
-    "supervisor": "Leo"
+    "supervisor": "Leo",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Ceretti 2161 - Villa Urquiza",
@@ -60,7 +72,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Urquiza",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Céspedes 2524, CABA",
@@ -69,7 +83,9 @@
     "notes": null,
     "active": true,
     "zone": "Colegiales",
-    "supervisor": "José"
+    "supervisor": "José",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "cons Cabildo 2659",
@@ -78,7 +94,9 @@
     "notes": null,
     "active": true,
     "zone": "Belgrano",
-    "supervisor": "José"
+    "supervisor": "José",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Agrelo 3641- Boedo",
@@ -87,7 +105,9 @@
     "notes": null,
     "active": true,
     "zone": "Boedo",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Araujo 61-Villa Luro",
@@ -96,7 +116,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Luro",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Av Directorio 1821",
@@ -105,7 +127,9 @@
     "notes": null,
     "active": true,
     "zone": "Flores",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Av Los Incas 3501",
@@ -114,7 +138,9 @@
     "notes": null,
     "active": true,
     "zone": "Belgrano R",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Beiro 4545- Villa Devoto",
@@ -123,7 +149,9 @@
     "notes": "Lunes a sábados 8:30 a 12:30",
     "active": true,
     "zone": "Villa Devoto",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Cabildo 2737- Nuñez",
@@ -132,7 +160,9 @@
     "notes": null,
     "active": true,
     "zone": "Nuñez",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Cachimayo 748- Parque Chacabuco",
@@ -141,7 +171,9 @@
     "notes": null,
     "active": true,
     "zone": "Parque Chacabuco",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Catamarca 586- San Cristóbal",
@@ -150,7 +182,9 @@
     "notes": null,
     "active": true,
     "zone": "San Cristóbal",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Cnel Diaz 1450",
@@ -159,7 +193,9 @@
     "notes": null,
     "active": true,
     "zone": "Recoleta/Palermo",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Darwin 524- Villa Crespo",
@@ -168,7 +204,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Crespo",
-    "supervisor": "José"
+    "supervisor": "José",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Gualeguaychú 1938- Villa Devoto",
@@ -177,7 +215,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Devoto",
-    "supervisor": "Leo"
+    "supervisor": "Leo",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Gualeguaychú 3809/11 caba",
@@ -186,7 +226,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Devoto",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Guardia Vieja 3919-Villa Crespo",
@@ -195,7 +237,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Crespo",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Hipólito Yrigoyen 3132- Once",
@@ -204,7 +248,9 @@
     "notes": null,
     "active": true,
     "zone": "Once",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Jose Hernández 2678- Belgrano",
@@ -213,7 +259,9 @@
     "notes": null,
     "active": true,
     "zone": "Belgrano",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. José Marmol 2134 CABA",
@@ -222,7 +270,9 @@
     "notes": null,
     "active": true,
     "zone": "Boedo",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Juian Álvarez 1340- Villa Crespo",
@@ -231,7 +281,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Crespo",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Juncal 2899",
@@ -240,7 +292,9 @@
     "notes": null,
     "active": true,
     "zone": "Palermo",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Lascano 4032",
@@ -249,7 +303,9 @@
     "notes": null,
     "active": true,
     "zone": "Monte Castro",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Lezica 4475",
@@ -258,7 +314,9 @@
     "notes": null,
     "active": true,
     "zone": "Almagro",
-    "supervisor": "Leonardo"
+    "supervisor": "Leonardo",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Luis M Campos 1027",
@@ -267,7 +325,9 @@
     "notes": null,
     "active": true,
     "zone": "Palermo",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Manzanares 1753",
@@ -276,7 +336,9 @@
     "notes": null,
     "active": true,
     "zone": "Nuñez",
-    "supervisor": "José"
+    "supervisor": "José",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Migueletes 1762",
@@ -285,7 +347,9 @@
     "notes": null,
     "active": true,
     "zone": "Belgrano",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. MIRABILA Humboldt 2045 CABA",
@@ -294,7 +358,9 @@
     "notes": null,
     "active": true,
     "zone": "Palermo",
-    "supervisor": "Jose/Leo"
+    "supervisor": "Jose/Leo",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Moldes 1648- Nuñez",
@@ -303,7 +369,9 @@
     "notes": null,
     "active": true,
     "zone": "Nuñez",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Olagüer y Feliu 2970- Colegiales",
@@ -312,7 +380,9 @@
     "notes": null,
     "active": true,
     "zone": "Colegiales",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Plaza 3547- Coghlan",
@@ -321,7 +391,9 @@
     "notes": null,
     "active": true,
     "zone": "Coghlan",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Puan 256/60- Caballito",
@@ -330,7 +402,9 @@
     "notes": null,
     "active": true,
     "zone": "Caballito",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Rivadavia 9037-Floresta",
@@ -339,7 +413,9 @@
     "notes": null,
     "active": true,
     "zone": "Floresta",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons. Roosevelt 1926- Belgrano",
@@ -348,7 +424,9 @@
     "notes": null,
     "active": true,
     "zone": "Belgrano",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons.Aristobulo del Valle 1301-La Boca.",
@@ -357,7 +435,9 @@
     "notes": null,
     "active": true,
     "zone": "La Boca",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons.Ciudad de la Paz 575",
@@ -366,7 +446,9 @@
     "notes": null,
     "active": true,
     "zone": "Palermo",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons.Palacio Cabrera 5356- Palermo",
@@ -375,7 +457,9 @@
     "notes": null,
     "active": true,
     "zone": "Palermo",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Cons.Thomas Le Bretón 5153 - Villa Urquiza",
@@ -384,7 +468,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Urquiza",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Florentino Ameghino 680",
@@ -393,7 +479,9 @@
     "notes": null,
     "active": true,
     "zone": "Parque Avellaneda",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Gym Formosa 168- Parque Chacabuco",
@@ -402,7 +490,9 @@
     "notes": null,
     "active": true,
     "zone": "Parque Chacabuco",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Holmberg 4150 - Saavedra",
@@ -411,7 +501,9 @@
     "notes": null,
     "active": true,
     "zone": "Saavedra",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "ISEM SA",
@@ -420,7 +512,9 @@
     "notes": "DE BAJA",
     "active": true,
     "zone": "Parque Chacabuco",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Laboratorio Eurolab -Juan de Garay 3831-Boedo",
@@ -429,7 +523,9 @@
     "notes": null,
     "active": true,
     "zone": "Boedo",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Ludoplast Caseros LEONISMO ARGENTINO 3264 -CASEROS",
@@ -438,7 +534,9 @@
     "notes": null,
     "active": true,
     "zone": "CASEROS",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Martinez castro 263",
@@ -447,7 +545,9 @@
     "notes": null,
     "active": true,
     "zone": "Velez Sarfield",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Molycentro - A- Lamas 2135- V- Crespo",
@@ -456,7 +556,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Crespo",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Molysil Avellaneda - Catamarca 1856",
@@ -465,7 +567,9 @@
     "notes": null,
     "active": true,
     "zone": "Avellaneda",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Molysil- Olagüer y Feliü 3398 Colegiales",
@@ -474,7 +578,9 @@
     "notes": null,
     "active": true,
     "zone": "Colegiales",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Monteagudo 121 Ramos Mejia",
@@ -483,7 +589,9 @@
     "notes": null,
     "active": true,
     "zone": "Ramos Mejía",
-    "supervisor": "José"
+    "supervisor": "José",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "mundo chipa",
@@ -492,7 +600,9 @@
     "notes": null,
     "active": true,
     "zone": "villa maipú",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Oficina Av Cordoba 1309",
@@ -501,7 +611,9 @@
     "notes": null,
     "active": true,
     "zone": "Retiro",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Oficina Naon Casa Central",
@@ -510,7 +622,9 @@
     "notes": null,
     "active": true,
     "zone": "Coghlan",
-    "supervisor": "Jose/Leo"
+    "supervisor": "Jose/Leo",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Pergamino 160",
@@ -519,7 +633,9 @@
     "notes": null,
     "active": true,
     "zone": "Floresta",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Peru 1566",
@@ -528,7 +644,9 @@
     "notes": "BAJA A PARTIR DEL 5/6",
     "active": true,
     "zone": "San Telmo",
-    "supervisor": null
+    "supervisor": null,
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Serv Warnes 1243 caba",
@@ -537,7 +655,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Crespo",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "sp . Vte López. Libertad 1650",
@@ -546,7 +666,9 @@
     "notes": null,
     "active": true,
     "zone": "Vicente Lopez",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "SP Const - Pueyrredón",
@@ -555,7 +677,9 @@
     "notes": null,
     "active": true,
     "zone": "Villa Pueyrredón",
-    "supervisor": "Jose"
+    "supervisor": "Jose",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Spital Hnos",
@@ -564,7 +688,9 @@
     "notes": "BAJA",
     "active": true,
     "zone": "Sarandí",
-    "supervisor": "Leonardo"
+    "supervisor": "Leonardo",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   },
   {
     "name": "Virrey Olaguer y Feliu 2453 CABA",
@@ -573,6 +699,8 @@
     "notes": null,
     "active": true,
     "zone": "Colegiales",
-    "supervisor": "José"
+    "supervisor": "José",
+    "monthly_billing": 0,
+    "budget_limit_percent": 5
   }
 ]

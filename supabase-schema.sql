@@ -1,4 +1,4 @@
--- Pedidos Clean It · esquema Supabase v1
+-- Pedidos Clean It · esquema Supabase v5 · SKU, precios y control presupuestario
 -- Ejecutar completo en Supabase > SQL Editor sobre un proyecto nuevo.
 -- La aplicación pública usa únicamente funciones RPC seguras; no expone las tablas al rol anon.
 
@@ -13,6 +13,8 @@ create table if not exists public.services(
   notes text,
   zone text,
   supervisor text,
+  monthly_billing numeric(14,2) not null default 0 check(monthly_billing >= 0),
+  budget_limit_percent numeric(5,2) not null default 5 check(budget_limit_percent between 5 and 7),
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -22,22 +24,33 @@ create table if not exists public.materials(
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,
   name text not null,
+  sku text,
   category text not null,
   detail text,
   unit text not null default 'unidad',
   image_url text,
   suggested_quantity numeric(12,2) not null default 1 check(suggested_quantity > 0 and suggested_quantity <= 999),
+  unit_price numeric(14,2) not null default 0 check(unit_price >= 0),
   sort_order integer not null default 100,
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
+-- Una fila representa que un insumo está oculto para un servicio.
+-- La ausencia de fila significa visible, por lo que todos los insumos quedan habilitados por defecto.
+create table if not exists public.service_material_exclusions(
+  service_id uuid not null references public.services(id) on delete cascade,
+  material_id uuid not null references public.materials(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key(service_id,material_id)
+);
+
 create table if not exists public.profiles(
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
   full_name text,
-  role text not null default 'operator' check(role in('admin','operator')),
+  role text not null default 'operator' check(role in('admin','supplier','operator')),
   service_id uuid references public.services(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -53,6 +66,13 @@ create table if not exists public.orders(
   notes text check(notes is null or char_length(notes) <= 500),
   total_items integer not null default 0 check(total_items >= 0),
   total_units numeric(14,2) not null default 0 check(total_units >= 0),
+  total_amount numeric(14,2) not null default 0 check(total_amount >= 0),
+  monthly_billing_snapshot numeric(14,2) not null default 0 check(monthly_billing_snapshot >= 0),
+  budget_limit_percent_snapshot numeric(5,2) not null default 5 check(budget_limit_percent_snapshot between 5 and 7),
+  budget_limit_amount_snapshot numeric(14,2) not null default 0 check(budget_limit_amount_snapshot >= 0),
+  budget_five_percent_snapshot numeric(14,2) not null default 0 check(budget_five_percent_snapshot >= 0),
+  budget_seven_percent_snapshot numeric(14,2) not null default 0 check(budget_seven_percent_snapshot >= 0),
+  budget_status text not null default 'sin_configurar' check(budget_status in('sin_configurar','dentro','sobre_limite','sobre_7')),
   created_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -64,9 +84,12 @@ create table if not exists public.order_items(
   order_id uuid not null references public.orders(id) on delete cascade,
   material_id uuid references public.materials(id) on delete set null,
   item_name text not null,
+  item_sku text,
   category text,
   unit text not null default 'unidad',
   quantity numeric(12,2) not null check(quantity > 0 and quantity <= 999),
+  unit_price numeric(14,2) not null default 0 check(unit_price >= 0),
+  line_total numeric(14,2) not null default 0 check(line_total >= 0),
   notes text check(notes is null or char_length(notes) <= 300),
   image_url text,
   is_custom boolean not null default false,
@@ -84,6 +107,8 @@ create table if not exists public.order_status_history(
   changed_at timestamptz not null default now()
 );
 
+create unique index if not exists idx_materials_sku_unique on public.materials(lower(sku)) where sku is not null and btrim(sku) <> '';
+create index if not exists idx_service_material_exclusions_material on public.service_material_exclusions(material_id);
 create index if not exists idx_profiles_service on public.profiles(service_id);
 create index if not exists idx_orders_service on public.orders(service_id);
 create index if not exists idx_orders_status on public.orders(status);
@@ -144,6 +169,94 @@ as $$
   select exists(select 1 from public.profiles where id=auth.uid() and role='admin');
 $$;
 
+create or replace function public.is_staff()
+returns boolean
+language sql
+stable
+security definer
+set search_path=public
+as $$
+  select exists(select 1 from public.profiles where id=auth.uid() and role in('admin','supplier'));
+$$;
+
+create or replace function public.staff_update_order_status(
+  p_order_id uuid,
+  p_status text,
+  p_notes text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_order public.orders%rowtype;
+begin
+  if not public.is_staff() then
+    raise exception 'No tenés permisos para cambiar estados de pedidos.';
+  end if;
+
+  if p_status not in('pendiente','preparacion','enviado','entregado','cancelado') then
+    raise exception 'El estado indicado no es válido.';
+  end if;
+
+  update public.orders
+  set status=p_status
+  where id=p_order_id
+  returning * into v_order;
+
+  if not found then
+    raise exception 'El pedido no existe.';
+  end if;
+
+  if p_notes is not null and btrim(p_notes) <> '' then
+    insert into public.order_status_history(order_id,old_status,new_status,changed_by,notes)
+    values(v_order.id,null,v_order.status,auth.uid(),left(btrim(p_notes),300));
+  end if;
+
+  return jsonb_build_object(
+    'id',v_order.id,
+    'order_code',v_order.order_code,
+    'status',v_order.status,
+    'updated_at',v_order.updated_at,
+    'closed_at',v_order.closed_at
+  );
+end;
+$$;
+
+-- Reemplazo atómico del catálogo oculto de un servicio.
+create or replace function public.admin_set_service_hidden_materials(
+  p_service_id uuid,
+  p_hidden_material_ids uuid[]
+)
+returns integer
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_count integer;
+begin
+  if not public.is_admin() then
+    raise exception 'No tenés permisos de administrador.';
+  end if;
+  if not exists(select 1 from public.services where id=p_service_id) then
+    raise exception 'El servicio no existe.';
+  end if;
+
+  delete from public.service_material_exclusions where service_id=p_service_id;
+
+  insert into public.service_material_exclusions(service_id,material_id)
+  select p_service_id,m.id
+  from public.materials m
+  where m.id=any(coalesce(p_hidden_material_ids,array[]::uuid[]))
+  on conflict(service_id,material_id) do nothing;
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
 create or replace function public.prepare_order_status()
 returns trigger
 language plpgsql
@@ -184,6 +297,7 @@ create trigger orders_status_audit after insert or update of status on public.or
 
 alter table public.services enable row level security;
 alter table public.materials enable row level security;
+alter table public.service_material_exclusions enable row level security;
 alter table public.profiles enable row level security;
 alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
@@ -191,23 +305,46 @@ alter table public.order_status_history enable row level security;
 
 drop policy if exists services_admin_read on public.services;
 drop policy if exists services_admin_write on public.services;
+drop policy if exists services_staff_read on public.services;
+drop policy if exists services_admin_all on public.services;
+create policy services_staff_read on public.services for select to authenticated using(public.is_staff());
+create policy services_admin_all on public.services for all to authenticated using(public.is_admin()) with check(public.is_admin());
+
 drop policy if exists materials_admin_read on public.materials;
 drop policy if exists materials_admin_write on public.materials;
+drop policy if exists materials_staff_read on public.materials;
+drop policy if exists materials_admin_all on public.materials;
+create policy materials_staff_read on public.materials for select to authenticated using(public.is_staff());
+create policy materials_admin_all on public.materials for all to authenticated using(public.is_admin()) with check(public.is_admin());
+
+drop policy if exists service_material_exclusions_admin_all on public.service_material_exclusions;
+drop policy if exists service_material_exclusions_staff_read on public.service_material_exclusions;
+drop policy if exists service_material_exclusions_admin_all_v2 on public.service_material_exclusions;
+create policy service_material_exclusions_staff_read on public.service_material_exclusions for select to authenticated using(public.is_staff());
+create policy service_material_exclusions_admin_all_v2 on public.service_material_exclusions for all to authenticated using(public.is_admin()) with check(public.is_admin());
+
 drop policy if exists profiles_self_admin_read on public.profiles;
 drop policy if exists profiles_admin_update on public.profiles;
-drop policy if exists orders_admin_all on public.orders;
-drop policy if exists order_items_admin_all on public.order_items;
-drop policy if exists order_history_admin_read on public.order_status_history;
+drop policy if exists profiles_staff_read on public.profiles;
+drop policy if exists profiles_admin_update_v2 on public.profiles;
+create policy profiles_staff_read on public.profiles for select to authenticated using(id=auth.uid() or public.is_staff());
+create policy profiles_admin_update_v2 on public.profiles for update to authenticated using(public.is_admin()) with check(public.is_admin());
 
-create policy services_admin_read on public.services for select to authenticated using(public.is_admin());
-create policy services_admin_write on public.services for all to authenticated using(public.is_admin()) with check(public.is_admin());
-create policy materials_admin_read on public.materials for select to authenticated using(public.is_admin());
-create policy materials_admin_write on public.materials for all to authenticated using(public.is_admin()) with check(public.is_admin());
-create policy profiles_self_admin_read on public.profiles for select to authenticated using(id=auth.uid() or public.is_admin());
-create policy profiles_admin_update on public.profiles for update to authenticated using(public.is_admin()) with check(public.is_admin());
-create policy orders_admin_all on public.orders for all to authenticated using(public.is_admin()) with check(public.is_admin());
-create policy order_items_admin_all on public.order_items for all to authenticated using(public.is_admin()) with check(public.is_admin());
-create policy order_history_admin_read on public.order_status_history for select to authenticated using(public.is_admin());
+drop policy if exists orders_admin_all on public.orders;
+drop policy if exists orders_staff_read on public.orders;
+drop policy if exists orders_admin_all_v2 on public.orders;
+create policy orders_staff_read on public.orders for select to authenticated using(public.is_staff());
+create policy orders_admin_all_v2 on public.orders for all to authenticated using(public.is_admin()) with check(public.is_admin());
+
+drop policy if exists order_items_admin_all on public.order_items;
+drop policy if exists order_items_staff_read on public.order_items;
+drop policy if exists order_items_admin_all_v2 on public.order_items;
+create policy order_items_staff_read on public.order_items for select to authenticated using(public.is_staff());
+create policy order_items_admin_all_v2 on public.order_items for all to authenticated using(public.is_admin()) with check(public.is_admin());
+
+drop policy if exists order_history_admin_read on public.order_status_history;
+drop policy if exists order_history_staff_read on public.order_status_history;
+create policy order_history_staff_read on public.order_status_history for select to authenticated using(public.is_staff());
 
 -- Lectura pública controlada del selector y catálogo.
 create or replace function public.public_order_bootstrap()
@@ -221,7 +358,7 @@ as $$
     'services', coalesce((
       select jsonb_agg(to_jsonb(s) order by s.name)
       from (
-        select id,name,address,description,zone,supervisor,active
+        select id,name,address,description,zone,supervisor,monthly_billing,budget_limit_percent,active
         from public.services
         where active=true
       ) s
@@ -229,10 +366,16 @@ as $$
     'materials', coalesce((
       select jsonb_agg(to_jsonb(m) order by m.category,m.sort_order,m.name)
       from (
-        select id,slug,name,category,detail,unit,image_url,suggested_quantity,sort_order,active
+        select id,slug,name,sku,category,detail,unit,image_url,suggested_quantity,unit_price,sort_order,active
         from public.materials
         where active=true
       ) m
+    ), '[]'::jsonb),
+    'hidden_materials', coalesce((
+      select jsonb_agg(jsonb_build_object('service_id',x.service_id,'material_id',x.material_id))
+      from public.service_material_exclusions x
+      join public.services s on s.id=x.service_id and s.active=true
+      join public.materials m on m.id=x.material_id and m.active=true
     ), '[]'::jsonb)
   );
 $$;
@@ -252,17 +395,30 @@ set search_path=public
 as $$
 declare
   v_order public.orders%rowtype;
+  v_service public.services%rowtype;
   v_item jsonb;
   v_material public.materials%rowtype;
   v_material_id uuid;
   v_quantity numeric(12,2);
   v_custom_name text;
+  v_custom_sku text;
   v_unit text;
   v_item_notes text;
+  v_unit_price numeric(14,2);
+  v_line_total numeric(14,2);
   v_count integer := 0;
-  v_total numeric(14,2) := 0;
+  v_total_units numeric(14,2) := 0;
+  v_total_amount numeric(14,2) := 0;
+  v_limit_amount numeric(14,2) := 0;
+  v_five_amount numeric(14,2) := 0;
+  v_seven_amount numeric(14,2) := 0;
+  v_budget_status text := 'sin_configurar';
 begin
-  if not exists(select 1 from public.services where id=p_service_id and active=true) then
+  select * into v_service
+  from public.services
+  where id=p_service_id and active=true;
+
+  if not found then
     raise exception 'El servicio seleccionado no existe o está inactivo.';
   end if;
 
@@ -286,13 +442,30 @@ begin
     raise exception 'El pedido supera el máximo de 80 ítems.';
   end if;
 
-  insert into public.orders(service_id,reporter_name,priority,notes,created_by)
-  values(p_service_id,btrim(p_reporter_name),coalesce(p_priority,'normal'),nullif(btrim(coalesce(p_notes,'')),''),auth.uid())
+  v_five_amount := round(v_service.monthly_billing * 0.05, 2);
+  v_seven_amount := round(v_service.monthly_billing * 0.07, 2);
+  v_limit_amount := round(v_service.monthly_billing * v_service.budget_limit_percent / 100, 2);
+
+  insert into public.orders(
+    service_id,reporter_name,priority,notes,created_by,
+    monthly_billing_snapshot,budget_limit_percent_snapshot,
+    budget_limit_amount_snapshot,budget_five_percent_snapshot,budget_seven_percent_snapshot
+  )
+  values(
+    p_service_id,btrim(p_reporter_name),coalesce(p_priority,'normal'),
+    nullif(btrim(coalesce(p_notes,'')),''),auth.uid(),
+    v_service.monthly_billing,v_service.budget_limit_percent,
+    v_limit_amount,v_five_amount,v_seven_amount
+  )
   returning * into v_order;
 
   for v_item in select value from jsonb_array_elements(p_items)
   loop
-    v_quantity := nullif(v_item->>'quantity','')::numeric;
+    begin
+      v_quantity := nullif(v_item->>'quantity','')::numeric;
+    exception when invalid_text_representation then
+      raise exception 'Una de las cantidades no es válida.';
+    end;
     if v_quantity is null or v_quantity <= 0 or v_quantity > 999 then
       raise exception 'Una de las cantidades no es válida.';
     end if;
@@ -312,33 +485,84 @@ begin
         raise exception 'Uno de los insumos ya no está disponible.';
       end if;
 
-      insert into public.order_items(order_id,material_id,item_name,category,unit,quantity,notes,image_url,is_custom,sort_order)
-      values(v_order.id,v_material.id,v_material.name,v_material.category,v_material.unit,v_quantity,null,v_material.image_url,false,v_material.sort_order);
+      if exists(
+        select 1 from public.service_material_exclusions
+        where service_id=p_service_id and material_id=v_material_id
+      ) then
+        raise exception 'Uno de los insumos no está habilitado para este servicio.';
+      end if;
+
+      v_unit_price := v_material.unit_price;
+      v_line_total := round(v_quantity * v_unit_price, 2);
+
+      insert into public.order_items(
+        order_id,material_id,item_name,item_sku,category,unit,quantity,unit_price,line_total,
+        notes,image_url,is_custom,sort_order
+      )
+      values(
+        v_order.id,v_material.id,v_material.name,nullif(btrim(v_material.sku),''),v_material.category,
+        v_material.unit,v_quantity,v_unit_price,v_line_total,null,v_material.image_url,false,v_material.sort_order
+      );
     else
       v_custom_name := btrim(coalesce(v_item->>'custom_name',''));
+      v_custom_sku := nullif(btrim(coalesce(v_item->>'sku','')),'');
       v_unit := btrim(coalesce(v_item->>'unit','unidad'));
       v_item_notes := nullif(btrim(coalesce(v_item->>'notes','')),'');
+
+      begin
+        v_unit_price := coalesce(nullif(v_item->>'unit_price','')::numeric,0);
+      exception when invalid_text_representation then
+        raise exception 'El precio del insumo no listado no es válido.';
+      end;
 
       if char_length(v_custom_name) not between 2 and 120 then
         raise exception 'El nombre del insumo no listado no es válido.';
       end if;
+      if v_custom_sku is not null and char_length(v_custom_sku) > 80 then
+        raise exception 'El SKU del insumo no listado es demasiado extenso.';
+      end if;
       if char_length(v_unit) not between 1 and 60 then
         raise exception 'La unidad del insumo no listado no es válida.';
+      end if;
+      if v_unit_price < 0 or v_unit_price > 999999999.99 then
+        raise exception 'El precio del insumo no listado no es válido.';
       end if;
       if v_item_notes is not null and char_length(v_item_notes) > 300 then
         raise exception 'El detalle del insumo no listado es demasiado extenso.';
       end if;
 
-      insert into public.order_items(order_id,material_id,item_name,category,unit,quantity,notes,image_url,is_custom,sort_order)
-      values(v_order.id,null,v_custom_name,'Excepción',v_unit,v_quantity,v_item_notes,'assets/materials/default.svg',true,9999);
+      v_line_total := round(v_quantity * v_unit_price, 2);
+
+      insert into public.order_items(
+        order_id,material_id,item_name,item_sku,category,unit,quantity,unit_price,line_total,
+        notes,image_url,is_custom,sort_order
+      )
+      values(
+        v_order.id,null,v_custom_name,v_custom_sku,'Excepción',v_unit,v_quantity,v_unit_price,v_line_total,
+        v_item_notes,'assets/materials/default.svg',true,9999
+      );
     end if;
 
     v_count := v_count + 1;
-    v_total := v_total + v_quantity;
+    v_total_units := v_total_units + v_quantity;
+    v_total_amount := v_total_amount + v_line_total;
   end loop;
 
+  if v_service.monthly_billing <= 0 then
+    v_budget_status := 'sin_configurar';
+  elsif v_total_amount > v_seven_amount then
+    v_budget_status := 'sobre_7';
+  elsif v_total_amount > v_limit_amount then
+    v_budget_status := 'sobre_limite';
+  else
+    v_budget_status := 'dentro';
+  end if;
+
   update public.orders
-  set total_items=v_count,total_units=v_total
+  set total_items=v_count,
+      total_units=v_total_units,
+      total_amount=v_total_amount,
+      budget_status=v_budget_status
   where id=v_order.id
   returning * into v_order;
 
@@ -347,18 +571,29 @@ begin
     'order_code',v_order.order_code,
     'created_at',v_order.created_at,
     'item_count',v_order.total_items,
-    'total_units',v_order.total_units
+    'total_units',v_order.total_units,
+    'total_amount',v_order.total_amount,
+    'monthly_billing',v_order.monthly_billing_snapshot,
+    'budget_limit_percent',v_order.budget_limit_percent_snapshot,
+    'budget_limit_amount',v_order.budget_limit_amount_snapshot,
+    'budget_five_amount',v_order.budget_five_percent_snapshot,
+    'budget_seven_amount',v_order.budget_seven_percent_snapshot,
+    'budget_status',v_order.budget_status
   );
 exception when others then
   raise;
 end;
 $$;
 
-revoke all on public.services, public.materials, public.profiles, public.orders, public.order_items, public.order_status_history from anon;
-grant select,insert,update,delete on public.services, public.materials, public.profiles, public.orders, public.order_items, public.order_status_history to authenticated;
+revoke all on public.services, public.materials, public.service_material_exclusions, public.profiles, public.orders, public.order_items, public.order_status_history from anon;
+grant select,insert,update,delete on public.services, public.materials, public.service_material_exclusions, public.profiles, public.orders, public.order_items, public.order_status_history to authenticated;
 grant usage,select on all sequences in schema public to authenticated;
 grant execute on function public.public_order_bootstrap() to anon,authenticated;
 grant execute on function public.public_create_order(uuid,text,text,text,jsonb) to anon,authenticated;
+revoke all on function public.staff_update_order_status(uuid,text,text) from public;
+grant execute on function public.staff_update_order_status(uuid,text,text) to authenticated;
+revoke all on function public.admin_set_service_hidden_materials(uuid,uuid[]) from public;
+grant execute on function public.admin_set_service_hidden_materials(uuid,uuid[]) to authenticated;
 
 -- Bucket público para imágenes cargadas desde Administración.
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
@@ -379,7 +614,7 @@ do $$
 declare
   v_table text;
 begin
-  foreach v_table in array array['orders','order_items','order_status_history','materials','services','profiles']
+  foreach v_table in array array['orders','order_items','order_status_history','materials','services','service_material_exclusions','profiles']
   loop
     if not exists(
       select 1 from pg_publication_tables

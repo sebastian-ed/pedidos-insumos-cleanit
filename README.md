@@ -24,6 +24,7 @@ Web app responsive para que los operarios soliciten insumos de manera visual por
 - Detalle completo de cada pedido.
 - Copia del pedido para WhatsApp o portapapeles.
 - Gestión de insumos, imágenes, servicios y usuarios.
+- Habilitación u ocultamiento de insumos por servicio, con catálogo completo por defecto.
 - Historial de cambios de estado.
 - Actualización en vivo mediante Supabase Realtime.
 
@@ -66,6 +67,7 @@ Se utilizan únicamente la **Project URL** y la clave pública **anon/publishabl
 - `app.js`: lógica de pedidos y administración.
 - `config.js`: conexión con el nuevo proyecto Supabase.
 - `supabase-schema.sql`: tablas, seguridad, RPC, Realtime, storage y datos iniciales.
+- `actualizar-visibilidad-por-servicio.sql`: actualización incremental para bases ya instaladas.
 - `servicios-precargados.json`: respaldo de los 64 servicios.
 - `seed-materials.json`: respaldo del catálogo inicial.
 - `assets/materials/`: imágenes visuales de los insumos.
@@ -80,3 +82,96 @@ Los operarios no leen ni escriben directamente las tablas. La vista pública usa
 - no permiten consultar otros pedidos, usuarios ni historial.
 
 Las tablas administrativas están protegidas con Row Level Security y sólo son accesibles para perfiles con rol `admin`.
+
+
+## Visibilidad de insumos por servicio
+
+La aplicación permite configurar el catálogo que ve cada servicio:
+
+- Todos los insumos activos son visibles por defecto.
+- En `Administración → Servicios`, usá el botón de controles deslizantes de cada servicio.
+- Desactivá únicamente los insumos que ese establecimiento no utiliza.
+- Los nuevos insumos quedan automáticamente visibles en todos los servicios.
+- La validación también se aplica en la base de datos: un pedido manipulado no puede incluir un insumo oculto.
+
+### Proyecto Supabase ya instalado
+
+Antes de publicar esta versión, ejecutá una vez:
+
+```text
+actualizar-visibilidad-por-servicio.sql
+```
+
+El script es incremental: no elimina ni modifica pedidos, servicios, materiales o imágenes existentes.
+
+## Actualización v4 · Roles y proveedor
+
+Esta versión incorpora un rol `Proveedor` para delegar la gestión operativa de pedidos sin entregar control total del sistema.
+
+### Permisos por rol
+
+| Función | Administrador | Proveedor |
+|---|---:|---:|
+| Ver panel general | Sí | Sí |
+| Ver pedidos | Sí | Sí |
+| Copiar / compartir pedidos | Sí | Sí |
+| Cambiar estado de pedidos | Sí | Sí |
+| Ver historial | Sí | Sí |
+| Crear / editar / eliminar insumos | Sí | No |
+| Cargar imágenes de insumos | Sí | No |
+| Crear / editar / eliminar servicios | Sí | No |
+| Configurar insumos visibles por servicio | Sí | No |
+| Eliminar pedidos | Sí | No |
+| Cambiar roles de usuarios | Sí | No |
+
+### Instalación sobre un proyecto existente
+
+Ejecutar en Supabase SQL Editor:
+
+```sql
+-- usar el archivo incluido:
+-- actualizar-roles-proveedor.sql
+```
+
+Luego subir los archivos actualizados a GitHub Pages.
+
+### Crear usuario proveedor
+
+Por seguridad, la app no crea usuarios desde el frontend. Crear usuarios requeriría exponer la `service_role key`, lo cual sería un riesgo crítico.
+
+Flujo recomendado:
+
+1. Supabase → Authentication → Users → Add user.
+2. Crear email y contraseña.
+3. Entrar a la app como administrador.
+4. Ir a Usuarios.
+5. Editar el usuario y asignar rol `Proveedor`.
+
+Alternativa rápida por SQL:
+
+```sql
+update public.profiles
+set role = 'supplier', full_name = 'Proveedor'
+where email = 'proveedor@dominio.com';
+```
+
+## Actualización v5 · SKU, precios y control presupuestario
+
+La versión v5 agrega:
+
+- SKU único y precio unitario en cada insumo.
+- Carrito con subtotal por producto y total del pedido en tiempo real.
+- Facturación mensual por servicio.
+- Límite operativo configurable entre 5% y 7% de la facturación.
+- Referencias automáticas del 5% y del 7%.
+- Advertencia al superar el límite y alerta crítica al superar el 7%.
+- Envío excepcional permitido aunque se supere el tope.
+- Registro histórico de SKU, precio, total y situación presupuestaria de cada pedido.
+
+Para actualizar una instalación existente, ejecutar:
+
+```text
+actualizar-sku-precios-topes.sql
+```
+
+Después, reemplazar los archivos publicados en GitHub Pages. Las instrucciones completas están en `LEEME-ACTUALIZACION-SKU-PRECIOS-TOPES.md`.

@@ -18,6 +18,9 @@
   };
 
   const PRIORITY_LABELS = { normal: 'Normal', urgente: 'Urgente' };
+  const ROLE_LABELS = { admin: 'Administrador', supplier: 'Proveedor', operator: 'Operario especial' };
+  const FULL_ADMIN_ROLE = 'admin';
+
   const STATUS_OPTIONS = Object.entries(STATUS_LABELS)
     .map(([value, label]) => `<option value="${value}">${label}</option>`)
     .join('');
@@ -33,6 +36,9 @@
     orderItems: [],
     profiles: [],
     history: [],
+    serviceMaterialExclusions: [],
+    selectedServiceMaterialsId: null,
+    serviceMaterialsDraftHidden: new Set(),
     publicServiceId: null,
     draft: new Map(),
     extras: [],
@@ -41,12 +47,20 @@
     lastSuccessText: '',
     channel: null,
     refreshTimer: null,
+    lastBudgetStatus: null,
     initialized: false
   };
 
   const E = {};
   const M = {};
   const dtf = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+
+  function isFullAdmin() { return S.profile?.role === FULL_ADMIN_ROLE; }
+  function isSupplier() { return S.profile?.role === 'supplier'; }
+  function canOperateOrders() { return ['admin', 'supplier'].includes(S.profile?.role); }
+  function canManageMasterData() { return isFullAdmin(); }
+  function canManageUsers() { return isFullAdmin(); }
+  function allowedTabs() { return isFullAdmin() ? ['dashboard','orders','materials','services','users','history'] : ['dashboard','orders','history']; }
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -61,6 +75,7 @@
     M.orderSuccess = new bootstrap.Modal(E.orderSuccessModal);
     M.orderDetail = new bootstrap.Modal(E.orderDetailModal);
     M.service = new bootstrap.Modal(E.serviceModal);
+    M.serviceMaterials = new bootstrap.Modal(E.serviceMaterialsModal);
     M.material = new bootstrap.Modal(E.materialModal);
     M.user = new bootstrap.Modal(E.userModal);
     M.toast = new bootstrap.Toast(E.appToast, { delay: 3200 });
@@ -136,6 +151,14 @@
     E.materialImageFile.addEventListener('change', previewMaterialImage);
     E.addServiceButton.addEventListener('click', () => openService());
     E.serviceForm.addEventListener('submit', saveService);
+    E.serviceBilling.addEventListener('input', renderServiceBudgetPreview);
+    E.serviceBudgetPercent.addEventListener('input', renderServiceBudgetPreview);
+    E.serviceMaterialsSearch.addEventListener('input', renderServiceMaterials);
+    E.serviceMaterialsFilter.addEventListener('change', renderServiceMaterials);
+    E.serviceMaterialsList.addEventListener('change', handleServiceMaterialToggle);
+    E.showAllServiceMaterialsButton.addEventListener('click', () => setAllServiceMaterialsVisible(true));
+    E.hideAllServiceMaterialsButton.addEventListener('click', () => setAllServiceMaterialsVisible(false));
+    E.saveServiceMaterialsButton.addEventListener('click', saveServiceMaterials);
     E.userForm.addEventListener('submit', saveUser);
 
     E.copyOrderButton.addEventListener('click', () => {
@@ -163,6 +186,7 @@
     const payload = typeof data === 'string' ? JSON.parse(data) : (data || {});
     S.services = Array.isArray(payload.services) ? payload.services : [];
     S.materials = Array.isArray(payload.materials) ? payload.materials : [];
+    S.serviceMaterialExclusions = Array.isArray(payload.hidden_materials) ? payload.hidden_materials : [];
     populatePublicServiceSelect();
     populateOperatorCategories();
   }
@@ -187,7 +211,8 @@
 
   function populateOperatorCategories() {
     const current = E.operatorCategory?.value || '';
-    const categories = [...new Set(S.materials.filter((m) => m.active !== false).map((m) => m.category).filter(Boolean))]
+    const source = S.publicServiceId ? visibleMaterialsForService(S.publicServiceId) : S.materials.filter((m) => m.active !== false);
+    const categories = [...new Set(source.map((m) => m.category).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, 'es'));
     E.operatorCategory.innerHTML = '<option value="">Todas las categorías</option>' + categories
       .map((category) => `<option value="${ea(category)}">${eh(category)}</option>`)
@@ -217,10 +242,12 @@
     S.publicServiceId = serviceId;
     S.draft.clear();
     S.extras = [];
+    S.lastBudgetStatus = null;
     E.operatorPriority.value = 'normal';
     E.operatorNotes.value = '';
     E.operatorSearch.value = '';
     E.operatorCategory.value = '';
+    populateOperatorCategories();
 
     showOperatorApp();
   }
@@ -260,26 +287,67 @@
   }
 
   function renderOperatorMetrics() {
-    const selectedMaterials = [...S.draft.values()].filter((qty) => qty > 0).length;
-    const totalUnits = [...S.draft.values()].reduce((sum, qty) => sum + number(qty), 0) +
-      S.extras.reduce((sum, item) => sum + number(item.quantity), 0);
-    const totalItems = selectedMaterials + S.extras.length;
+    const metrics = cartMetrics();
+    const previousStatus = S.lastBudgetStatus;
+    S.lastBudgetStatus = metrics.status;
 
-    E.operatorSelectedCount.textContent = String(totalItems);
-    E.operatorUnitsCount.textContent = formatQty(totalUnits);
+    E.operatorSelectedCount.textContent = String(metrics.totalItems);
+    E.operatorUnitsCount.textContent = formatQty(metrics.totalUnits);
     E.operatorCustomCount.textContent = String(S.extras.length);
+    E.operatorCartTotal.textContent = formatCurrency(metrics.totalAmount);
+    E.operatorSaveTotal.textContent = formatCurrency(metrics.totalAmount);
     E.operatorPriorityLabel.textContent = PRIORITY_LABELS[E.operatorPriority.value] || 'Normal';
-    E.operatorDraftCount.textContent = `${totalItems} ${totalItems === 1 ? 'insumo seleccionado' : 'insumos seleccionados'}`;
-    E.operatorSaveButton.disabled = totalItems === 0;
+    E.operatorDraftCount.textContent = `${metrics.totalItems} ${metrics.totalItems === 1 ? 'insumo seleccionado' : 'insumos seleccionados'}`;
+    E.operatorSaveButton.disabled = metrics.totalItems === 0;
+
+    E.operatorBudgetFive.textContent = formatCurrency(metrics.fiveAmount);
+    E.operatorBudgetLimit.textContent = formatCurrency(metrics.limitAmount);
+    E.operatorBudgetSeven.textContent = formatCurrency(metrics.sevenAmount);
+    E.operatorBudgetLimitLabel.textContent = `Límite ${formatPercent(metrics.limitPercent)}`;
+    E.operatorBudgetDescription.textContent = metrics.billing > 0
+      ? `Facturación mensual: ${formatCurrency(metrics.billing)}. El límite operativo está configurado en ${formatPercent(metrics.limitPercent)}.`
+      : 'Administración todavía no configuró la facturación mensual de este servicio.';
+
+    const usageText = metrics.limitAmount > 0
+      ? `${formatPercent(metrics.usagePercent)} del límite utilizado · Disponible: ${formatCurrency(Math.max(0, metrics.limitAmount - metrics.totalAmount))}`
+      : 'Sin facturación configurada';
+    E.operatorBudgetUsage.textContent = usageText;
+    E.operatorBudgetProgress.style.width = `${Math.min(100, Math.max(0, metrics.usagePercent))}%`;
+    E.operatorBudgetProgress.className = `progress-bar ${metrics.status === 'sobre_7' ? 'bg-danger' : (metrics.status === 'sobre_limite' ? 'bg-warning' : 'bg-primary')}`;
+    E.operatorBudgetPanel.classList.remove('budget-status-dentro','budget-status-warning','budget-status-danger','budget-status-unconfigured');
+    E.operatorBudgetPanel.classList.add(metrics.status === 'sobre_7' ? 'budget-status-danger' : (metrics.status === 'sobre_limite' ? 'budget-status-warning' : (metrics.status === 'sin_configurar' ? 'budget-status-unconfigured' : 'budget-status-dentro')));
+
+    let alertClass = '';
+    let alertHtml = '';
+    if (metrics.status === 'sobre_7') {
+      alertClass = 'alert-danger';
+      alertHtml = `<strong>Alerta crítica:</strong> el pedido supera el 7% de la facturación por ${eh(formatCurrency(metrics.totalAmount - metrics.sevenAmount))}. Podés enviarlo, pero quedará registrado como excepción.`;
+    } else if (metrics.status === 'sobre_limite') {
+      alertClass = 'alert-warning';
+      alertHtml = `<strong>Tope superado:</strong> el pedido excede el límite de ${eh(formatPercent(metrics.limitPercent))} por ${eh(formatCurrency(metrics.totalAmount - metrics.limitAmount))}. Podés continuar de manera excepcional.`;
+    } else if (metrics.unpricedCount > 0) {
+      alertClass = 'alert-warning';
+      alertHtml = `<strong>Total incompleto:</strong> hay ${metrics.unpricedCount} ${metrics.unpricedCount === 1 ? 'insumo seleccionado sin precio' : 'insumos seleccionados sin precio'}. El valor del carrito puede estar subestimado.`;
+    } else if (metrics.status === 'sin_configurar') {
+      alertClass = 'alert-info';
+      alertHtml = '<strong>Sin tope calculado:</strong> cargá la facturación mensual desde Administración → Servicios.';
+    }
+
+    E.operatorBudgetAlert.className = `alert mt-3 mb-0 ${alertHtml ? alertClass : 'd-none'}`;
+    E.operatorBudgetAlert.innerHTML = alertHtml;
+
+    if (previousStatus && previousStatus !== metrics.status) {
+      if (metrics.status === 'sobre_7') toast('Alerta: el pedido superó el 7% de la facturación.', 'error');
+      else if (metrics.status === 'sobre_limite') toast(`El pedido superó el límite de ${formatPercent(metrics.limitPercent)}.`, 'info');
+    }
   }
 
   function renderOperatorGrid() {
     const query = normalize(E.operatorSearch.value);
     const category = E.operatorCategory.value;
-    const materials = S.materials
-      .filter((item) => item.active !== false)
+    const materials = visibleMaterialsForService(S.publicServiceId)
       .filter((item) => !category || item.category === category)
-      .filter((item) => !query || normalize(`${item.name} ${item.category} ${item.detail || ''}`).includes(query))
+      .filter((item) => !query || normalize(`${item.name} ${item.sku || ''} ${item.category} ${item.detail || ''}`).includes(query))
       .sort(materialSort);
 
     const materialCards = materials.map(renderMaterialCard).join('');
@@ -291,6 +359,7 @@
   function renderMaterialCard(material) {
     const qty = number(S.draft.get(material.id));
     const selected = qty > 0;
+    const unitPrice = number(material.unit_price);
     return `
       <article class="material-card ${selected ? 'is-selected' : ''}" data-material-card="${ea(material.id)}">
         <div class="material-image-wrap">
@@ -301,12 +370,14 @@
           <div class="material-category">${eh(material.category || 'General')}</div>
           <div class="material-name">${eh(material.name)}</div>
           <div class="material-detail">${eh(material.detail || material.unit || '')}</div>
+          <div class="material-commercial"><span>${eh(material.sku || 'Sin SKU')}</span><strong>${unitPrice > 0 ? eh(formatCurrency(unitPrice)) : 'Precio pendiente'}</strong></div>
           <div class="stock-control">
             <button class="btn btn-outline-secondary" type="button" data-qty-action="minus" data-material-id="${ea(material.id)}" aria-label="Restar"><i class="bi bi-dash-lg"></i></button>
             <input class="form-control stock-input" type="number" min="0" max="999" step="0.01" inputmode="decimal" value="${ea(formatInputQty(qty))}" data-qty-input data-material-id="${ea(material.id)}" aria-label="Cantidad de ${ea(material.name)}">
             <button class="btn btn-outline-primary" type="button" data-qty-action="plus" data-material-id="${ea(material.id)}" aria-label="Sumar"><i class="bi bi-plus-lg"></i></button>
           </div>
           <div class="stock-unit">${eh(material.unit || 'unidad')}</div>
+          <div class="material-line-total">${selected ? `Subtotal: ${eh(formatCurrency(qty * unitPrice))}` : 'Subtotal: $ 0'}</div>
           <div class="threshold-note">Sugerido habitual: ${eh(formatQty(material.suggested_quantity || 1))}</div>
         </div>
       </article>`;
@@ -324,12 +395,14 @@
           <div class="material-category">Excepción</div>
           <div class="material-name">${eh(item.name)}</div>
           <div class="material-detail">${eh(item.notes || item.unit)}</div>
+          <div class="material-commercial"><span>${eh(item.sku || 'Sin SKU')}</span><strong>${number(item.unitPrice) > 0 ? eh(formatCurrency(item.unitPrice)) : 'Precio pendiente'}</strong></div>
           <div class="stock-control">
             <button class="btn btn-outline-secondary" type="button" data-extra-action="minus" data-extra-index="${index}" aria-label="Restar"><i class="bi bi-dash-lg"></i></button>
             <input class="form-control stock-input" type="number" min="0.01" max="999" step="0.01" value="${ea(formatInputQty(item.quantity))}" data-extra-input data-extra-index="${index}">
             <button class="btn btn-outline-primary" type="button" data-extra-action="plus" data-extra-index="${index}" aria-label="Sumar"><i class="bi bi-plus-lg"></i></button>
           </div>
           <div class="stock-unit">${eh(item.unit)}</div>
+          <div class="material-line-total">Subtotal: ${eh(formatCurrency(number(item.quantity) * number(item.unitPrice)))}</div>
           <div class="custom-card-actions"><button class="btn btn-outline-danger btn-sm" type="button" data-custom-remove="${index}"><i class="bi bi-trash3 me-1"></i>Quitar</button></div>
         </div>
       </article>`;
@@ -399,6 +472,12 @@
       return;
     }
 
+    const configureServiceMaterialsButton = event.target.closest('[data-configure-service-materials]');
+    if (configureServiceMaterialsButton) {
+      openServiceMaterials(configureServiceMaterialsButton.dataset.configureServiceMaterials);
+      return;
+    }
+
     const editServiceButton = event.target.closest('[data-edit-service]');
     if (editServiceButton) {
       openService(editServiceButton.dataset.editService);
@@ -429,7 +508,7 @@
       if (qty > 0) S.draft.set(materialId, qty);
       else S.draft.delete(materialId);
       renderOperatorMetrics();
-      updateMaterialCardState(materialInput.closest('.material-card'), qty);
+      updateMaterialCardState(materialInput.closest('.material-card'), qty, materialId);
       return;
     }
 
@@ -443,18 +522,24 @@
       const card = extraInput.closest('.material-card');
       const badge = card?.querySelector('.material-status');
       if (badge) badge.textContent = `${formatQty(qty)} pedido`;
+      const line = card?.querySelector('.material-line-total');
+      if (line) line.textContent = `Subtotal: ${formatCurrency(qty * number(S.extras[index].unitPrice))}`;
     }
   }
 
-  function updateMaterialCardState(card, qty) {
+  function updateMaterialCardState(card, qty, materialId) {
     if (!card) return;
     const selected = qty > 0;
     card.classList.toggle('is-selected', selected);
     const badge = card.querySelector('.material-status');
-    if (!badge) return;
-    badge.classList.toggle('selected', selected);
-    badge.classList.toggle('idle', !selected);
-    badge.textContent = selected ? `${formatQty(qty)} pedido` : 'Sin pedir';
+    if (badge) {
+      badge.classList.toggle('selected', selected);
+      badge.classList.toggle('idle', !selected);
+      badge.textContent = selected ? `${formatQty(qty)} pedido` : 'Sin pedir';
+    }
+    const material = S.materials.find((item) => item.id === materialId);
+    const line = card.querySelector('.material-line-total');
+    if (line) line.textContent = `Subtotal: ${formatCurrency(qty * number(material?.unit_price))}`;
   }
 
   function changeMaterialQty(materialId, delta) {
@@ -481,6 +566,7 @@
     E.extraMaterialForm.reset();
     E.extraQuantity.value = '1';
     E.extraUnit.value = 'unidad';
+    E.extraUnitPrice.value = '0';
     M.extraMaterial.show();
     setTimeout(() => E.extraName.focus(), 250);
   }
@@ -488,6 +574,8 @@
   function addExtraMaterial(event) {
     event.preventDefault();
     const name = E.extraName.value.trim();
+    const sku = E.extraSku.value.trim();
+    const unitPrice = clampMoney(E.extraUnitPrice.value);
     const quantity = clampQty(E.extraQuantity.value, 0.01);
     const unit = E.extraUnit.value.trim() || 'unidad';
     const notes = E.extraNotes.value.trim();
@@ -497,7 +585,7 @@
       return;
     }
 
-    S.extras.push({ name, quantity, unit, notes });
+    S.extras.push({ name, sku, unitPrice, quantity, unit, notes });
     M.extraMaterial.hide();
     renderOperatorMetrics();
     renderOperatorGrid();
@@ -512,6 +600,15 @@
       return;
     }
 
+    const metrics = cartMetrics();
+    if (metrics.status === 'sobre_limite' || metrics.status === 'sobre_7' || metrics.unpricedCount > 0) {
+      const warnings = [];
+      if (metrics.status === 'sobre_7') warnings.push(`El pedido supera el 7% por ${formatCurrency(metrics.totalAmount - metrics.sevenAmount)}.`);
+      else if (metrics.status === 'sobre_limite') warnings.push(`El pedido supera el límite de ${formatPercent(metrics.limitPercent)} por ${formatCurrency(metrics.totalAmount - metrics.limitAmount)}.`);
+      if (metrics.unpricedCount > 0) warnings.push(`Hay ${metrics.unpricedCount} insumo${metrics.unpricedCount === 1 ? '' : 's'} sin precio.`);
+      if (!confirm(`${warnings.join('\n')}\n\n¿Querés enviar el pedido igualmente como excepción?`)) return;
+    }
+
     const items = [];
     S.draft.forEach((quantity, materialId) => {
       if (quantity > 0) items.push({ material_id: materialId, quantity });
@@ -520,6 +617,8 @@
       items.push({
         material_id: null,
         custom_name: item.name,
+        sku: item.sku || null,
+        unit_price: number(item.unitPrice),
         quantity: item.quantity,
         unit: item.unit,
         notes: item.notes || null
@@ -543,13 +642,17 @@
       if (error) throw error;
 
       const result = typeof data === 'string' ? JSON.parse(data) : data;
-      const summary = `${result.item_count} ${result.item_count === 1 ? 'insumo' : 'insumos'} · ${formatQty(result.total_units)} unidades`;
+      const summary = `${result.item_count} ${result.item_count === 1 ? 'insumo' : 'insumos'} · ${formatQty(result.total_units)} unidades · ${formatCurrency(result.total_amount)}`;
+      const budgetNote = result.budget_status === 'sobre_7'
+        ? ' · Excepción: supera el 7%'
+        : (result.budget_status === 'sobre_limite' ? ` · Excepción: supera el límite de ${formatPercent(result.budget_limit_percent)}` : '');
       E.successOrderCode.textContent = result.order_code;
-      E.successOrderSummary.textContent = `${service.name} · ${summary}`;
-      S.lastSuccessText = `Pedido ${result.order_code}\nServicio: ${service.name}\nResponsable: ${reporter}\n${summary}\nFecha: ${dtf.format(new Date(result.created_at))}`;
+      E.successOrderSummary.textContent = `${service.name} · ${summary}${budgetNote}`;
+      S.lastSuccessText = `Pedido ${result.order_code}\nServicio: ${service.name}\nResponsable: ${reporter}\n${summary}${budgetNote}\nFecha: ${dtf.format(new Date(result.created_at))}`;
 
       S.draft.clear();
       S.extras = [];
+      S.lastBudgetStatus = null;
       E.operatorNotes.value = '';
       E.operatorPriority.value = 'normal';
       renderOperatorMetrics();
@@ -615,7 +718,7 @@
     try {
       const { data: profile, error } = await S.sb.from('profiles').select('*').eq('id', session.user.id).single();
       if (error || !profile) throw new Error('El usuario no tiene perfil. Ejecutá el esquema SQL y revisá el trigger.');
-      if (profile.role !== 'admin') throw new Error('Este acceso es exclusivo para administradores.');
+      if (!['admin', 'supplier'].includes(profile.role)) throw new Error('Este acceso es exclusivo para usuarios administrativos o proveedores habilitados.');
 
       S.session = session;
       S.profile = profile;
@@ -649,6 +752,7 @@
     S.orderItems = [];
     S.profiles = [];
     S.history = [];
+    S.serviceMaterialExclusions = [];
     try { await loadPublicData(); } catch (error) { console.error(error); }
     showPublicEntry();
   }
@@ -664,30 +768,52 @@
     E.logoutButton.classList.remove('d-none');
     E.headerUserChip.classList.remove('d-none');
     E.headerUserName.textContent = S.profile?.full_name || S.profile?.email || 'Administrador';
-    E.headerUserRole.textContent = 'Administrador';
-    E.appSubtitle.textContent = 'Administración de pedidos';
+    E.headerUserRole.textContent = ROLE_LABELS[S.profile?.role] || 'Usuario';
+    E.appSubtitle.textContent = isSupplier() ? 'Panel proveedor · seguimiento de pedidos' : 'Administración de pedidos';
+    applyRolePermissions();
     renderAdmin();
   }
 
+  function applyRolePermissions() {
+    const allowed = new Set(allowedTabs());
+    document.querySelectorAll('[data-admin-tab]').forEach((button) => {
+      const tab = button.dataset.adminTab;
+      const permitted = allowed.has(tab);
+      button.classList.toggle('d-none', !permitted);
+      if (!permitted) button.classList.remove('active');
+      else button.classList.toggle('active', tab === S.tab);
+    });
+
+    const masterButtons = [
+      E.addMaterialButton, E.addServiceButton, E.saveMaterialButton, E.saveServiceButton,
+      E.saveServiceMaterialsButton, E.showAllServiceMaterialsButton, E.hideAllServiceMaterialsButton
+    ];
+    masterButtons.forEach((button) => { if (button) button.disabled = !canManageMasterData(); });
+
+    if (!allowed.has(S.tab)) S.tab = 'dashboard';
+  }
+
   async function refreshAdmin(feedback = false) {
-    if (S.mode !== 'admin') return;
+    if (S.mode !== 'admin' || !canOperateOrders()) return;
     if (feedback) buttonBusy(E.refreshAdminButton, true, 'Actualizando...');
 
     try {
-      const [servicesResult, materialsResult, ordersResult, itemsResult, profilesResult, historyResult] = await Promise.all([
+      const [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult] = await Promise.all([
         S.sb.from('services').select('*').order('name'),
         S.sb.from('materials').select('*').order('category').order('sort_order').order('name'),
+        S.sb.from('service_material_exclusions').select('service_id,material_id'),
         S.sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
         S.sb.from('order_items').select('*').order('sort_order').order('created_at'),
         S.sb.from('profiles').select('*').order('full_name'),
         S.sb.from('order_status_history').select('*').order('changed_at', { ascending: false }).limit(500)
       ]);
 
-      [servicesResult, materialsResult, ordersResult, itemsResult, profilesResult, historyResult]
+      [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult]
         .forEach((result) => { if (result.error) throw result.error; });
 
       S.services = servicesResult.data || [];
       S.materials = materialsResult.data || [];
+      S.serviceMaterialExclusions = exclusionsResult.data || [];
       S.orders = ordersResult.data || [];
       S.orderItems = itemsResult.data || [];
       S.profiles = profilesResult.data || [];
@@ -706,13 +832,14 @@
 
   function setupRealtime() {
     teardownRealtime();
-    if (!S.sb || S.mode !== 'admin') return;
+    if (!S.sb || S.mode !== 'admin' || !canOperateOrders()) return;
     S.channel = S.sb.channel(`pedidos-admin-${S.profile.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_status_history' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'materials' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, scheduleAdminRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_material_exclusions' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, scheduleAdminRefresh)
       .subscribe();
   }
@@ -744,6 +871,7 @@
   }
 
   function switchTab(tab) {
+    if (!allowedTabs().includes(tab)) tab = 'dashboard';
     S.tab = tab;
     document.querySelectorAll('[data-admin-tab]').forEach((button) => {
       button.classList.toggle('active', button.dataset.adminTab === tab);
@@ -753,6 +881,8 @@
 
   function renderAdmin() {
     if (S.mode !== 'admin') return;
+    if (!allowedTabs().includes(S.tab)) S.tab = 'dashboard';
+    applyRolePermissions();
     const panels = {
       dashboard: E.adminDashboard,
       orders: E.adminOrders,
@@ -786,7 +916,7 @@
     E.dashboardRecentOrders.innerHTML = recent.map((order) => {
       const service = serviceById(order.service_id);
       return `<button class="dashboard-order-item text-start w-100" type="button" data-order-open="${ea(order.id)}">
-        <div><div class="dashboard-order-title">${eh(order.order_code)} · ${eh(service?.name || 'Servicio')}</div><div class="dashboard-order-meta">${eh(order.reporter_name)} · ${dtf.format(new Date(order.created_at))} · ${order.total_items} insumos</div></div>
+        <div><div class="dashboard-order-title">${eh(order.order_code)} · ${eh(service?.name || 'Servicio')}</div><div class="dashboard-order-meta">${eh(order.reporter_name)} · ${dtf.format(new Date(order.created_at))} · ${order.total_items} insumos · ${formatCurrency(order.total_amount)}</div></div>
         <div class="dashboard-order-side"><span class="priority-badge ${ea(order.priority)}">${eh(PRIORITY_LABELS[order.priority] || order.priority)}</span><span class="status-badge ${ea(order.status)}">${eh(STATUS_LABELS[order.status] || order.status)}</span></div>
       </button>`;
     }).join('') || '<div class="empty-inline">Todavía no hay pedidos registrados.</div>';
@@ -825,10 +955,10 @@
         <td><div class="order-code">${eh(order.order_code)}</div><div class="order-date">${dtf.format(new Date(order.created_at))}</div></td>
         <td><div class="order-service">${eh(service?.name || 'Servicio eliminado')}</div><div class="table-subtitle">${eh(service?.address || '')}</div></td>
         <td>${eh(order.reporter_name)}</td>
-        <td><strong>${order.total_items}</strong> insumos<div class="order-content-summary">${formatQty(order.total_units)} unidades</div></td>
+        <td><strong>${order.total_items}</strong> insumos<div class="order-content-summary">${formatQty(order.total_units)} unidades · ${formatCurrency(order.total_amount)}</div>${budgetBadge(order)}</td>
         <td><span class="priority-badge ${ea(order.priority)}">${eh(PRIORITY_LABELS[order.priority] || order.priority)}</span></td>
         <td><span class="status-badge ${ea(order.status)}">${eh(STATUS_LABELS[order.status] || order.status)}</span></td>
-        <td><div class="action-group"><button class="btn btn-outline-primary" type="button" title="Ver pedido" data-order-open="${ea(order.id)}"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary" type="button" title="Copiar" data-order-copy="${ea(order.id)}"><i class="bi bi-copy"></i></button><button class="btn btn-outline-danger" type="button" title="Eliminar" data-order-delete="${ea(order.id)}"><i class="bi bi-trash3"></i></button></div></td>
+        <td><div class="action-group"><button class="btn btn-outline-primary" type="button" title="Ver pedido" data-order-open="${ea(order.id)}"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary" type="button" title="Copiar" data-order-copy="${ea(order.id)}"><i class="bi bi-copy"></i></button>${isFullAdmin() ? `<button class="btn btn-outline-danger" type="button" title="Eliminar" data-order-delete="${ea(order.id)}"><i class="bi bi-trash3"></i></button>` : ''}</div></td>
       </tr>`;
     }).join('') || '<tr><td colspan="7"><div class="empty-inline">No hay pedidos que coincidan con los filtros.</div></td></tr>';
   }
@@ -841,20 +971,25 @@
     const items = itemsForOrder(order.id);
 
     E.orderDetailTitle.textContent = order.order_code;
+    const budgetValue = order.budget_status === 'sin_configurar'
+      ? 'Sin tope configurado'
+      : `${formatCurrency(order.total_amount)} / ${formatCurrency(order.budget_limit_amount_snapshot)} (${formatPercent(order.budget_limit_percent_snapshot)})`;
     E.orderDetailMeta.innerHTML = [
       ['Servicio', service?.name || 'Servicio eliminado'],
       ['Responsable', order.reporter_name],
       ['Fecha', dtf.format(new Date(order.created_at))],
       ['Prioridad', PRIORITY_LABELS[order.priority] || order.priority],
       ['Estado', STATUS_LABELS[order.status] || order.status],
-      ['Contenido', `${order.total_items} insumos · ${formatQty(order.total_units)} unidades`]
+      ['Contenido', `${order.total_items} insumos · ${formatQty(order.total_units)} unidades`],
+      ['Total', formatCurrency(order.total_amount)],
+      ['Control presupuestario', `${budgetStatusText(order.budget_status)} · ${budgetValue}`]
     ].map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
 
     E.orderDetailItems.innerHTML = items.map((item) => `
       <div class="order-detail-item">
         <img class="order-detail-thumb" src="${ea(item.image_url || 'assets/materials/default.svg')}" alt="${ea(item.item_name)}" onerror="this.src='assets/materials/default.svg'">
-        <div><div class="order-detail-name">${eh(item.item_name)}</div><div class="order-detail-sub">${eh(item.category || (item.is_custom ? 'No listado' : 'General'))}${item.notes ? ` · ${eh(item.notes)}` : ''}</div></div>
-        <div class="order-detail-qty">${formatQty(item.quantity)}<div class="order-detail-sub">${eh(item.unit || 'unidad')}</div></div>
+        <div><div class="order-detail-name">${eh(item.item_name)}</div><div class="order-detail-sub">${eh(item.item_sku ? `SKU ${item.item_sku} · ` : '')}${eh(item.category || (item.is_custom ? 'No listado' : 'General'))}${item.notes ? ` · ${eh(item.notes)}` : ''}</div><div class="order-detail-sub">Precio unitario: ${eh(formatCurrency(item.unit_price))}</div></div>
+        <div class="order-detail-qty">${formatQty(item.quantity)}<div class="order-detail-sub">${eh(item.unit || 'unidad')}</div><strong class="order-line-total">${eh(formatCurrency(item.line_total))}</strong></div>
       </div>`).join('');
 
     E.orderDetailNotesWrap.classList.toggle('d-none', !order.notes);
@@ -864,6 +999,7 @@
   }
 
   async function saveSelectedOrderStatus() {
+    if (!canOperateOrders()) { toast('No tenés permisos para cambiar estados.', 'error'); return; }
     const order = getSelectedOrder();
     if (!order) return;
     const nextStatus = E.orderDetailStatus.value;
@@ -874,7 +1010,11 @@
 
     buttonBusy(E.saveOrderStatusButton, true, 'Guardando...');
     try {
-      const { error } = await S.sb.from('orders').update({ status: nextStatus }).eq('id', order.id);
+      const { error } = await S.sb.rpc('staff_update_order_status', {
+        p_order_id: order.id,
+        p_status: nextStatus,
+        p_notes: null
+      });
       if (error) throw error;
       M.orderDetail.hide();
       await refreshAdmin(false);
@@ -888,6 +1028,7 @@
   }
 
   async function deleteOrder(orderId) {
+    if (!isFullAdmin()) { toast('El proveedor no puede eliminar pedidos.', 'error'); return; }
     const order = S.orders.find((item) => item.id === orderId);
     if (!order || !confirm(`¿Eliminar definitivamente el pedido ${order.order_code}? Esta acción no se puede deshacer.`)) return;
     try {
@@ -917,17 +1058,26 @@
     ].filter((line) => line !== null);
 
     items.forEach((item) => {
-      lines.push(`• ${formatQty(item.quantity)} ${item.unit || 'unidad'} — ${item.item_name}${item.notes ? ` (${item.notes})` : ''}`);
+      const sku = item.item_sku ? ` [SKU ${item.item_sku}]` : '';
+      lines.push(`• ${formatQty(item.quantity)} ${item.unit || 'unidad'} — ${item.item_name}${sku} · ${formatCurrency(item.unit_price)} c/u · ${formatCurrency(item.line_total)}${item.notes ? ` (${item.notes})` : ''}`);
     });
+    lines.push('', `TOTAL: ${formatCurrency(order.total_amount)}`);
+    if (number(order.monthly_billing_snapshot) > 0) {
+      lines.push(`Tope ${formatPercent(order.budget_limit_percent_snapshot)}: ${formatCurrency(order.budget_limit_amount_snapshot)}`);
+      lines.push(`Control: ${budgetStatusText(order.budget_status)}`);
+    } else {
+      lines.push('Control: facturación no configurada');
+    }
     if (order.notes) lines.push('', `Observación: ${order.notes}`);
     return lines.join('\n');
   }
 
   function renderMaterials() {
+    if (!canManageMasterData()) return;
     const query = normalize(E.materialsSearch.value);
     const status = E.materialsStatusFilter.value;
     const filtered = S.materials.filter((material) => {
-      const matchesQuery = !query || normalize(`${material.name} ${material.category} ${material.detail || ''}`).includes(query);
+      const matchesQuery = !query || normalize(`${material.name} ${material.sku || ''} ${material.category} ${material.detail || ''}`).includes(query);
       const matchesStatus = status === 'all' || (status === 'active' ? material.active : !material.active);
       return matchesQuery && matchesStatus;
     });
@@ -935,24 +1085,29 @@
     E.materialsTableBody.innerHTML = filtered.map((material) => `
       <tr>
         <td><div class="table-material"><img class="table-thumb" src="${ea(material.image_url || 'assets/materials/default.svg')}" alt="${ea(material.name)}" onerror="this.src='assets/materials/default.svg'"><div><div class="table-title">${eh(material.name)}</div><div class="table-subtitle">${eh(material.detail || '')}</div></div></div></td>
+        <td><span class="sku-chip">${eh(material.sku || 'Sin SKU')}</span></td>
         <td>${eh(material.category)}</td>
         <td>${eh(material.unit)}</td>
+        <td><strong>${eh(formatCurrency(material.unit_price))}</strong></td>
         <td>${formatQty(material.suggested_quantity || 1)}</td>
         <td><span class="badge ${material.active ? 'text-bg-success' : 'text-bg-secondary'}">${material.active ? 'Activo' : 'Inactivo'}</span></td>
         <td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-edit-material="${ea(material.id)}"><i class="bi bi-pencil"></i></button><button class="btn btn-outline-secondary" type="button" data-toggle-material="${ea(material.id)}" title="${material.active ? 'Desactivar' : 'Activar'}"><i class="bi ${material.active ? 'bi-pause-circle' : 'bi-play-circle'}"></i></button><button class="btn btn-outline-danger" type="button" data-delete-material="${ea(material.id)}"><i class="bi bi-trash3"></i></button></div></td>
-      </tr>`).join('') || '<tr><td colspan="6"><div class="empty-inline">No hay insumos para mostrar.</div></td></tr>';
+      </tr>`).join('') || '<tr><td colspan="8"><div class="empty-inline">No hay insumos para mostrar.</div></td></tr>';
   }
 
   function openMaterial(materialId = null) {
+    if (!canManageMasterData()) { toast('No tenés permisos para gestionar insumos.', 'error'); return; }
     const material = materialId ? S.materials.find((item) => item.id === materialId) : null;
     E.materialForm.reset();
     E.materialId.value = material?.id || '';
     E.materialCurrentImage.value = material?.image_url || '';
     E.materialModalTitle.textContent = material ? 'Editar insumo' : 'Nuevo insumo';
     E.materialName.value = material?.name || '';
+    E.materialSku.value = material?.sku || '';
     E.materialCategory.value = material?.category || '';
     E.materialDetail.value = material?.detail || '';
     E.materialUnit.value = material?.unit || 'unidad';
+    E.materialUnitPrice.value = formatMoneyInput(material?.unit_price || 0);
     E.materialSuggestedQuantity.value = formatInputQty(material?.suggested_quantity || 1);
     E.materialSortOrder.value = material?.sort_order ?? 100;
     E.materialActive.checked = material ? material.active !== false : true;
@@ -972,6 +1127,7 @@
 
   async function saveMaterial(event) {
     event.preventDefault();
+    if (!canManageMasterData()) { toast('No tenés permisos para guardar insumos.', 'error'); return; }
     buttonBusy(E.saveMaterialButton, true, 'Guardando...');
     try {
       let imageUrl = E.materialCurrentImage.value || 'assets/materials/default.svg';
@@ -981,9 +1137,11 @@
       const payload = {
         slug: slugify(E.materialName.value),
         name: E.materialName.value.trim(),
+        sku: E.materialSku.value.trim() || null,
         category: E.materialCategory.value.trim(),
         detail: E.materialDetail.value.trim() || null,
         unit: E.materialUnit.value.trim() || 'unidad',
+        unit_price: clampMoney(E.materialUnitPrice.value),
         suggested_quantity: clampQty(E.materialSuggestedQuantity.value, 0.01),
         sort_order: Math.max(0, Math.round(number(E.materialSortOrder.value))),
         image_url: imageUrl,
@@ -999,7 +1157,8 @@
       toast(id ? 'Insumo actualizado.' : 'Insumo creado.', 'success');
     } catch (error) {
       console.error(error);
-      toast(error.message || 'No se pudo guardar el insumo.', 'error');
+      const message = String(error.message || '');
+      toast(message.includes('idx_materials_sku_unique') || message.includes('duplicate key') ? 'Ese SKU ya está asignado a otro insumo.' : (message || 'No se pudo guardar el insumo.'), 'error');
     } finally {
       buttonBusy(E.saveMaterialButton, false);
     }
@@ -1016,6 +1175,7 @@
   }
 
   async function toggleMaterial(materialId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para cambiar insumos.', 'error'); return; }
     const material = S.materials.find((item) => item.id === materialId);
     if (!material) return;
     try {
@@ -1029,6 +1189,7 @@
   }
 
   async function deleteMaterial(materialId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para eliminar insumos.', 'error'); return; }
     const material = S.materials.find((item) => item.id === materialId);
     if (!material || !confirm(`¿Eliminar ${material.name}? Los pedidos anteriores conservarán el nombre y la imagen registrados.`)) return;
     try {
@@ -1042,24 +1203,121 @@
   }
 
   function renderServices() {
+    if (!canManageMasterData()) return;
     const query = normalize(E.adminServiceSearch.value);
     const filtered = S.services.filter((service) => !query || normalize(`${service.name} ${service.zone || ''} ${service.address || ''} ${service.supervisor || ''}`).includes(query));
+    const activeMaterials = S.materials.filter((material) => material.active !== false);
 
     E.servicesTableBody.innerHTML = filtered.map((service) => {
       const orderCount = S.orders.filter((order) => order.service_id === service.id).length;
+      const hiddenCount = activeMaterials.filter((material) => isMaterialHiddenForService(material.id, service.id)).length;
+      const visibleCount = Math.max(0, activeMaterials.length - hiddenCount);
+      const limitAmount = number(service.monthly_billing) * number(service.budget_limit_percent || 5) / 100;
       return `<tr>
         <td><div class="table-title">${eh(service.name)}</div><div class="table-subtitle">${eh(service.address || '')}</div></td>
         <td>${eh(service.zone || '—')}</td>
+        <td><strong>${eh(formatCurrency(service.monthly_billing))}</strong></td>
+        <td><div class="service-material-count">${eh(formatPercent(service.budget_limit_percent || 5))}</div><div class="table-subtitle">${eh(formatCurrency(limitAmount))}</div></td>
         <td><div class="service-description-preview">${eh(service.description || '—')}</div></td>
         <td>${eh(service.supervisor || '—')}</td>
+        <td><div class="service-material-count">${visibleCount} de ${activeMaterials.length}</div><div class="table-subtitle">${hiddenCount ? `${hiddenCount} oculto${hiddenCount === 1 ? '' : 's'}` : 'Catálogo completo'}</div></td>
         <td>${orderCount}</td>
         <td><span class="badge ${service.active ? 'text-bg-success' : 'text-bg-secondary'}">${service.active ? 'Activo' : 'Inactivo'}</span></td>
-        <td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-edit-service="${ea(service.id)}"><i class="bi bi-pencil"></i></button><button class="btn btn-outline-secondary" type="button" data-toggle-service="${ea(service.id)}"><i class="bi ${service.active ? 'bi-pause-circle' : 'bi-play-circle'}"></i></button><button class="btn btn-outline-danger" type="button" data-delete-service="${ea(service.id)}"><i class="bi bi-trash3"></i></button></div></td>
+        <td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-configure-service-materials="${ea(service.id)}" title="Configurar insumos"><i class="bi bi-sliders"></i></button><button class="btn btn-outline-primary" type="button" data-edit-service="${ea(service.id)}" title="Editar servicio"><i class="bi bi-pencil"></i></button><button class="btn btn-outline-secondary" type="button" data-toggle-service="${ea(service.id)}" title="${service.active ? 'Desactivar' : 'Activar'}"><i class="bi ${service.active ? 'bi-pause-circle' : 'bi-play-circle'}"></i></button><button class="btn btn-outline-danger" type="button" data-delete-service="${ea(service.id)}" title="Eliminar"><i class="bi bi-trash3"></i></button></div></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="7"><div class="empty-inline">No hay servicios para mostrar.</div></td></tr>';
+    }).join('') || '<tr><td colspan="10"><div class="empty-inline">No hay servicios para mostrar.</div></td></tr>';
+  }
+
+  function openServiceMaterials(serviceId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para configurar insumos por servicio.', 'error'); return; }
+    const service = serviceById(serviceId);
+    if (!service) return;
+    S.selectedServiceMaterialsId = serviceId;
+    S.serviceMaterialsDraftHidden = new Set(
+      S.serviceMaterialExclusions
+        .filter((item) => item.service_id === serviceId)
+        .map((item) => item.material_id)
+    );
+    E.serviceMaterialsModalTitle.textContent = `Insumos de ${service.name}`;
+    E.serviceMaterialsModalSubtitle.textContent = 'Activá o desactivá lo que el operario podrá ver y pedir.';
+    E.serviceMaterialsSearch.value = '';
+    E.serviceMaterialsFilter.value = 'all';
+    renderServiceMaterials();
+    M.serviceMaterials.show();
+  }
+
+  function renderServiceMaterials() {
+    const serviceId = S.selectedServiceMaterialsId;
+    if (!serviceId) return;
+    const query = normalize(E.serviceMaterialsSearch.value);
+    const filter = E.serviceMaterialsFilter.value;
+    const allMaterials = [...S.materials].sort(materialSort);
+    const filtered = allMaterials.filter((material) => {
+      const hidden = S.serviceMaterialsDraftHidden.has(material.id);
+      const matchesQuery = !query || normalize(`${material.name} ${material.category} ${material.detail || ''}`).includes(query);
+      const matchesFilter = filter === 'all' || (filter === 'visible' ? !hidden : hidden);
+      return matchesQuery && matchesFilter;
+    });
+
+    const activeMaterials = allMaterials.filter((material) => material.active !== false);
+    const hiddenActive = activeMaterials.filter((material) => S.serviceMaterialsDraftHidden.has(material.id)).length;
+    E.serviceMaterialsVisibleCount.textContent = `${activeMaterials.length - hiddenActive} visibles`;
+    E.serviceMaterialsHiddenCount.textContent = `${hiddenActive} ocultos`;
+
+    E.serviceMaterialsList.innerHTML = filtered.map((material) => {
+      const hidden = S.serviceMaterialsDraftHidden.has(material.id);
+      return `<label class="service-material-row ${hidden ? 'is-hidden' : ''}">
+        <img class="service-material-thumb" src="${ea(material.image_url || 'assets/materials/default.svg')}" alt="${ea(material.name)}" onerror="this.src='assets/materials/default.svg'">
+        <span class="service-material-main"><span class="service-material-name">${eh(material.name)}</span><span class="service-material-meta">${eh(material.category || 'General')}${material.detail ? ` · ${eh(material.detail)}` : ''}${material.active === false ? ' · Inactivo globalmente' : ''}</span></span>
+        <span class="form-check form-switch service-material-switch"><input class="form-check-input" type="checkbox" data-service-material-toggle="${ea(material.id)}" ${hidden ? '' : 'checked'}><span class="form-check-label">${hidden ? 'Oculto' : 'Visible'}</span></span>
+      </label>`;
+    }).join('') || '<div class="empty-inline">No hay insumos que coincidan con el filtro.</div>';
+  }
+
+  function handleServiceMaterialToggle(event) {
+    const input = event.target.closest('[data-service-material-toggle]');
+    if (!input) return;
+    const materialId = input.dataset.serviceMaterialToggle;
+    if (input.checked) S.serviceMaterialsDraftHidden.delete(materialId);
+    else S.serviceMaterialsDraftHidden.add(materialId);
+    renderServiceMaterials();
+  }
+
+  function setAllServiceMaterialsVisible(visible) {
+    S.materials.forEach((material) => {
+      if (visible) S.serviceMaterialsDraftHidden.delete(material.id);
+      else S.serviceMaterialsDraftHidden.add(material.id);
+    });
+    renderServiceMaterials();
+  }
+
+  async function saveServiceMaterials() {
+    if (!canManageMasterData()) { toast('No tenés permisos para guardar esta configuración.', 'error'); return; }
+    const serviceId = S.selectedServiceMaterialsId;
+    const service = serviceById(serviceId);
+    if (!service) return;
+    buttonBusy(E.saveServiceMaterialsButton, true, 'Guardando...');
+    try {
+      const { error } = await S.sb.rpc('admin_set_service_hidden_materials', {
+        p_service_id: serviceId,
+        p_hidden_material_ids: [...S.serviceMaterialsDraftHidden]
+      });
+      if (error) throw error;
+
+      M.serviceMaterials.hide();
+      S.selectedServiceMaterialsId = null;
+      await refreshAdmin(false);
+      toast(`Configuración de ${service.name} actualizada.`, 'success');
+    } catch (error) {
+      console.error(error);
+      toast(error.message || 'No se pudo guardar la configuración.', 'error');
+    } finally {
+      buttonBusy(E.saveServiceMaterialsButton, false);
+    }
   }
 
   function openService(serviceId = null) {
+    if (!canManageMasterData()) { toast('No tenés permisos para gestionar servicios.', 'error'); return; }
     const service = serviceId ? S.services.find((item) => item.id === serviceId) : null;
     E.serviceForm.reset();
     E.serviceId.value = service?.id || '';
@@ -1068,14 +1326,24 @@
     E.serviceAddress.value = service?.address || '';
     E.serviceZone.value = service?.zone || '';
     E.serviceSupervisor.value = service?.supervisor || '';
+    E.serviceBilling.value = formatMoneyInput(service?.monthly_billing || 0);
+    E.serviceBudgetPercent.value = formatInputQty(service?.budget_limit_percent || 5);
     E.serviceDescription.value = service?.description || '';
     E.serviceNotes.value = service?.notes || '';
     E.serviceActive.checked = service ? service.active !== false : true;
+    renderServiceBudgetPreview();
     M.service.show();
   }
 
   async function saveService(event) {
     event.preventDefault();
+    if (!canManageMasterData()) { toast('No tenés permisos para guardar servicios.', 'error'); return; }
+    const budgetPercent = number(E.serviceBudgetPercent.value);
+    if (budgetPercent < 5 || budgetPercent > 7) {
+      toast('El límite operativo debe estar entre 5% y 7%.', 'error');
+      E.serviceBudgetPercent.focus();
+      return;
+    }
     buttonBusy(E.saveServiceButton, true, 'Guardando...');
     try {
       const payload = {
@@ -1083,6 +1351,8 @@
         address: E.serviceAddress.value.trim() || null,
         zone: E.serviceZone.value.trim() || null,
         supervisor: E.serviceSupervisor.value.trim() || null,
+        monthly_billing: clampMoney(E.serviceBilling.value),
+        budget_limit_percent: Math.round(budgetPercent * 100) / 100,
         description: E.serviceDescription.value.trim() || null,
         notes: E.serviceNotes.value.trim() || null,
         active: E.serviceActive.checked
@@ -1103,6 +1373,7 @@
   }
 
   async function toggleService(serviceId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para cambiar servicios.', 'error'); return; }
     const service = S.services.find((item) => item.id === serviceId);
     if (!service) return;
     try {
@@ -1116,6 +1387,7 @@
   }
 
   async function deleteService(serviceId) {
+    if (!canManageMasterData()) { toast('No tenés permisos para eliminar servicios.', 'error'); return; }
     const service = S.services.find((item) => item.id === serviceId);
     if (!service || !confirm(`¿Eliminar ${service.name}? Solo será posible si no tiene pedidos asociados.`)) return;
     try {
@@ -1129,13 +1401,15 @@
   }
 
   function renderUsers() {
+    if (!canManageUsers()) return;
     E.usersTableBody.innerHTML = S.profiles.map((profile) => {
       const service = serviceById(profile.service_id);
-      return `<tr><td><div class="table-title">${eh(profile.full_name || 'Sin nombre')}</div></td><td>${eh(profile.email || '—')}</td><td><span class="badge ${profile.role === 'admin' ? 'text-bg-primary' : 'text-bg-secondary'}">${profile.role === 'admin' ? 'Administrador' : 'Operario especial'}</span></td><td>${eh(service?.name || 'Sin asignar')}</td><td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-edit-user="${ea(profile.id)}"><i class="bi bi-pencil"></i></button></div></td></tr>`;
+      return `<tr><td><div class="table-title">${eh(profile.full_name || 'Sin nombre')}</div></td><td>${eh(profile.email || '—')}</td><td><span class="badge ${profile.role === 'admin' ? 'text-bg-primary' : (profile.role === 'supplier' ? 'text-bg-info' : 'text-bg-secondary')}">${eh(ROLE_LABELS[profile.role] || profile.role)}</span></td><td>${eh(service?.name || 'Sin asignar')}</td><td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-edit-user="${ea(profile.id)}"><i class="bi bi-pencil"></i></button></div></td></tr>`;
     }).join('') || '<tr><td colspan="5"><div class="empty-inline">No hay usuarios.</div></td></tr>';
   }
 
   function openUser(userId) {
+    if (!canManageUsers()) { toast('No tenés permisos para gestionar usuarios.', 'error'); return; }
     const profile = S.profiles.find((item) => item.id === userId);
     if (!profile) return;
     E.userId.value = profile.id;
@@ -1147,6 +1421,7 @@
 
   async function saveUser(event) {
     event.preventDefault();
+    if (!canManageUsers()) { toast('No tenés permisos para modificar usuarios.', 'error'); return; }
     try {
       const payload = {
         full_name: E.userName.value.trim() || null,
@@ -1172,8 +1447,90 @@
     }).join('') || '<tr><td colspan="6"><div class="empty-inline">Todavía no hay cambios registrados.</div></td></tr>';
   }
 
+  function renderServiceBudgetPreview() {
+    const billing = clampMoney(E.serviceBilling?.value);
+    const percent = Math.min(7, Math.max(5, number(E.serviceBudgetPercent?.value) || 5));
+    E.serviceFiveValue.textContent = formatCurrency(billing * 0.05);
+    E.serviceLimitValue.textContent = `${formatCurrency(billing * percent / 100)} (${formatPercent(percent)})`;
+    E.serviceSevenValue.textContent = formatCurrency(billing * 0.07);
+  }
+
+  function cartMetrics() {
+    const service = currentService();
+    let totalUnits = 0;
+    let totalAmount = 0;
+    let selectedMaterials = 0;
+    let unpricedCount = 0;
+
+    S.draft.forEach((quantity, materialId) => {
+      const qty = number(quantity);
+      if (qty <= 0) return;
+      const material = S.materials.find((item) => item.id === materialId);
+      const price = number(material?.unit_price);
+      selectedMaterials += 1;
+      totalUnits += qty;
+      totalAmount += qty * price;
+      if (price <= 0) unpricedCount += 1;
+    });
+
+    S.extras.forEach((item) => {
+      const qty = number(item.quantity);
+      const price = number(item.unitPrice);
+      totalUnits += qty;
+      totalAmount += qty * price;
+      if (price <= 0) unpricedCount += 1;
+    });
+
+    totalAmount = Math.round(totalAmount * 100) / 100;
+    const billing = number(service?.monthly_billing);
+    const limitPercent = Math.min(7, Math.max(5, number(service?.budget_limit_percent) || 5));
+    const fiveAmount = Math.round(billing * 5) / 100;
+    const sevenAmount = Math.round(billing * 7) / 100;
+    const limitAmount = Math.round(billing * limitPercent) / 100;
+    const status = billing <= 0 ? 'sin_configurar' : (totalAmount > sevenAmount ? 'sobre_7' : (totalAmount > limitAmount ? 'sobre_limite' : 'dentro'));
+    const usagePercent = limitAmount > 0 ? totalAmount / limitAmount * 100 : 0;
+
+    return {
+      totalItems: selectedMaterials + S.extras.length,
+      totalUnits,
+      totalAmount,
+      unpricedCount,
+      billing,
+      limitPercent,
+      fiveAmount,
+      sevenAmount,
+      limitAmount,
+      status,
+      usagePercent
+    };
+  }
+
+  function budgetStatusText(status) {
+    return ({
+      sin_configurar: 'Sin facturación configurada',
+      dentro: 'Dentro del límite',
+      sobre_limite: 'Supera el límite operativo',
+      sobre_7: 'Supera el 7%'
+    })[status] || 'Sin información';
+  }
+
+  function budgetBadge(order) {
+    const status = order.budget_status || 'sin_configurar';
+    const klass = status === 'sobre_7' ? 'budget-badge-danger' : (status === 'sobre_limite' ? 'budget-badge-warning' : (status === 'dentro' ? 'budget-badge-ok' : 'budget-badge-muted'));
+    return `<div class="budget-badge ${klass}">${eh(budgetStatusText(status))}</div>`;
+  }
+
   function currentService() {
     return S.services.find((item) => item.id === S.publicServiceId) || null;
+  }
+
+  function isMaterialHiddenForService(materialId, serviceId) {
+    if (!serviceId) return false;
+    return S.serviceMaterialExclusions.some((item) => item.service_id === serviceId && item.material_id === materialId);
+  }
+
+  function visibleMaterialsForService(serviceId) {
+    return S.materials.filter((material) => material.active !== false && !isMaterialHiddenForService(material.id, serviceId));
   }
 
   function serviceById(id) {
@@ -1273,13 +1630,13 @@
 
   function publicErrorMessage(error) {
     const message = String(error?.message || '');
-    if (message.includes('public_order_bootstrap') || message.includes('schema cache')) return 'La base de datos todavía no tiene instalado el esquema de pedidos. Ejecutá supabase-schema.sql.';
+    if (message.includes('public_order_bootstrap') || message.includes('schema cache')) return 'La base de datos todavía no tiene instalada la última versión. Ejecutá actualizar-sku-precios-topes.sql.';
     return message || 'No se pudieron cargar los servicios.';
   }
 
   function publicCreateErrorMessage(error) {
     const message = String(error?.message || '');
-    if (message.includes('public_create_order') || message.includes('schema cache')) return 'La función de pedidos no está instalada. Ejecutá supabase-schema.sql en el nuevo proyecto.';
+    if (message.includes('public_create_order') || message.includes('schema cache')) return 'La función de pedidos no está actualizada. Ejecutá actualizar-sku-precios-topes.sql en Supabase.';
     return message || 'No se pudo registrar el pedido.';
   }
 
@@ -1309,6 +1666,22 @@
   function formatInputQty(value) {
     const qty = number(value);
     return Number.isInteger(qty) ? String(qty) : String(Math.round(qty * 100) / 100);
+  }
+
+  function clampMoney(value) {
+    return Math.min(999999999.99, Math.max(0, Math.round(number(value) * 100) / 100));
+  }
+
+  function formatMoneyInput(value) {
+    return String(Math.round(number(value) * 100) / 100);
+  }
+
+  function formatCurrency(value) {
+    return number(value).toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 2 });
+  }
+
+  function formatPercent(value) {
+    return `${number(value).toLocaleString('es-AR', { maximumFractionDigits: 2 })}%`;
   }
 
   function localDateKey(date) {
