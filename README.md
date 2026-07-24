@@ -201,3 +201,7 @@ actualizar-login-obligatorio.sql
 
 Luego reemplazar `index.html`, `app.js` y `styles.css`. Las instrucciones están en `LEEME-LOGIN-OBLIGATORIO.md`.
 
+
+## Actualización: descuento por retiro en Naón
+
+El administrador puede definir desde la edición del pedido si el proveedor entrega en Naón. La opción viene marcada por defecto y aplica un 7% de descuento por precio unitario, recalculando en tiempo real subtotales, total y control presupuestario. Para instalarla, ejecutar `actualizar-descuento-naon.sql`.

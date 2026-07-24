@@ -320,6 +320,17 @@
             <div class="order-edit-heading mb-3">
               <div><div class="eyebrow">Ajuste operativo</div><h6 class="fw-black mb-1">Modificar insumos y cantidades</h6><p class="text-secondary small mb-0">Los importes y el control presupuestario se recalculan en tiempo real. Los cambios se aplican recién al guardar.</p></div>
             </div>
+            <label class="order-edit-naon-option mb-3" for="orderNaonPickupCheckbox">
+              <div class="order-edit-naon-main">
+                <input id="orderNaonPickupCheckbox" class="form-check-input" type="checkbox" checked>
+                <div>
+                  <div class="order-edit-naon-title">Retiro en Naón</div>
+                  <div id="orderNaonPickupHelp" class="order-edit-naon-help">El proveedor deja el pedido en Naón. Se descuenta el 7% en cada precio unitario.</div>
+                </div>
+              </div>
+              <span id="orderNaonPickupBadge" class="order-edit-naon-badge is-active">7% aplicado</span>
+            </label>
+            <div class="order-edit-naon-warning mb-3"><i class="bi bi-info-circle me-2"></i>Esta opción viene marcada porque es la modalidad habitual. Desmarcala únicamente cuando el pedido se entregue directamente en el servicio.</div>
             <div id="orderEditBudgetSummary" class="order-edit-budget-summary mb-3"></div>
             <div id="orderEditItems" class="order-edit-items"></div>
             <div class="order-edit-add-panel mt-3">

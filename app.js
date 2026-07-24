@@ -20,6 +20,7 @@
   const PRIORITY_LABELS = { normal: 'Normal', urgente: 'Urgente' };
   const ROLE_LABELS = { admin: 'Administrador', supplier: 'Proveedor', operator: 'Supervisor' };
   const FULL_ADMIN_ROLE = 'admin';
+  const NAON_DISCOUNT_PERCENT = 7;
 
   const STATUS_OPTIONS = Object.entries(STATUS_LABELS)
     .map(([value, label]) => `<option value="${value}">${label}</option>`)
@@ -48,6 +49,7 @@
     orderEditDraft: [],
     orderEditOriginalUpdatedAt: null,
     orderEditMode: false,
+    orderEditPickupAtNaon: true,
     lastSuccessText: '',
     channel: null,
     refreshTimer: null,
@@ -207,6 +209,7 @@
     E.cancelOrderEditButton.addEventListener('click', cancelOrderEdit);
     E.saveOrderChangesButton.addEventListener('click', saveOrderChanges);
     E.addOrderMaterialButton.addEventListener('click', addMaterialToOrderDraft);
+    E.orderNaonPickupCheckbox.addEventListener('change', handleOrderNaonPickupChange);
     E.orderDetailModal.addEventListener('hidden.bs.modal', resetOrderEditState);
 
     E.appShell.addEventListener('click', handleAppClick);
@@ -1326,7 +1329,10 @@
       ? 'Sin tope configurado'
       : `${formatCurrency(order.total_amount)} / ${formatCurrency(order.budget_limit_amount_snapshot)} (${formatPercent(order.budget_limit_percent_snapshot)})`;
     const creator = S.profiles.find((profile) => profile.id === order.created_by);
-    E.orderDetailMeta.innerHTML = [
+    const deliveryMode = order.pickup_at_naon === true
+      ? `Retiro en Naón · ${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)} aplicado`
+      : (order.pickup_at_naon === false ? 'Entrega directa al servicio · sin descuento' : 'Pendiente de definir por Operaciones');
+    const detailMeta = [
       ['Servicio', service?.name || 'Servicio eliminado'],
       ['Operario responsable', order.reporter_name],
       ['Cargado por', creator?.full_name || creator?.email || 'Usuario no disponible'],
@@ -1334,16 +1340,28 @@
       ['Prioridad', PRIORITY_LABELS[order.priority] || order.priority],
       ['Estado', STATUS_LABELS[order.status] || order.status],
       ['Contenido', `${order.total_items} insumos · ${formatQty(order.total_units)} unidades`],
-      ['Total', formatCurrency(order.total_amount)],
-      ['Control presupuestario', `${budgetStatusText(order.budget_status)} · ${budgetValue}`]
-    ].map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
+      ['Modalidad', deliveryMode]
+    ];
+    if (order.pickup_at_naon === true) {
+      detailMeta.push(['Subtotal sin descuento', formatCurrency(order.gross_total_amount || order.total_amount)]);
+      detailMeta.push([`Descuento Naón (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)})`, `− ${formatCurrency(order.discount_amount)}`]);
+    }
+    detailMeta.push(['Total', formatCurrency(order.total_amount)]);
+    detailMeta.push(['Control presupuestario', `${budgetStatusText(order.budget_status)} · ${budgetValue}`]);
+    E.orderDetailMeta.innerHTML = detailMeta.map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
 
-    E.orderDetailItems.innerHTML = items.map((item) => `
+    E.orderDetailItems.innerHTML = items.map((item) => {
+      const basePrice = orderItemBaseUnitPrice(item);
+      const pricingText = order.pickup_at_naon === true
+        ? `Precio de lista: ${formatCurrency(basePrice)} · Precio Naón: ${formatCurrency(item.unit_price)}`
+        : `Precio unitario: ${formatCurrency(item.unit_price)}`;
+      return `
       <div class="order-detail-item">
         <img class="order-detail-thumb" src="${ea(item.image_url || 'assets/materials/default.svg')}" alt="${ea(item.item_name)}" onerror="this.src='assets/materials/default.svg'">
-        <div><div class="order-detail-name">${eh(item.item_name)}</div><div class="order-detail-sub">${eh(item.item_sku ? `SKU ${item.item_sku} · ` : '')}${eh(item.category || (item.is_custom ? 'No listado' : 'General'))}${item.notes ? ` · ${eh(item.notes)}` : ''}</div><div class="order-detail-sub">Precio unitario: ${eh(formatCurrency(item.unit_price))}</div></div>
+        <div><div class="order-detail-name">${eh(item.item_name)}</div><div class="order-detail-sub">${eh(item.item_sku ? `SKU ${item.item_sku} · ` : '')}${eh(item.category || (item.is_custom ? 'No listado' : 'General'))}${item.notes ? ` · ${eh(item.notes)}` : ''}</div><div class="order-detail-sub">${eh(pricingText)}</div></div>
         <div class="order-detail-qty">${formatQty(item.quantity)}<div class="order-detail-sub">${eh(item.unit || 'unidad')}</div><strong class="order-line-total">${eh(formatCurrency(item.line_total))}</strong></div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
     E.orderDetailNotesWrap.classList.toggle('d-none', !order.notes);
     E.orderDetailNotes.textContent = order.notes || '';
@@ -1359,6 +1377,8 @@
     S.orderEditDraft = [];
     S.orderEditOriginalUpdatedAt = null;
     S.orderEditMode = false;
+    S.orderEditPickupAtNaon = true;
+    if (E.orderNaonPickupCheckbox) E.orderNaonPickupCheckbox.checked = true;
     if (E.orderEditItems) E.orderEditItems.innerHTML = '';
     if (E.orderAddMaterialSelect) E.orderAddMaterialSelect.innerHTML = '<option value="">Seleccionar insumo...</option>';
   }
@@ -1385,6 +1405,7 @@
       unit: item.unit || 'unidad',
       quantity: number(item.quantity),
       unit_price: number(item.unit_price),
+      list_unit_price: orderItemBaseUnitPrice(item),
       notes: item.notes || '',
       image_url: item.image_url || 'assets/materials/default.svg',
       is_custom: Boolean(item.is_custom),
@@ -1392,7 +1413,10 @@
       is_new: false
     }));
     S.orderEditOriginalUpdatedAt = order.updated_at;
+    S.orderEditPickupAtNaon = order.pickup_at_naon == null ? true : Boolean(order.pickup_at_naon);
+    E.orderNaonPickupCheckbox.checked = S.orderEditPickupAtNaon;
     setOrderEditMode(true);
+    renderOrderNaonOption();
     renderOrderEditItems();
     renderOrderAddMaterialOptions();
     renderOrderEditSummary();
@@ -1416,13 +1440,19 @@
   }
 
   function renderOrderEditItems() {
-    E.orderEditItems.innerHTML = S.orderEditDraft.map((item) => `
+    E.orderEditItems.innerHTML = S.orderEditDraft.map((item) => {
+      const basePrice = orderEditBaseUnitPrice(item);
+      const effectivePrice = orderEditEffectiveUnitPrice(item);
+      const pricingText = S.orderEditPickupAtNaon
+        ? `Precio de lista: ${formatCurrency(basePrice)} · Naón −${formatPercent(NAON_DISCOUNT_PERCENT)}: ${formatCurrency(effectivePrice)}`
+        : `Precio unitario: ${formatCurrency(basePrice)} · Sin descuento`;
+      return `
       <div class="order-edit-item" data-order-edit-row="${ea(item.key)}">
         <img class="order-detail-thumb" src="${ea(item.image_url || 'assets/materials/default.svg')}" alt="${ea(item.item_name)}" onerror="this.src='assets/materials/default.svg'">
         <div class="order-edit-item-info">
           <div class="order-detail-name">${eh(item.item_name)}</div>
           <div class="order-detail-sub">${eh(item.item_sku ? `SKU ${item.item_sku} · ` : '')}${eh(item.category || 'General')} · ${eh(item.unit || 'unidad')}</div>
-          <div class="order-detail-sub">Precio unitario: ${eh(formatCurrency(item.unit_price))}${item.is_new ? ' · Precio actual del catálogo' : ' · Precio registrado en el pedido'}</div>
+          <div class="order-detail-sub">${eh(pricingText)}${item.is_new ? ' · Precio actual del catálogo' : ' · Precio base registrado'}</div>
         </div>
         <div class="order-edit-item-actions">
           <div class="order-edit-qty-control">
@@ -1430,10 +1460,11 @@
             <input class="form-control order-edit-qty-input" type="number" min="0.01" max="999" step="0.01" value="${ea(formatInputQty(item.quantity))}" data-order-edit-input data-order-edit-key="${ea(item.key)}" aria-label="Cantidad de ${ea(item.item_name)}">
             <button class="btn btn-outline-primary" type="button" data-order-edit-action="plus" data-order-edit-key="${ea(item.key)}" aria-label="Sumar una unidad"><i class="bi bi-plus-lg"></i></button>
           </div>
-          <strong class="order-edit-line-total" data-order-edit-line-total>${eh(formatCurrency(number(item.quantity) * number(item.unit_price)))}</strong>
+          <strong class="order-edit-line-total" data-order-edit-line-total>${eh(formatCurrency(roundMoney(number(item.quantity) * effectivePrice)))}</strong>
           <button class="btn btn-outline-danger btn-sm order-edit-remove" type="button" data-order-edit-remove="${ea(item.key)}"><i class="bi bi-trash3 me-1"></i>Quitar</button>
         </div>
-      </div>`).join('') || '<div class="empty-inline border rounded-4">El pedido quedó sin insumos. Agregá al menos uno para poder guardar.</div>';
+      </div>`;
+    }).join('') || '<div class="empty-inline border rounded-4">El pedido quedó sin insumos. Agregá al menos uno para poder guardar.</div>';
   }
 
   function renderOrderAddMaterialOptions() {
@@ -1447,7 +1478,11 @@
       .sort(materialSort);
 
     E.orderAddMaterialSelect.innerHTML = '<option value="">Seleccionar insumo...</option>' + available
-      .map((material) => `<option value="${ea(material.id)}">${eh(material.name)}${material.sku ? ` · SKU ${eh(material.sku)}` : ''} · ${eh(formatCurrency(material.unit_price))}</option>`)
+      .map((material) => {
+        const effectivePrice = S.orderEditPickupAtNaon ? applyNaonDiscount(material.unit_price) : roundMoney(material.unit_price);
+        const priceLabel = S.orderEditPickupAtNaon ? ` · Naón ${formatCurrency(effectivePrice)}` : ` · ${formatCurrency(effectivePrice)}`;
+        return `<option value="${ea(material.id)}">${eh(material.name)}${material.sku ? ` · SKU ${eh(material.sku)}` : ''}${eh(priceLabel)}</option>`;
+      })
       .join('');
     E.orderAddMaterialSelect.disabled = available.length === 0;
     E.addOrderMaterialButton.disabled = available.length === 0;
@@ -1484,6 +1519,7 @@
         unit: material.unit || 'unidad',
         quantity: clampQty(material.suggested_quantity || 1, 0.01),
         unit_price: number(material.unit_price),
+        list_unit_price: roundMoney(material.unit_price),
         notes: '',
         image_url: material.image_url || 'assets/materials/default.svg',
         is_custom: false,
@@ -1518,7 +1554,7 @@
     item.quantity = input.value === '' ? 0 : clampQty(input.value, 0);
     const row = input.closest('[data-order-edit-row]');
     const lineTotal = row?.querySelector('[data-order-edit-line-total]');
-    if (lineTotal) lineTotal.textContent = formatCurrency(number(item.quantity) * number(item.unit_price));
+    if (lineTotal) lineTotal.textContent = formatCurrency(roundMoney(number(item.quantity) * orderEditEffectiveUnitPrice(item)));
     input.classList.toggle('is-invalid', number(item.quantity) <= 0 || number(item.quantity) > 999);
     renderOrderEditSummary();
   }
@@ -1531,17 +1567,54 @@
     renderOrderEditSummary();
   }
 
+  function handleOrderNaonPickupChange() {
+    if (!S.orderEditMode || !isFullAdmin()) return;
+    S.orderEditPickupAtNaon = Boolean(E.orderNaonPickupCheckbox.checked);
+    renderOrderNaonOption();
+    renderOrderEditItems();
+    renderOrderAddMaterialOptions();
+    renderOrderEditSummary();
+  }
+
+  function renderOrderNaonOption() {
+    if (!E.orderNaonPickupBadge || !E.orderNaonPickupHelp) return;
+    E.orderNaonPickupBadge.textContent = S.orderEditPickupAtNaon ? `${formatPercent(NAON_DISCOUNT_PERCENT)} aplicado` : 'Sin descuento';
+    E.orderNaonPickupBadge.classList.toggle('is-active', S.orderEditPickupAtNaon);
+    E.orderNaonPickupHelp.textContent = S.orderEditPickupAtNaon
+      ? 'El proveedor deja el pedido en Naón. Se descuenta el 7% en cada precio unitario.'
+      : 'El proveedor entrega directamente en el servicio. Se mantienen los precios de lista.';
+  }
+
+  function orderItemBaseUnitPrice(item) {
+    return item?.list_unit_price == null ? roundMoney(item?.unit_price) : roundMoney(item.list_unit_price);
+  }
+
+  function orderEditBaseUnitPrice(item) {
+    return item?.list_unit_price == null ? roundMoney(item?.unit_price) : roundMoney(item.list_unit_price);
+  }
+
+  function applyNaonDiscount(value) {
+    return roundMoney(roundMoney(value) * (1 - NAON_DISCOUNT_PERCENT / 100));
+  }
+
+  function orderEditEffectiveUnitPrice(item) {
+    const basePrice = orderEditBaseUnitPrice(item);
+    return S.orderEditPickupAtNaon ? applyNaonDiscount(basePrice) : basePrice;
+  }
+
   function orderEditMetrics(order) {
     const validItems = S.orderEditDraft.filter((item) => number(item.quantity) > 0);
     const totalUnits = validItems.reduce((sum, item) => sum + number(item.quantity), 0);
-    const totalAmount = Math.round(validItems.reduce((sum, item) => sum + number(item.quantity) * number(item.unit_price), 0) * 100) / 100;
+    const grossTotalAmount = roundMoney(validItems.reduce((sum, item) => sum + roundMoney(number(item.quantity) * orderEditBaseUnitPrice(item)), 0));
+    const totalAmount = roundMoney(validItems.reduce((sum, item) => sum + roundMoney(number(item.quantity) * orderEditEffectiveUnitPrice(item)), 0));
+    const discountAmount = roundMoney(Math.max(0, grossTotalAmount - totalAmount));
     const billing = number(order?.monthly_billing_snapshot);
     const limitAmount = number(order?.budget_limit_amount_snapshot);
     const sevenAmount = number(order?.budget_seven_percent_snapshot);
     const status = billing <= 0 ? 'sin_configurar' : (totalAmount > sevenAmount ? 'sobre_7' : (totalAmount > limitAmount ? 'sobre_limite' : 'dentro'));
-    const differenceToSeven = Math.round((sevenAmount - totalAmount) * 100) / 100;
+    const differenceToSeven = roundMoney(sevenAmount - totalAmount);
     const usagePercent = sevenAmount > 0 ? totalAmount / sevenAmount * 100 : 0;
-    return { totalItems: validItems.length, totalUnits, totalAmount, billing, limitAmount, sevenAmount, status, differenceToSeven, usagePercent };
+    return { totalItems: validItems.length, totalUnits, grossTotalAmount, totalAmount, discountAmount, billing, limitAmount, sevenAmount, status, differenceToSeven, usagePercent };
   }
 
   function renderOrderEditSummary() {
@@ -1561,6 +1634,10 @@
       <div class="order-edit-budget-head">
         <div><div class="order-meta-label">Total ajustado</div><div class="order-edit-total">${eh(formatCurrency(metrics.totalAmount))}</div></div>
         <span class="order-edit-status-pill">${eh(budgetStatusText(metrics.status))}</span>
+      </div>
+      <div class="order-edit-price-breakdown">
+        <span>Subtotal sin descuento: <strong>${eh(formatCurrency(metrics.grossTotalAmount))}</strong></span>
+        <span class="${S.orderEditPickupAtNaon ? 'is-discount' : ''}">${S.orderEditPickupAtNaon ? `Descuento Naón (${formatPercent(NAON_DISCOUNT_PERCENT)}): <strong>− ${eh(formatCurrency(metrics.discountAmount))}</strong>` : 'Entrega al servicio: <strong>sin descuento</strong>'}</span>
       </div>
       <div class="order-edit-budget-grid">
         <div><span>Contenido</span><strong>${metrics.totalItems} insumos · ${eh(formatQty(metrics.totalUnits))} unidades</strong></div>
@@ -1607,7 +1684,8 @@
       const { error } = await S.sb.rpc('admin_replace_order_items', {
         p_order_id: order.id,
         p_expected_updated_at: S.orderEditOriginalUpdatedAt,
-        p_items: payload
+        p_items: payload,
+        p_pickup_at_naon: S.orderEditPickupAtNaon
       });
       if (error) throw error;
 
@@ -1626,7 +1704,7 @@
       if (message.includes('modificado por otro usuario')) {
         toast('El pedido cambió mientras lo editabas. Actualizá y volvé a revisar.', 'error');
       } else if (message.includes('admin_replace_order_items') || message.includes('schema cache')) {
-        toast('Falta instalar la actualización SQL de edición de pedidos.', 'error');
+        toast('Falta ejecutar actualizar-descuento-naon.sql en Supabase.', 'error');
       } else {
         toast(message || 'No se pudieron guardar los cambios.', 'error');
       }
@@ -1690,14 +1768,21 @@
       `Fecha: ${dtf.format(new Date(order.created_at))}`,
       `Prioridad: ${PRIORITY_LABELS[order.priority] || order.priority}`,
       `Estado: ${STATUS_LABELS[order.status] || order.status}`,
+      `Modalidad: ${order.pickup_at_naon === true ? `Retiro en Naón (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)} de descuento)` : (order.pickup_at_naon === false ? 'Entrega directa al servicio (sin descuento)' : 'Pendiente de definir')}`,
       '',
       'INSUMOS:'
     ].filter((line) => line !== null);
 
     items.forEach((item) => {
       const sku = item.item_sku ? ` [SKU ${item.item_sku}]` : '';
-      lines.push(`• ${formatQty(item.quantity)} ${item.unit || 'unidad'} — ${item.item_name}${sku} · ${formatCurrency(item.unit_price)} c/u · ${formatCurrency(item.line_total)}${item.notes ? ` (${item.notes})` : ''}`);
+      const basePrice = orderItemBaseUnitPrice(item);
+      const priceInfo = order.pickup_at_naon === true ? `${formatCurrency(basePrice)} lista → ${formatCurrency(item.unit_price)} Naón` : `${formatCurrency(item.unit_price)} c/u`;
+      lines.push(`• ${formatQty(item.quantity)} ${item.unit || 'unidad'} — ${item.item_name}${sku} · ${priceInfo} · ${formatCurrency(item.line_total)}${item.notes ? ` (${item.notes})` : ''}`);
     });
+    if (order.pickup_at_naon === true) {
+      lines.push('', `SUBTOTAL SIN DESCUENTO: ${formatCurrency(order.gross_total_amount || order.total_amount)}`);
+      lines.push(`DESCUENTO NAÓN (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)}): − ${formatCurrency(order.discount_amount)}`);
+    }
     lines.push('', `TOTAL: ${formatCurrency(order.total_amount)}`);
     if (number(order.monthly_billing_snapshot) > 0) {
       lines.push(`Tope ${formatPercent(order.budget_limit_percent_snapshot)}: ${formatCurrency(order.budget_limit_amount_snapshot)}`);
@@ -2334,6 +2419,10 @@
   function formatInputQty(value) {
     const qty = number(value);
     return Number.isInteger(qty) ? String(qty) : String(Math.round(qty * 100) / 100);
+  }
+
+  function roundMoney(value) {
+    return Math.round((number(value) + Number.EPSILON) * 100) / 100;
   }
 
   function clampMoney(value) {
