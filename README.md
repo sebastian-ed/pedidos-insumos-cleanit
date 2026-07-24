@@ -175,3 +175,8 @@ actualizar-sku-precios-topes.sql
 ```
 
 Después, reemplazar los archivos publicados en GitHub Pages. Las instrucciones completas están en `LEEME-ACTUALIZACION-SKU-PRECIOS-TOPES.md`.
+
+
+## Edición administrativa de pedidos
+
+Para habilitar la modificación de productos y cantidades desde el detalle de un pedido, ejecutar `actualizar-edicion-pedidos.sql`. Ver instrucciones en `LEEME-ACTUALIZACION-EDICION-PEDIDOS.md`.

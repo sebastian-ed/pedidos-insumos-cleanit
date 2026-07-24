@@ -44,6 +44,9 @@
     extras: [],
     tab: 'dashboard',
     selectedOrderId: null,
+    orderEditDraft: [],
+    orderEditOriginalUpdatedAt: null,
+    orderEditMode: false,
     lastSuccessText: '',
     channel: null,
     refreshTimer: null,
@@ -171,6 +174,11 @@
       window.open(`https://wa.me/?text=${encodeURIComponent(buildOrderText(order))}`, '_blank', 'noopener');
     });
     E.saveOrderStatusButton.addEventListener('click', saveSelectedOrderStatus);
+    E.editOrderButton.addEventListener('click', startOrderEdit);
+    E.cancelOrderEditButton.addEventListener('click', cancelOrderEdit);
+    E.saveOrderChangesButton.addEventListener('click', saveOrderChanges);
+    E.addOrderMaterialButton.addEventListener('click', addMaterialToOrderDraft);
+    E.orderDetailModal.addEventListener('hidden.bs.modal', resetOrderEditState);
 
     E.appShell.addEventListener('click', handleAppClick);
     E.appShell.addEventListener('input', handleAppInput);
@@ -409,6 +417,18 @@
   }
 
   function handleAppClick(event) {
+    const orderEditQtyButton = event.target.closest('[data-order-edit-action]');
+    if (orderEditQtyButton) {
+      changeOrderEditQty(orderEditQtyButton.dataset.orderEditKey, orderEditQtyButton.dataset.orderEditAction === 'plus' ? 1 : -1);
+      return;
+    }
+
+    const orderEditRemoveButton = event.target.closest('[data-order-edit-remove]');
+    if (orderEditRemoveButton) {
+      removeOrderEditItem(orderEditRemoveButton.dataset.orderEditRemove);
+      return;
+    }
+
     const qtyButton = event.target.closest('[data-qty-action]');
     if (qtyButton) {
       changeMaterialQty(qtyButton.dataset.materialId, qtyButton.dataset.qtyAction === 'plus' ? 1 : -1);
@@ -501,6 +521,12 @@
   }
 
   function handleAppInput(event) {
+    const orderEditInput = event.target.closest('[data-order-edit-input]');
+    if (orderEditInput) {
+      updateOrderEditInput(orderEditInput);
+      return;
+    }
+
     const materialInput = event.target.closest('[data-qty-input]');
     if (materialInput) {
       const materialId = materialInput.dataset.materialId;
@@ -967,6 +993,12 @@
     const order = S.orders.find((item) => item.id === orderId);
     if (!order) return;
     S.selectedOrderId = orderId;
+    resetOrderEditState();
+    renderOrderDetail(order);
+    M.orderDetail.show();
+  }
+
+  function renderOrderDetail(order) {
     const service = serviceById(order.service_id);
     const items = itemsForOrder(order.id);
 
@@ -995,7 +1027,291 @@
     E.orderDetailNotesWrap.classList.toggle('d-none', !order.notes);
     E.orderDetailNotes.textContent = order.notes || '';
     E.orderDetailStatus.value = order.status;
-    M.orderDetail.show();
+
+    const closed = ['entregado', 'cancelado'].includes(order.status);
+    E.editOrderButton.classList.toggle('d-none', !isFullAdmin() || closed);
+    E.editOrderButton.title = closed ? 'Reabrí el pedido antes de modificar sus insumos.' : '';
+    setOrderEditMode(false);
+  }
+
+  function resetOrderEditState() {
+    S.orderEditDraft = [];
+    S.orderEditOriginalUpdatedAt = null;
+    S.orderEditMode = false;
+    if (E.orderEditItems) E.orderEditItems.innerHTML = '';
+    if (E.orderAddMaterialSelect) E.orderAddMaterialSelect.innerHTML = '<option value="">Seleccionar insumo...</option>';
+  }
+
+  function startOrderEdit() {
+    if (!isFullAdmin()) {
+      toast('Solo el administrador puede modificar el contenido de un pedido.', 'error');
+      return;
+    }
+    const order = getSelectedOrder();
+    if (!order) return;
+    if (['entregado', 'cancelado'].includes(order.status)) {
+      toast('El pedido está cerrado. Reabrilo antes de modificar sus insumos.', 'error');
+      return;
+    }
+
+    S.orderEditDraft = itemsForOrder(order.id).map((item, index) => ({
+      key: item.id,
+      source_item_id: item.id,
+      material_id: item.material_id || null,
+      item_name: item.item_name,
+      item_sku: item.item_sku || '',
+      category: item.category || (item.is_custom ? 'Excepción' : 'General'),
+      unit: item.unit || 'unidad',
+      quantity: number(item.quantity),
+      unit_price: number(item.unit_price),
+      notes: item.notes || '',
+      image_url: item.image_url || 'assets/materials/default.svg',
+      is_custom: Boolean(item.is_custom),
+      sort_order: number(item.sort_order) || ((index + 1) * 10),
+      is_new: false
+    }));
+    S.orderEditOriginalUpdatedAt = order.updated_at;
+    setOrderEditMode(true);
+    renderOrderEditItems();
+    renderOrderAddMaterialOptions();
+    renderOrderEditSummary();
+  }
+
+  function cancelOrderEdit() {
+    const order = getSelectedOrder();
+    resetOrderEditState();
+    if (order) renderOrderDetail(order);
+  }
+
+  function setOrderEditMode(enabled) {
+    S.orderEditMode = Boolean(enabled);
+    E.orderDetailReadOnly.classList.toggle('d-none', enabled);
+    E.orderEditPanel.classList.toggle('d-none', !enabled);
+    E.orderDetailShareActions.classList.toggle('d-none', enabled);
+    E.orderStatusControls.classList.toggle('d-none', enabled);
+    E.orderEditControls.classList.toggle('d-none', !enabled);
+    E.editOrderButton.classList.toggle('d-none', enabled || !isFullAdmin() || ['entregado', 'cancelado'].includes(getSelectedOrder()?.status));
+    E.orderDetailStatus.disabled = enabled;
+  }
+
+  function renderOrderEditItems() {
+    E.orderEditItems.innerHTML = S.orderEditDraft.map((item) => `
+      <div class="order-edit-item" data-order-edit-row="${ea(item.key)}">
+        <img class="order-detail-thumb" src="${ea(item.image_url || 'assets/materials/default.svg')}" alt="${ea(item.item_name)}" onerror="this.src='assets/materials/default.svg'">
+        <div class="order-edit-item-info">
+          <div class="order-detail-name">${eh(item.item_name)}</div>
+          <div class="order-detail-sub">${eh(item.item_sku ? `SKU ${item.item_sku} · ` : '')}${eh(item.category || 'General')} · ${eh(item.unit || 'unidad')}</div>
+          <div class="order-detail-sub">Precio unitario: ${eh(formatCurrency(item.unit_price))}${item.is_new ? ' · Precio actual del catálogo' : ' · Precio registrado en el pedido'}</div>
+        </div>
+        <div class="order-edit-item-actions">
+          <div class="order-edit-qty-control">
+            <button class="btn btn-outline-secondary" type="button" data-order-edit-action="minus" data-order-edit-key="${ea(item.key)}" aria-label="Restar una unidad"><i class="bi bi-dash-lg"></i></button>
+            <input class="form-control order-edit-qty-input" type="number" min="0.01" max="999" step="0.01" value="${ea(formatInputQty(item.quantity))}" data-order-edit-input data-order-edit-key="${ea(item.key)}" aria-label="Cantidad de ${ea(item.item_name)}">
+            <button class="btn btn-outline-primary" type="button" data-order-edit-action="plus" data-order-edit-key="${ea(item.key)}" aria-label="Sumar una unidad"><i class="bi bi-plus-lg"></i></button>
+          </div>
+          <strong class="order-edit-line-total" data-order-edit-line-total>${eh(formatCurrency(number(item.quantity) * number(item.unit_price)))}</strong>
+          <button class="btn btn-outline-danger btn-sm order-edit-remove" type="button" data-order-edit-remove="${ea(item.key)}"><i class="bi bi-trash3 me-1"></i>Quitar</button>
+        </div>
+      </div>`).join('') || '<div class="empty-inline border rounded-4">El pedido quedó sin insumos. Agregá al menos uno para poder guardar.</div>';
+  }
+
+  function renderOrderAddMaterialOptions() {
+    const order = getSelectedOrder();
+    if (!order) return;
+    const selectedMaterialIds = new Set(S.orderEditDraft.map((item) => item.material_id).filter(Boolean));
+    const available = S.materials
+      .filter((material) => material.active !== false)
+      .filter((material) => !isMaterialHiddenForService(material.id, order.service_id))
+      .filter((material) => !selectedMaterialIds.has(material.id))
+      .sort(materialSort);
+
+    E.orderAddMaterialSelect.innerHTML = '<option value="">Seleccionar insumo...</option>' + available
+      .map((material) => `<option value="${ea(material.id)}">${eh(material.name)}${material.sku ? ` · SKU ${eh(material.sku)}` : ''} · ${eh(formatCurrency(material.unit_price))}</option>`)
+      .join('');
+    E.orderAddMaterialSelect.disabled = available.length === 0;
+    E.addOrderMaterialButton.disabled = available.length === 0;
+    E.orderAddMaterialHelp.textContent = available.length
+      ? `${available.length} insumos habilitados disponibles para sumar.`
+      : 'No quedan insumos habilitados para agregar.';
+  }
+
+  function addMaterialToOrderDraft() {
+    if (!S.orderEditMode || !isFullAdmin()) return;
+    const materialId = E.orderAddMaterialSelect.value;
+    if (!materialId) {
+      toast('Seleccioná un insumo para agregar.', 'error');
+      return;
+    }
+    const material = S.materials.find((item) => item.id === materialId && item.active !== false);
+    const order = getSelectedOrder();
+    if (!material || !order || isMaterialHiddenForService(material.id, order.service_id)) {
+      toast('Ese insumo no está habilitado para el servicio.', 'error');
+      return;
+    }
+
+    const duplicate = S.orderEditDraft.find((item) => item.material_id === material.id);
+    if (duplicate) {
+      duplicate.quantity = clampQty(number(duplicate.quantity) + number(material.suggested_quantity || 1), 0.01);
+    } else {
+      S.orderEditDraft.push({
+        key: `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        source_item_id: null,
+        material_id: material.id,
+        item_name: material.name,
+        item_sku: material.sku || '',
+        category: material.category || 'General',
+        unit: material.unit || 'unidad',
+        quantity: clampQty(material.suggested_quantity || 1, 0.01),
+        unit_price: number(material.unit_price),
+        notes: '',
+        image_url: material.image_url || 'assets/materials/default.svg',
+        is_custom: false,
+        sort_order: (S.orderEditDraft.length + 1) * 10,
+        is_new: true
+      });
+    }
+
+    renderOrderEditItems();
+    renderOrderAddMaterialOptions();
+    renderOrderEditSummary();
+  }
+
+  function changeOrderEditQty(key, delta) {
+    if (!S.orderEditMode) return;
+    const item = S.orderEditDraft.find((row) => row.key === key);
+    if (!item) return;
+    const next = Math.round((number(item.quantity) + delta) * 100) / 100;
+    if (next <= 0) {
+      removeOrderEditItem(key);
+      return;
+    }
+    item.quantity = clampQty(next, 0.01);
+    renderOrderEditItems();
+    renderOrderEditSummary();
+  }
+
+  function updateOrderEditInput(input) {
+    if (!S.orderEditMode) return;
+    const item = S.orderEditDraft.find((row) => row.key === input.dataset.orderEditKey);
+    if (!item) return;
+    item.quantity = input.value === '' ? 0 : clampQty(input.value, 0);
+    const row = input.closest('[data-order-edit-row]');
+    const lineTotal = row?.querySelector('[data-order-edit-line-total]');
+    if (lineTotal) lineTotal.textContent = formatCurrency(number(item.quantity) * number(item.unit_price));
+    input.classList.toggle('is-invalid', number(item.quantity) <= 0 || number(item.quantity) > 999);
+    renderOrderEditSummary();
+  }
+
+  function removeOrderEditItem(key) {
+    if (!S.orderEditMode) return;
+    S.orderEditDraft = S.orderEditDraft.filter((item) => item.key !== key);
+    renderOrderEditItems();
+    renderOrderAddMaterialOptions();
+    renderOrderEditSummary();
+  }
+
+  function orderEditMetrics(order) {
+    const validItems = S.orderEditDraft.filter((item) => number(item.quantity) > 0);
+    const totalUnits = validItems.reduce((sum, item) => sum + number(item.quantity), 0);
+    const totalAmount = Math.round(validItems.reduce((sum, item) => sum + number(item.quantity) * number(item.unit_price), 0) * 100) / 100;
+    const billing = number(order?.monthly_billing_snapshot);
+    const limitAmount = number(order?.budget_limit_amount_snapshot);
+    const sevenAmount = number(order?.budget_seven_percent_snapshot);
+    const status = billing <= 0 ? 'sin_configurar' : (totalAmount > sevenAmount ? 'sobre_7' : (totalAmount > limitAmount ? 'sobre_limite' : 'dentro'));
+    const differenceToSeven = Math.round((sevenAmount - totalAmount) * 100) / 100;
+    const usagePercent = sevenAmount > 0 ? totalAmount / sevenAmount * 100 : 0;
+    return { totalItems: validItems.length, totalUnits, totalAmount, billing, limitAmount, sevenAmount, status, differenceToSeven, usagePercent };
+  }
+
+  function renderOrderEditSummary() {
+    const order = getSelectedOrder();
+    if (!order) return;
+    const metrics = orderEditMetrics(order);
+    const statusClass = metrics.status === 'sobre_7' ? 'danger' : (metrics.status === 'sobre_limite' ? 'warning' : (metrics.status === 'dentro' ? 'success' : 'muted'));
+    const differenceText = metrics.status === 'sin_configurar'
+      ? 'El servicio no tiene facturación mensual configurada.'
+      : (metrics.differenceToSeven >= 0
+        ? `Margen hasta el 7%: ${formatCurrency(metrics.differenceToSeven)}`
+        : `Exceso sobre el 7%: ${formatCurrency(Math.abs(metrics.differenceToSeven))}`);
+    const progress = Math.max(0, Math.min(100, metrics.usagePercent));
+
+    E.orderEditBudgetSummary.className = `order-edit-budget-summary is-${statusClass}`;
+    E.orderEditBudgetSummary.innerHTML = `
+      <div class="order-edit-budget-head">
+        <div><div class="order-meta-label">Total ajustado</div><div class="order-edit-total">${eh(formatCurrency(metrics.totalAmount))}</div></div>
+        <span class="order-edit-status-pill">${eh(budgetStatusText(metrics.status))}</span>
+      </div>
+      <div class="order-edit-budget-grid">
+        <div><span>Contenido</span><strong>${metrics.totalItems} insumos · ${eh(formatQty(metrics.totalUnits))} unidades</strong></div>
+        <div><span>Límite configurado</span><strong>${metrics.billing > 0 ? `${eh(formatCurrency(metrics.limitAmount))} (${eh(formatPercent(order.budget_limit_percent_snapshot))})` : 'Sin configurar'}</strong></div>
+        <div><span>Referencia máxima 7%</span><strong>${metrics.billing > 0 ? eh(formatCurrency(metrics.sevenAmount)) : 'Sin configurar'}</strong></div>
+        <div class="order-edit-difference"><span>Resultado</span><strong>${eh(differenceText)}</strong></div>
+      </div>
+      ${metrics.billing > 0 ? `<div class="order-edit-progress" aria-label="Uso del límite del 7%"><span style="width:${progress.toFixed(2)}%"></span></div><div class="order-detail-sub mt-1">El pedido utiliza ${eh(formatPercent(metrics.usagePercent))} de la referencia del 7%.</div>` : ''}`;
+  }
+
+  async function saveOrderChanges() {
+    if (!isFullAdmin() || !S.orderEditMode) {
+      toast('No tenés permisos para modificar pedidos.', 'error');
+      return;
+    }
+    const order = getSelectedOrder();
+    if (!order) return;
+    if (S.orderEditDraft.length < 1) {
+      toast('El pedido debe conservar al menos un insumo.', 'error');
+      return;
+    }
+    if (S.orderEditDraft.some((item) => number(item.quantity) <= 0 || number(item.quantity) > 999)) {
+      toast('Revisá las cantidades. Deben ser mayores a 0 y no superar 999.', 'error');
+      return;
+    }
+
+    const metrics = orderEditMetrics(order);
+    if (metrics.status === 'sobre_7') {
+      const accepted = confirm(`El pedido seguirá superando el 7% por ${formatCurrency(Math.abs(metrics.differenceToSeven))}. ¿Guardar igualmente?`);
+      if (!accepted) return;
+    } else if (metrics.status === 'sobre_limite') {
+      const overLimit = Math.max(0, metrics.totalAmount - metrics.limitAmount);
+      const accepted = confirm(`El pedido superará el límite configurado por ${formatCurrency(overLimit)}, aunque seguirá debajo del 7%. ¿Guardar igualmente?`);
+      if (!accepted) return;
+    }
+
+    buttonBusy(E.saveOrderChangesButton, true, 'Guardando cambios...');
+    try {
+      const payload = S.orderEditDraft.map((item) => ({
+        source_item_id: item.source_item_id || null,
+        material_id: item.material_id || null,
+        quantity: number(item.quantity)
+      }));
+      const { error } = await S.sb.rpc('admin_replace_order_items', {
+        p_order_id: order.id,
+        p_expected_updated_at: S.orderEditOriginalUpdatedAt,
+        p_items: payload
+      });
+      if (error) throw error;
+
+      const orderId = order.id;
+      resetOrderEditState();
+      await refreshAdmin(false);
+      const updatedOrder = S.orders.find((item) => item.id === orderId);
+      if (updatedOrder) {
+        S.selectedOrderId = orderId;
+        renderOrderDetail(updatedOrder);
+      }
+      toast('Pedido actualizado y totales recalculados.', 'success');
+    } catch (error) {
+      console.error(error);
+      const message = String(error?.message || '');
+      if (message.includes('modificado por otro usuario')) {
+        toast('El pedido cambió mientras lo editabas. Actualizá y volvé a revisar.', 'error');
+      } else if (message.includes('admin_replace_order_items') || message.includes('schema cache')) {
+        toast('Falta instalar la actualización SQL de edición de pedidos.', 'error');
+      } else {
+        toast(message || 'No se pudieron guardar los cambios.', 'error');
+      }
+    } finally {
+      buttonBusy(E.saveOrderChangesButton, false);
+    }
   }
 
   async function saveSelectedOrderStatus() {
@@ -1443,7 +1759,11 @@
       const order = S.orders.find((item) => item.id === entry.order_id);
       const service = order ? serviceById(order.service_id) : null;
       const profile = S.profiles.find((item) => item.id === entry.changed_by);
-      return `<tr><td>${dtf.format(new Date(entry.changed_at))}</td><td><button class="btn btn-link p-0 fw-bold text-decoration-none" type="button" data-order-open="${ea(entry.order_id)}">${eh(order?.order_code || 'Pedido eliminado')}</button></td><td>${eh(service?.name || '—')}</td><td><div class="history-change"><span class="status-badge ${ea(entry.old_status || 'pendiente')}">${eh(entry.old_status ? STATUS_LABELS[entry.old_status] : 'Creado')}</span><i class="bi bi-arrow-right history-arrow"></i><span class="status-badge ${ea(entry.new_status)}">${eh(STATUS_LABELS[entry.new_status] || entry.new_status)}</span></div></td><td>${eh(profile?.full_name || profile?.email || 'Sistema')}</td><td>${eh(entry.notes || '')}</td></tr>`;
+      const isEdit = Boolean(entry.old_status && entry.old_status === entry.new_status);
+      const change = isEdit
+        ? '<div class="history-change"><span class="badge text-bg-primary"><i class="bi bi-pencil-square me-1"></i>Pedido editado</span></div>'
+        : `<div class="history-change"><span class="status-badge ${ea(entry.old_status || 'pendiente')}">${eh(entry.old_status ? STATUS_LABELS[entry.old_status] : 'Creado')}</span><i class="bi bi-arrow-right history-arrow"></i><span class="status-badge ${ea(entry.new_status)}">${eh(STATUS_LABELS[entry.new_status] || entry.new_status)}</span></div>`;
+      return `<tr><td>${dtf.format(new Date(entry.changed_at))}</td><td><button class="btn btn-link p-0 fw-bold text-decoration-none" type="button" data-order-open="${ea(entry.order_id)}">${eh(order?.order_code || 'Pedido eliminado')}</button></td><td>${eh(service?.name || '—')}</td><td>${change}</td><td>${eh(profile?.full_name || profile?.email || 'Sistema')}</td><td>${eh(entry.notes || '')}</td></tr>`;
     }).join('') || '<tr><td colspan="6"><div class="empty-inline">Todavía no hay cambios registrados.</div></td></tr>';
   }
 
