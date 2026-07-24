@@ -52,7 +52,8 @@
     channel: null,
     refreshTimer: null,
     lastBudgetStatus: null,
-    initialized: false
+    initialized: false,
+    passwordRecovery: false
   };
 
   const E = {};
@@ -103,7 +104,13 @@
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
     });
 
-    S.sb.auth.onAuthStateChange((event) => {
+    S.sb.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        S.passwordRecovery = true;
+        S.session = session;
+        setTimeout(showPasswordResetView, 0);
+        return;
+      }
       if (event === 'SIGNED_OUT') {
         setTimeout(() => {
           if (S.mode !== 'signed-out') resetSessionAndShowLogin();
@@ -114,7 +121,12 @@
     try {
       const { data, error } = await S.sb.auth.getSession();
       if (error) throw error;
-      if (data.session) await routeAuthenticatedSession(data.session);
+      const recoveryInUrl = /(?:^|[&#?])type=recovery(?:&|$)/.test(`${window.location.hash}&${window.location.search}`);
+      if ((S.passwordRecovery || recoveryInUrl) && data.session) {
+        S.passwordRecovery = true;
+        S.session = data.session;
+        showPasswordResetView();
+      } else if (data.session) await routeAuthenticatedSession(data.session);
       else showLoginGate();
     } catch (error) {
       console.error(error);
@@ -128,6 +140,8 @@
   function bindEvents() {
     E.accessLoginForm.addEventListener('submit', accessLogin);
     E.accessTogglePassword.addEventListener('click', toggleAccessPassword);
+    E.forgotPasswordButton.addEventListener('click', sendPasswordRecovery);
+    E.passwordResetForm.addEventListener('submit', updateRecoveredPassword);
     E.publicEntryForm.addEventListener('submit', startPublicOrder);
     E.publicServiceSearch.addEventListener('input', handlePublicServiceSearch);
     E.publicServiceSearch.addEventListener('focus', () => renderPublicServiceSuggestions(E.publicServiceSearch.value, true));
@@ -211,16 +225,99 @@
 
   function showLoginGate() {
     E.loadingScreen.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
     E.authView.classList.add('d-none');
     E.appShell.classList.add('d-none');
     E.loginGateView.classList.remove('d-none');
     hideAccessLoginError();
+    hideAccessLoginSuccess();
     setTimeout(() => E.accessLoginEmail?.focus(), 150);
+  }
+
+  function showPasswordResetView() {
+    E.loadingScreen.classList.add('d-none');
+    E.loginGateView.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
+    E.authView.classList.add('d-none');
+    E.appShell.classList.add('d-none');
+    E.passwordResetView.classList.remove('d-none');
+    E.passwordResetError.classList.add('d-none');
+    E.passwordResetError.textContent = '';
+    E.newPassword.value = '';
+    E.confirmNewPassword.value = '';
+    setTimeout(() => E.newPassword.focus(), 150);
+  }
+
+  function passwordRecoveryRedirectUrl() {
+    return `${window.location.origin}${window.location.pathname}`;
+  }
+
+  async function sendPasswordRecovery() {
+    hideAccessLoginError();
+    hideAccessLoginSuccess();
+    const email = E.accessLoginEmail.value.trim();
+    if (!email) {
+      showAccessLoginError('Ingresá el correo del usuario para enviar el enlace de recuperación.');
+      E.accessLoginEmail.focus();
+      return;
+    }
+
+    buttonBusy(E.forgotPasswordButton, true, 'Enviando enlace...');
+    try {
+      const { error } = await S.sb.auth.resetPasswordForEmail(email, {
+        redirectTo: passwordRecoveryRedirectUrl()
+      });
+      if (error) throw error;
+      showAccessLoginSuccess('Si el correo está registrado, recibirá un enlace para cambiar la contraseña. Revisá también la carpeta de spam.');
+    } catch (error) {
+      console.error(error);
+      showAccessLoginError(error.message || 'No se pudo enviar el enlace de recuperación.');
+    } finally {
+      buttonBusy(E.forgotPasswordButton, false);
+    }
+  }
+
+  async function updateRecoveredPassword(event) {
+    event.preventDefault();
+    E.passwordResetError.classList.add('d-none');
+    E.passwordResetError.textContent = '';
+
+    const password = E.newPassword.value;
+    const confirmation = E.confirmNewPassword.value;
+    if (password.length < 8) {
+      E.passwordResetError.textContent = 'La contraseña debe tener como mínimo 8 caracteres.';
+      E.passwordResetError.classList.remove('d-none');
+      return;
+    }
+    if (password !== confirmation) {
+      E.passwordResetError.textContent = 'Las contraseñas no coinciden.';
+      E.passwordResetError.classList.remove('d-none');
+      return;
+    }
+
+    buttonBusy(E.passwordResetButton, true, 'Guardando...');
+    try {
+      const { error } = await S.sb.auth.updateUser({ password });
+      if (error) throw error;
+      S.passwordRecovery = false;
+      await S.sb.auth.signOut();
+      resetSessionState();
+      showLoginGate();
+      setTimeout(() => showAccessLoginSuccess('Contraseña actualizada. Ya podés ingresar con la nueva contraseña.'), 50);
+      window.history.replaceState({}, document.title, passwordRecoveryRedirectUrl());
+    } catch (error) {
+      console.error(error);
+      E.passwordResetError.textContent = error.message || 'No se pudo actualizar la contraseña. Solicitá un nuevo enlace e intentá nuevamente.';
+      E.passwordResetError.classList.remove('d-none');
+    } finally {
+      buttonBusy(E.passwordResetButton, false);
+    }
   }
 
   async function accessLogin(event) {
     event.preventDefault();
     hideAccessLoginError();
+    hideAccessLoginSuccess();
     buttonBusy(E.accessLoginButton, true, 'Ingresando...');
     try {
       const { data, error } = await S.sb.auth.signInWithPassword({
@@ -301,6 +398,7 @@
     }
     E.loadingScreen.classList.add('d-none');
     E.loginGateView.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
     E.appShell.classList.add('d-none');
     E.authView.classList.remove('d-none');
     E.publicReporterName.readOnly = false;
@@ -461,6 +559,7 @@
   function showOperatorApp() {
     S.mode = 'operator';
     E.loginGateView.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
     E.authView.classList.add('d-none');
     E.appShell.classList.remove('d-none');
     E.adminView.classList.add('d-none');
@@ -1003,6 +1102,7 @@
 
   function showAdminApp() {
     E.loginGateView.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
     E.authView.classList.add('d-none');
     E.appShell.classList.remove('d-none');
     E.operatorView.classList.add('d-none');
@@ -2135,6 +2235,16 @@
   function hideAccessLoginError() {
     E.accessLoginError.classList.add('d-none');
     E.accessLoginError.textContent = '';
+  }
+
+  function showAccessLoginSuccess(message) {
+    E.accessLoginSuccess.textContent = message;
+    E.accessLoginSuccess.classList.remove('d-none');
+  }
+
+  function hideAccessLoginSuccess() {
+    E.accessLoginSuccess.classList.add('d-none');
+    E.accessLoginSuccess.textContent = '';
   }
 
   function showLoginError(message) {
