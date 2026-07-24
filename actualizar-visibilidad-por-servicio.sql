@@ -1,3 +1,6 @@
+-- IMPORTANTE: migración LEGACY (v4). No ejecutar después de la actualización v5.
+-- Si necesitás aplicarla sobre una instalación anterior, ejecutala primero y luego volvé a ejecutar
+-- `actualizar-sku-precios-topes.sql`, porque este archivo reemplaza funciones públicas con una versión antigua.
 -- Pedidos Clean It · actualización: visibilidad de insumos por servicio
 -- Ejecutar una sola vez en Supabase > SQL Editor sobre el proyecto que ya está funcionando.
 -- No elimina pedidos, servicios, materiales, imágenes ni configuraciones existentes.
@@ -212,8 +215,8 @@ begin
 end;
 $$;
 
-grant execute on function public.public_order_bootstrap() to anon,authenticated;
-grant execute on function public.public_create_order(uuid,text,text,text,jsonb) to anon,authenticated;
+revoke all on function public.public_order_bootstrap() from public,anon,authenticated;
+revoke all on function public.public_create_order(uuid,text,text,text,jsonb) from public,anon,authenticated;
 revoke all on function public.admin_set_service_hidden_materials(uuid,uuid[]) from public;
 grant execute on function public.admin_set_service_hidden_materials(uuid,uuid[]) to authenticated;
 

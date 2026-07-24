@@ -1,13 +1,14 @@
 # Pedidos Clean It
 
-Web app responsive para que los operarios soliciten insumos de manera visual por servicio. Mantiene la interfaz y la arquitectura de `stock-cleanit`: HTML, CSS, JavaScript, Bootstrap, Supabase y despliegue estático en GitHub Pages.
+Web app responsive para que los supervisores autorizados soliciten insumos de manera visual por servicio. Mantiene la interfaz y la arquitectura de `stock-cleanit`: HTML, CSS, JavaScript, Bootstrap, Supabase y despliegue estático en GitHub Pages.
 
 ## Qué incluye
 
-### Vista pública para operarios
+### Carga de pedidos para supervisores
 
-- Acceso sin usuario ni contraseña.
-- Selección de servicio y carga del nombre del operario.
+- Login obligatorio mediante Supabase Auth.
+- Acceso únicamente para perfiles con rol `operator`, mostrado como **Supervisor**.
+- Selección de servicio con el responsable tomado automáticamente del usuario autenticado.
 - Catálogo visual con imágenes, buscador y filtro por categoría.
 - Selector de cantidades con botones `+` y `−`.
 - Prioridad normal o urgente.
@@ -33,7 +34,7 @@ Web app responsive para que los operarios soliciten insumos de manera visual por
 1. Crear un proyecto nuevo en Supabase.
 2. Abrir **SQL Editor**.
 3. Ejecutar completo el archivo `supabase-schema.sql`.
-4. Ir a **Authentication → Users** y crear el usuario administrativo.
+4. Ir a **Authentication → Users** y crear el usuario administrativo. Los supervisores también deben crearse allí.
 5. Volver a **SQL Editor** y promoverlo:
 
 ```sql
@@ -74,14 +75,15 @@ Se utilizan únicamente la **Project URL** y la clave pública **anon/publishabl
 
 ## Seguridad
 
-Los operarios no leen ni escriben directamente las tablas. La vista pública usa dos funciones RPC `security definer` que:
+Los visitantes anónimos no pueden consultar el catálogo ni crear pedidos. Los supervisores autenticados usan dos funciones RPC `security definer` que:
 
 - exponen únicamente servicios e insumos activos;
-- validan servicio, responsable, cantidades y cantidad máxima de ítems;
+- validan el rol Supervisor, el servicio, las cantidades y la cantidad máxima de ítems;
+- toman el nombre del responsable desde el perfil autenticado, sin confiar en un nombre enviado por el navegador;
 - crean la cabecera y el detalle del pedido;
 - no permiten consultar otros pedidos, usuarios ni historial.
 
-Las tablas administrativas están protegidas con Row Level Security y sólo son accesibles para perfiles con rol `admin`.
+Las tablas administrativas están protegidas con Row Level Security. El administrador conserva acceso total y el proveedor sólo accede a las funciones operativas habilitadas.
 
 
 ## Visibilidad de insumos por servicio
@@ -154,3 +156,48 @@ update public.profiles
 set role = 'supplier', full_name = 'Proveedor'
 where email = 'proveedor@dominio.com';
 ```
+
+## Actualización v5 · SKU, precios y control presupuestario
+
+La versión v5 agrega:
+
+- SKU único y precio unitario en cada insumo.
+- Carrito con subtotal por producto y total del pedido en tiempo real.
+- Facturación mensual por servicio.
+- Límite operativo configurable entre 5% y 7% de la facturación.
+- Referencias automáticas del 5% y del 7%.
+- Advertencia al superar el límite y alerta crítica al superar el 7%.
+- Envío excepcional permitido aunque se supere el tope.
+- Registro histórico de SKU, precio, total y situación presupuestaria de cada pedido.
+
+Para actualizar una instalación existente, ejecutar:
+
+```text
+actualizar-sku-precios-topes.sql
+```
+
+Después, reemplazar los archivos publicados en GitHub Pages. Las instrucciones completas están en `LEEME-ACTUALIZACION-SKU-PRECIOS-TOPES.md`.
+
+
+## Edición administrativa de pedidos
+
+Para habilitar la modificación de productos y cantidades desde el detalle de un pedido, ejecutar `actualizar-edicion-pedidos.sql`. Ver instrucciones en `LEEME-ACTUALIZACION-EDICION-PEDIDOS.md`.
+
+## Actualización v7 · Login obligatorio
+
+Esta versión elimina la carga anónima de pedidos.
+
+- `operator` se muestra en la interfaz como **Supervisor**.
+- Los supervisores ingresan con correo y contraseña y acceden al formulario de pedidos.
+- Administradores y proveedores ingresan desde la misma pantalla y son dirigidos automáticamente a sus paneles.
+- El nombre del responsable queda asociado a su perfil y no puede editarse desde el formulario.
+- Las funciones antiguas de carga anónima quedan bloqueadas en Supabase.
+
+Para una instalación existente, ejecutar en último lugar:
+
+```text
+actualizar-login-obligatorio.sql
+```
+
+Luego reemplazar `index.html`, `app.js` y `styles.css`. Las instrucciones están en `LEEME-LOGIN-OBLIGATORIO.md`.
+

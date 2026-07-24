@@ -1,5 +1,8 @@
 # Actualización: insumos visibles por servicio
 
+> **Compatibilidad:** esta guía corresponde a la versión anterior. En una instalación con SKU, precios y topes, no vuelvas a ejecutar `actualizar-visibilidad-por-servicio.sql`. Si lo hacés, ejecutá después `actualizar-sku-precios-topes.sql` para restaurar las funciones v5.
+
+
 ## 1. Actualizar Supabase
 
 En el proyecto que ya está funcionando:

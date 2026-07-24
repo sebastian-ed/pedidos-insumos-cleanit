@@ -20,21 +20,57 @@
     <p class="mt-3 mb-0 text-secondary fw-bold">Cargando pedidos...</p>
   </div>
 
-  <main id="authView" class="auth-view d-none">
-    <section class="auth-panel">
+  <main id="loginGateView" class="auth-view d-none">
+    <section class="auth-panel auth-panel-login">
       <div class="auth-copy">
-        <span class="eyebrow">Clean It · Operaciones</span>
-        <h1>Pedidos claros, sin cadenas de WhatsApp.</h1>
-        <p>El operario selecciona visualmente los insumos que necesita. Administración recibe un pedido completo, trazable y listo para preparar.</p>
-        <div class="auth-feature"><i class="bi bi-building-check"></i><span>Acceso público por servicio, sin crear una cuenta</span></div>
-        <div class="auth-feature"><i class="bi bi-grid-3x3-gap"></i><span>Catálogo visual con cantidades por insumo</span></div>
-        <div class="auth-feature"><i class="bi bi-broadcast-pin"></i><span>Seguimiento en vivo para administración</span></div>
+        <span class="eyebrow">Clean It · Acceso interno</span>
+        <h1>Pedidos controlados desde el inicio</h1>
+        <p>El acceso está reservado a supervisores y usuarios habilitados. Cada pedido queda asociado a la cuenta que lo generó.</p>
+        <div class="auth-feature"><i class="bi bi-person-check"></i><span>Ingreso únicamente con usuario registrado</span></div>
+        <div class="auth-feature"><i class="bi bi-shield-check"></i><span>Trazabilidad de quién genera cada pedido</span></div>
+        <div class="auth-feature"><i class="bi bi-clipboard2-check"></i><span>Validación posterior desde el panel operativo</span></div>
       </div>
 
       <div class="auth-card shadow-lg">
         <div class="d-flex align-items-center gap-3 mb-4">
           <div class="brand-mark brand-mark-sm">CI</div>
-          <div><div class="fw-black fs-4">Pedidos Clean It</div><div class="text-secondary small">Solicitud pública de insumos</div></div>
+          <div><div class="fw-black fs-4">Pedidos Clean It</div><div class="text-secondary small">Acceso de supervisores</div></div>
+        </div>
+        <div id="accessSetupWarning" class="alert alert-warning d-none" role="alert">
+          <strong>Falta configurar Supabase.</strong>
+          <div class="small mt-1">Editá <code>config.js</code> con la URL y la clave pública anon del proyecto.</div>
+        </div>
+        <form id="accessLoginForm" novalidate>
+          <label for="accessLoginEmail" class="form-label">Correo</label>
+          <input id="accessLoginEmail" class="form-control form-control-lg mb-3" type="email" autocomplete="email" placeholder="supervisor@cleanit.com.ar" required>
+          <label for="accessLoginPassword" class="form-label">Contraseña</label>
+          <div class="input-group input-group-lg">
+            <input id="accessLoginPassword" class="form-control" type="password" autocomplete="current-password" required>
+            <button id="accessTogglePassword" class="btn btn-outline-secondary" type="button" aria-label="Mostrar contraseña"><i class="bi bi-eye"></i></button>
+          </div>
+          <div id="accessLoginError" class="alert alert-danger py-2 mt-3 mb-0 d-none"></div>
+          <button id="accessLoginButton" class="btn btn-primary btn-lg w-100 fw-bold mt-4" type="submit"><i class="bi bi-box-arrow-in-right me-2"></i>Ingresar</button>
+        </form>
+        <div class="login-security-note"><i class="bi bi-lock-fill"></i><span>Los usuarios se administran desde Supabase Authentication.</span></div>
+      </div>
+    </section>
+  </main>
+
+  <main id="authView" class="auth-view d-none">
+    <section class="auth-panel">
+      <div class="auth-copy">
+        <span class="eyebrow">Clean It · Operaciones</span>
+        <h1>Armá el pedido del servicio</h1>
+        <p>Seleccioná el servicio, agregá los insumos necesarios y revisá el presupuesto antes de enviarlo.</p>
+        <div class="auth-feature"><i class="bi bi-building-check"></i><span>Seleccioná el servicio para el que vas a realizar el pedido</span></div>
+        <div class="auth-feature"><i class="bi bi-grid-3x3-gap"></i><span>Añadí las cantidades que necesitas</span></div>
+        <div class="auth-feature"><i class="bi bi-broadcast-pin"></i><span>El pedido queda identificado con tu usuario</span></div>
+      </div>
+
+      <div class="auth-card shadow-lg">
+        <div class="d-flex align-items-center gap-3 mb-4">
+          <div class="brand-mark brand-mark-sm">CI</div>
+          <div><div class="fw-black fs-4">Pedidos Clean It</div><div class="text-secondary small">Solicitud de insumos</div></div>
         </div>
         <div id="setupWarning" class="alert alert-warning d-none" role="alert">
           <strong>Falta configurar Supabase.</strong>
@@ -45,14 +81,17 @@
           <select id="publicServiceSelect" class="form-select form-select-lg mb-3" required>
             <option value="">Cargando servicios...</option>
           </select>
-          <label for="publicReporterName" class="form-label">Tu nombre</label>
-          <input id="publicReporterName" class="form-control mb-3" maxlength="100" autocomplete="name" placeholder="Nombre del operario" required>
+          <label for="publicReporterName" class="form-label">Supervisor responsable</label>
+          <input id="publicReporterName" class="form-control mb-3" maxlength="100" autocomplete="name" placeholder="Usuario autenticado" readonly required>
           <div id="publicEntryError" class="alert alert-danger py-2 d-none"></div>
           <button id="publicStartButton" class="btn btn-primary btn-lg w-100 fw-bold" type="submit"><i class="bi bi-cart-plus me-2"></i>Armar pedido</button>
         </form>
         <div class="public-admin-link">
-          <span>Uso administrativo / proveedor</span>
-          <button id="openAdminLoginButton" class="btn btn-link fw-bold p-0" type="button">Ingresar a administración</button>
+          <span><i class="bi bi-person-check me-2"></i>Pedido asociado al usuario autenticado</span>
+          <div class="d-flex gap-2">
+            <button id="publicLogoutButton" class="btn btn-link fw-bold p-0" type="button">Cerrar sesión</button>
+            <button id="openAdminLoginButton" class="btn btn-link fw-bold p-0 d-none" type="button">Administración</button>
+          </div>
         </div>
       </div>
     </section>
@@ -90,10 +129,24 @@
           </div>
 
           <div class="row g-3 mb-4">
-            <div class="col-6 col-lg-3"><div class="metric-card"><span class="metric-icon bg-primary-subtle text-primary"><i class="bi bi-box-seam"></i></span><div><div id="operatorSelectedCount" class="metric-value">0</div><div class="metric-label">Insumos</div></div></div></div>
-            <div class="col-6 col-lg-3"><div class="metric-card"><span class="metric-icon bg-success-subtle text-success"><i class="bi bi-123"></i></span><div><div id="operatorUnitsCount" class="metric-value">0</div><div class="metric-label">Unidades</div></div></div></div>
-            <div class="col-6 col-lg-3"><div class="metric-card"><span class="metric-icon bg-warning-subtle text-warning-emphasis"><i class="bi bi-plus-circle"></i></span><div><div id="operatorCustomCount" class="metric-value">0</div><div class="metric-label">No listados</div></div></div></div>
-            <div class="col-6 col-lg-3"><div class="metric-card"><span class="metric-icon bg-danger-subtle text-danger"><i class="bi bi-lightning-charge"></i></span><div><div id="operatorPriorityLabel" class="metric-value metric-value-text">Normal</div><div class="metric-label">Prioridad</div></div></div></div>
+            <div class="col-6 col-lg"><div class="metric-card"><span class="metric-icon bg-primary-subtle text-primary"><i class="bi bi-box-seam"></i></span><div><div id="operatorSelectedCount" class="metric-value">0</div><div class="metric-label">Insumos</div></div></div></div>
+            <div class="col-6 col-lg"><div class="metric-card"><span class="metric-icon bg-success-subtle text-success"><i class="bi bi-123"></i></span><div><div id="operatorUnitsCount" class="metric-value">0</div><div class="metric-label">Unidades</div></div></div></div>
+            <div class="col-6 col-lg"><div class="metric-card"><span class="metric-icon bg-warning-subtle text-warning-emphasis"><i class="bi bi-plus-circle"></i></span><div><div id="operatorCustomCount" class="metric-value">0</div><div class="metric-label">No listados</div></div></div></div>
+            <div class="col-6 col-lg"><div class="metric-card"><span class="metric-icon bg-info-subtle text-info-emphasis"><i class="bi bi-cart3"></i></span><div><div id="operatorCartTotal" class="metric-value metric-value-money">$ 0</div><div class="metric-label">Total pedido</div></div></div></div>
+            <div class="col-12 col-lg"><div class="metric-card"><span class="metric-icon bg-danger-subtle text-danger"><i class="bi bi-lightning-charge"></i></span><div><div id="operatorPriorityLabel" class="metric-value metric-value-text">Normal</div><div class="metric-label">Prioridad</div></div></div></div>
+          </div>
+
+          <div id="operatorBudgetPanel" class="section-card budget-panel mb-3">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-start">
+              <div><span class="eyebrow">Control presupuestario</span><h2 class="section-title mt-1 mb-1">Tope del servicio</h2><p id="operatorBudgetDescription" class="text-secondary mb-0">La facturación todavía no está configurada.</p></div>
+              <div class="budget-values">
+                <div><span>5%</span><strong id="operatorBudgetFive">$ 0</strong></div>
+                <div class="is-limit"><span id="operatorBudgetLimitLabel">Límite 5%</span><strong id="operatorBudgetLimit">$ 0</strong></div>
+                <div><span>7%</span><strong id="operatorBudgetSeven">$ 0</strong></div>
+              </div>
+            </div>
+            <div class="budget-progress-wrap mt-3"><div class="progress" role="progressbar" aria-label="Uso del presupuesto"><div id="operatorBudgetProgress" class="progress-bar" style="width:0%"></div></div><div id="operatorBudgetUsage" class="small text-secondary mt-2">Sin facturación configurada</div></div>
+            <div id="operatorBudgetAlert" class="alert mt-3 mb-0 d-none"></div>
           </div>
 
           <div class="section-card mb-3">
@@ -124,7 +177,7 @@
           <div id="operatorInventoryGrid" class="inventory-grid" data-context="operator"></div>
         </div>
       </div>
-      <div id="operatorSaveBar" class="save-bar"><div class="container d-flex align-items-center justify-content-between gap-3"><div class="d-none d-md-block"><strong id="operatorDraftCount">0 insumos seleccionados</strong><div class="small text-secondary">El pedido quedará registrado con fecha, hora y responsable.</div></div><button id="operatorSaveButton" class="btn btn-primary btn-lg fw-bold flex-grow-1 flex-md-grow-0" type="button"><i class="bi bi-send-check me-2"></i>Enviar pedido</button></div></div>
+      <div id="operatorSaveBar" class="save-bar"><div class="container d-flex align-items-center justify-content-between gap-3"><div class="d-none d-md-block"><strong id="operatorDraftCount">0 insumos seleccionados</strong><div class="small text-secondary">Total actual: <strong id="operatorSaveTotal">$ 0</strong> · El exceso del tope no bloquea el pedido.</div></div><button id="operatorSaveButton" class="btn btn-primary btn-lg fw-bold flex-grow-1 flex-md-grow-0" type="button"><i class="bi bi-send-check me-2"></i>Enviar pedido</button></div></div>
     </section>
 
     <section id="adminView" class="d-none admin-layout">
@@ -168,19 +221,19 @@
         </section>
 
         <section id="adminMaterials" class="admin-panel d-none">
-          <div class="panel-heading"><div><span class="eyebrow">Catálogo maestro</span><h1>Insumos</h1><p>Gestioná nombres, imágenes, unidades y cantidad sugerida.</p></div><button id="addMaterialButton" class="btn btn-primary fw-bold"><i class="bi bi-plus-lg me-2"></i>Nuevo insumo</button></div>
+          <div class="panel-heading"><div><span class="eyebrow">Catálogo maestro</span><h1>Insumos</h1><p>Gestioná SKU, precios, imágenes, unidades y cantidades sugeridas.</p></div><button id="addMaterialButton" class="btn btn-primary fw-bold"><i class="bi bi-plus-lg me-2"></i>Nuevo insumo</button></div>
           <div class="section-card mb-4"><div class="row g-3"><div class="col-lg-8"><label for="materialsSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="materialsSearch" class="form-control" type="search" placeholder="Nombre, categoría o detalle"></div></div><div class="col-lg-4"><label for="materialsStatusFilter" class="form-label">Estado</label><select id="materialsStatusFilter" class="form-select"><option value="all">Todos</option><option value="active">Activos</option><option value="inactive">Inactivos</option></select></div></div></div>
-          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Insumo</th><th>Categoría</th><th>Unidad</th><th>Sugerido</th><th>Estado</th><th></th></tr></thead><tbody id="materialsTableBody"></tbody></table></div></div>
+          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Insumo</th><th>SKU</th><th>Categoría</th><th>Unidad</th><th>Precio</th><th>Sugerido</th><th>Estado</th><th></th></tr></thead><tbody id="materialsTableBody"></tbody></table></div></div>
         </section>
 
         <section id="adminServices" class="admin-panel d-none">
-          <div class="panel-heading"><div><span class="eyebrow">Estructura operativa</span><h1>Servicios</h1><p>Alta, dirección y catálogo habilitado para cada establecimiento.</p></div><button id="addServiceButton" class="btn btn-primary fw-bold"><i class="bi bi-plus-lg me-2"></i>Nuevo servicio</button></div>
+          <div class="panel-heading"><div><span class="eyebrow">Estructura operativa</span><h1>Servicios</h1><p>Configurá facturación, topes presupuestarios y catálogo habilitado por establecimiento.</p></div><button id="addServiceButton" class="btn btn-primary fw-bold"><i class="bi bi-plus-lg me-2"></i>Nuevo servicio</button></div>
           <div class="section-card mb-4"><label for="adminServiceSearch" class="form-label">Buscar servicio</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="adminServiceSearch" class="form-control" type="search" placeholder="Nombre, zona, dirección o supervisor"></div></div>
-          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Servicio</th><th>Zona</th><th>Frecuencia</th><th>Supervisor</th><th>Insumos visibles</th><th>Pedidos</th><th>Estado</th><th></th></tr></thead><tbody id="servicesTableBody"></tbody></table></div></div>
+          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Servicio</th><th>Zona</th><th>Facturación</th><th>Tope</th><th>Frecuencia</th><th>Supervisor</th><th>Insumos visibles</th><th>Pedidos</th><th>Estado</th><th></th></tr></thead><tbody id="servicesTableBody"></tbody></table></div></div>
         </section>
 
         <section id="adminUsers" class="admin-panel d-none">
-          <div class="panel-heading"><div><span class="eyebrow">Accesos y permisos</span><h1>Usuarios</h1><p>Los operarios no necesitan usuario. Desde acá asignás roles administrativos, proveedor u operario especial.</p></div></div>
+          <div class="panel-heading"><div><span class="eyebrow">Accesos y permisos</span><h1>Usuarios</h1><p>Los supervisores deben tener usuario. Desde acá asignás roles de supervisor, proveedor o administrador.</p></div></div>
           <div class="alert alert-info">Los usuarios se crean en <strong>Supabase → Authentication → Users</strong>. Luego podés asignarles rol desde esta pantalla. Para seguridad, la app no crea usuarios directamente porque eso requiere una clave privada de Supabase.</div>
           <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Usuario</th><th>Correo</th><th>Rol</th><th>Servicio asignado</th><th></th></tr></thead><tbody id="usersTableBody"></tbody></table></div></div>
         </section>
@@ -207,19 +260,65 @@
 
   <div class="modal fade" id="adminLoginModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Acceso administrativo</div><h5 class="modal-title fw-black">Ingresar</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="loginForm"><div class="modal-body"><label for="loginEmail" class="form-label">Correo</label><input id="loginEmail" class="form-control mb-3" type="email" autocomplete="email" required><label for="loginPassword" class="form-label">Contraseña</label><div class="input-group"><input id="loginPassword" class="form-control" type="password" autocomplete="current-password" required><button id="togglePassword" class="btn btn-outline-secondary" type="button" aria-label="Mostrar contraseña"><i class="bi bi-eye"></i></button></div><div id="loginError" class="alert alert-danger py-2 mt-3 mb-0 d-none"></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="loginButton" type="submit" class="btn btn-primary fw-bold">Ingresar</button></div></form></div></div></div>
 
-  <div class="modal fade" id="extraMaterialModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Excepción</div><h5 class="modal-title fw-black">Agregar insumo no listado</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="extraMaterialForm"><div class="modal-body"><label for="extraName" class="form-label">Nombre del insumo</label><input id="extraName" class="form-control mb-3" maxlength="120" required><div class="row g-3"><div class="col-6"><label for="extraQuantity" class="form-label">Cantidad</label><input id="extraQuantity" class="form-control" type="number" min="0.01" max="999" step="0.01" value="1" required></div><div class="col-6"><label for="extraUnit" class="form-label">Unidad</label><input id="extraUnit" class="form-control" maxlength="60" value="unidad" required></div></div><label for="extraNotes" class="form-label mt-3">Motivo o detalle</label><textarea id="extraNotes" class="form-control" rows="3" maxlength="300" placeholder="Explicá por qué se necesita o qué presentación corresponde"></textarea></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary fw-bold">Agregar al pedido</button></div></form></div></div></div>
+  <div class="modal fade" id="extraMaterialModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Excepción</div><h5 class="modal-title fw-black">Agregar insumo no listado</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="extraMaterialForm"><div class="modal-body"><label for="extraName" class="form-label">Nombre del insumo</label><input id="extraName" class="form-control mb-3" maxlength="120" required><div class="row g-3"><div class="col-6"><label for="extraSku" class="form-label">SKU <span class="text-secondary fw-normal">(opcional)</span></label><input id="extraSku" class="form-control" maxlength="80"></div><div class="col-6"><label for="extraUnitPrice" class="form-label">Precio unitario estimado</label><input id="extraUnitPrice" class="form-control" type="number" min="0" max="999999999.99" step="0.01" value="0" required></div><div class="col-6"><label for="extraQuantity" class="form-label">Cantidad</label><input id="extraQuantity" class="form-control" type="number" min="0.01" max="999" step="0.01" value="1" required></div><div class="col-6"><label for="extraUnit" class="form-label">Unidad</label><input id="extraUnit" class="form-control" maxlength="60" value="unidad" required></div></div><label for="extraNotes" class="form-label mt-3">Motivo o detalle</label><textarea id="extraNotes" class="form-control" rows="3" maxlength="300" placeholder="Explicá por qué se necesita o qué presentación corresponde"></textarea></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary fw-bold">Agregar al pedido</button></div></form></div></div></div>
 
   <div class="modal fade" id="orderSuccessModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-body text-center p-4 p-lg-5"><div class="success-icon mb-3"><i class="bi bi-check2-circle"></i></div><div class="eyebrow">Pedido enviado</div><h2 class="fw-black mt-2">Listo. Ya quedó registrado.</h2><p class="text-secondary">Guardá este código para identificarlo:</p><div id="successOrderCode" class="order-code-display">PED-000000</div><div id="successOrderSummary" class="small text-secondary mt-3"></div><div class="d-grid gap-2 mt-4"><button id="copySuccessButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-copy me-2"></i>Copiar comprobante</button><button id="newOrderButton" class="btn btn-primary fw-bold" type="button">Hacer otro pedido</button></div></div></div></div></div>
 
-  <div class="modal fade" id="orderDetailModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Detalle del pedido</div><h5 id="orderDetailTitle" class="modal-title fw-black">PED-000000</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div id="orderDetailMeta" class="order-detail-meta mb-4"></div><div id="orderDetailItems" class="order-detail-items"></div><div id="orderDetailNotesWrap" class="alert alert-light border mt-3 d-none"><strong>Observación:</strong><div id="orderDetailNotes" class="mt-1"></div></div></div><div class="modal-footer flex-column flex-sm-row align-items-stretch align-items-sm-center"><div class="me-auto d-flex gap-2"><button id="copyOrderButton" class="btn btn-outline-primary" type="button"><i class="bi bi-copy me-2"></i>Copiar</button><button id="whatsappOrderButton" class="btn btn-outline-success" type="button"><i class="bi bi-whatsapp me-2"></i>WhatsApp</button></div><select id="orderDetailStatus" class="form-select order-status-select"></select><button id="saveOrderStatusButton" class="btn btn-primary fw-bold" type="button">Guardar estado</button></div></div></div></div>
+  <div class="modal fade" id="orderDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div><div class="eyebrow">Detalle del pedido</div><h5 id="orderDetailTitle" class="modal-title fw-black">PED-000000</h5></div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div id="orderDetailReadOnly">
+            <div id="orderDetailMeta" class="order-detail-meta mb-4"></div>
+            <div id="orderDetailItems" class="order-detail-items"></div>
+          </div>
+          <div id="orderEditPanel" class="d-none">
+            <div class="order-edit-heading mb-3">
+              <div><div class="eyebrow">Ajuste operativo</div><h6 class="fw-black mb-1">Modificar insumos y cantidades</h6><p class="text-secondary small mb-0">Los importes y el control presupuestario se recalculan en tiempo real. Los cambios se aplican recién al guardar.</p></div>
+            </div>
+            <div id="orderEditBudgetSummary" class="order-edit-budget-summary mb-3"></div>
+            <div id="orderEditItems" class="order-edit-items"></div>
+            <div class="order-edit-add-panel mt-3">
+              <div class="flex-grow-1">
+                <label for="orderAddMaterialSelect" class="form-label fw-bold">Sumar otro insumo</label>
+                <select id="orderAddMaterialSelect" class="form-select"><option value="">Seleccionar insumo...</option></select>
+                <div id="orderAddMaterialHelp" class="form-text"></div>
+              </div>
+              <button id="addOrderMaterialButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-plus-lg me-2"></i>Agregar</button>
+            </div>
+          </div>
+          <div id="orderDetailNotesWrap" class="alert alert-light border mt-3 d-none"><strong>Observación original:</strong><div id="orderDetailNotes" class="mt-1"></div></div>
+        </div>
+        <div class="modal-footer order-detail-footer">
+          <div id="orderDetailShareActions" class="me-auto d-flex gap-2">
+            <button id="copyOrderButton" class="btn btn-outline-primary" type="button"><i class="bi bi-copy me-2"></i>Copiar</button>
+            <button id="whatsappOrderButton" class="btn btn-outline-success" type="button"><i class="bi bi-whatsapp me-2"></i>WhatsApp</button>
+          </div>
+          <button id="editOrderButton" class="btn btn-outline-primary fw-bold d-none" type="button"><i class="bi bi-pencil-square me-2"></i>Editar pedido</button>
+          <div id="orderStatusControls" class="order-status-controls">
+            <select id="orderDetailStatus" class="form-select order-status-select"></select>
+            <button id="saveOrderStatusButton" class="btn btn-primary fw-bold" type="button">Guardar estado</button>
+          </div>
+          <div id="orderEditControls" class="d-none order-edit-footer-actions">
+            <button id="cancelOrderEditButton" class="btn btn-light" type="button">Cancelar cambios</button>
+            <button id="saveOrderChangesButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-check2-circle me-2"></i>Guardar pedido</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="modal fade" id="serviceMaterialsModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Catálogo por servicio</div><h5 id="serviceMaterialsModalTitle" class="modal-title fw-black">Insumos habilitados</h5><p id="serviceMaterialsModalSubtitle" class="text-secondary small mb-0 mt-1"></p></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="alert alert-info py-2"><i class="bi bi-info-circle me-2"></i>Todos los insumos están visibles por defecto. Desactivá únicamente los que este servicio no debe pedir.</div><div class="row g-3 align-items-end mb-3"><div class="col-lg-6"><label for="serviceMaterialsSearch" class="form-label">Buscar insumo</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="serviceMaterialsSearch" class="form-control" type="search" placeholder="Nombre, categoría o detalle"></div></div><div class="col-sm-6 col-lg-3"><label for="serviceMaterialsFilter" class="form-label">Mostrar</label><select id="serviceMaterialsFilter" class="form-select"><option value="all">Todos</option><option value="visible">Visibles</option><option value="hidden">Ocultos</option></select></div><div class="col-sm-6 col-lg-3"><div class="d-flex gap-2"><button id="showAllServiceMaterialsButton" class="btn btn-outline-primary flex-fill" type="button">Habilitar todos</button><button id="hideAllServiceMaterialsButton" class="btn btn-outline-secondary flex-fill" type="button">Ocultar todos</button></div></div></div><div class="service-material-summary mb-3"><span id="serviceMaterialsVisibleCount" class="badge text-bg-primary">0 visibles</span><span id="serviceMaterialsHiddenCount" class="badge text-bg-secondary">0 ocultos</span></div><div id="serviceMaterialsList" class="service-material-list"></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveServiceMaterialsButton" type="button" class="btn btn-primary fw-bold">Guardar configuración</button></div></div></div></div>
 
-  <div class="modal fade" id="serviceModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Servicio</div><h5 id="serviceModalTitle" class="modal-title fw-black">Nuevo servicio</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="serviceForm"><input id="serviceId" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="serviceName" class="form-label">Nombre</label><input id="serviceName" class="form-control" maxlength="150" required><div class="form-text">Es el texto que verá el operario en el selector.</div></div><div class="col-md-5"><label for="serviceAddress" class="form-label">Dirección</label><input id="serviceAddress" class="form-control" maxlength="200"></div><div class="col-md-6"><label for="serviceZone" class="form-label">Zona</label><input id="serviceZone" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceSupervisor" class="form-label">Supervisor</label><input id="serviceSupervisor" class="form-control" maxlength="100"></div><div class="col-12"><label for="serviceDescription" class="form-label">Descripción o frecuencia</label><textarea id="serviceDescription" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><label for="serviceNotes" class="form-label">Observaciones internas</label><textarea id="serviceNotes" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><div class="form-check form-switch"><input id="serviceActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="serviceActive">Servicio activo</label></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveServiceButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
+  <div class="modal fade" id="serviceModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Servicio</div><h5 id="serviceModalTitle" class="modal-title fw-black">Nuevo servicio</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="serviceForm"><input id="serviceId" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="serviceName" class="form-label">Nombre</label><input id="serviceName" class="form-control" maxlength="150" required><div class="form-text">Es el texto que verá el operario en el selector.</div></div><div class="col-md-5"><label for="serviceAddress" class="form-label">Dirección</label><input id="serviceAddress" class="form-control" maxlength="200"></div><div class="col-md-6"><label for="serviceZone" class="form-label">Zona</label><input id="serviceZone" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceSupervisor" class="form-label">Supervisor</label><input id="serviceSupervisor" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceBilling" class="form-label">Facturación mensual del servicio</label><input id="serviceBilling" class="form-control" type="number" min="0" max="999999999.99" step="0.01" value="0"><div class="form-text">Base utilizada para calcular los topes del pedido.</div></div><div class="col-md-6"><label for="serviceBudgetPercent" class="form-label">Límite operativo (%)</label><input id="serviceBudgetPercent" class="form-control" type="number" min="5" max="7" step="0.1" value="5"><div class="form-text">Debe estar entre 5% y 7%. El pedido podrá enviarse aunque lo supere.</div></div><div class="col-12"><div class="budget-preview"><div><span>Referencia 5%</span><strong id="serviceFiveValue">$ 0</strong></div><div class="is-limit"><span>Límite configurado</span><strong id="serviceLimitValue">$ 0</strong></div><div><span>Referencia 7%</span><strong id="serviceSevenValue">$ 0</strong></div></div></div><div class="col-12"><label for="serviceDescription" class="form-label">Descripción o frecuencia</label><textarea id="serviceDescription" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><label for="serviceNotes" class="form-label">Observaciones internas</label><textarea id="serviceNotes" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><div class="form-check form-switch"><input id="serviceActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="serviceActive">Servicio activo</label></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveServiceButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
 
-  <div class="modal fade" id="materialModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Catálogo</div><h5 id="materialModalTitle" class="modal-title fw-black">Nuevo insumo</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="materialForm"><input id="materialId" type="hidden"><input id="materialCurrentImage" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="materialName" class="form-label">Nombre</label><input id="materialName" class="form-control" maxlength="150" required></div><div class="col-md-5"><label for="materialCategory" class="form-label">Categoría</label><input id="materialCategory" class="form-control" maxlength="100" required></div><div class="col-md-8"><label for="materialDetail" class="form-label">Detalle / marca</label><input id="materialDetail" class="form-control" maxlength="200"></div><div class="col-md-4"><label for="materialUnit" class="form-label">Unidad de pedido</label><input id="materialUnit" class="form-control" maxlength="80" value="unidad" required></div><div class="col-md-4"><label for="materialSuggestedQuantity" class="form-label">Cantidad sugerida</label><input id="materialSuggestedQuantity" class="form-control" type="number" min="0.01" max="999" step="0.01" value="1" required></div><div class="col-md-4"><label for="materialSortOrder" class="form-label">Orden</label><input id="materialSortOrder" class="form-control" type="number" min="0" step="1" value="100" required></div><div class="col-md-4 d-flex align-items-end"><div class="form-check form-switch mb-2"><input id="materialActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="materialActive">Insumo activo</label></div></div><div class="col-md-7"><label for="materialImageFile" class="form-label">Foto del insumo</label><input id="materialImageFile" class="form-control" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><div class="form-text">Podés conservar la imagen actual o cargar una nueva.</div></div><div class="col-md-5"><div class="material-image-preview-wrap"><img id="materialImagePreview" class="material-image-preview" src="assets/materials/default.svg" alt="Vista previa"></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveMaterialButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
+  <div class="modal fade" id="materialModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Catálogo</div><h5 id="materialModalTitle" class="modal-title fw-black">Nuevo insumo</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="materialForm"><input id="materialId" type="hidden"><input id="materialCurrentImage" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="materialName" class="form-label">Nombre</label><input id="materialName" class="form-control" maxlength="150" required></div><div class="col-md-5"><label for="materialSku" class="form-label">SKU</label><input id="materialSku" class="form-control" maxlength="80" placeholder="Código interno o del proveedor"></div><div class="col-md-5"><label for="materialCategory" class="form-label">Categoría</label><input id="materialCategory" class="form-control" maxlength="100" required></div><div class="col-md-7"><label for="materialDetail" class="form-label">Detalle / marca</label><input id="materialDetail" class="form-control" maxlength="200"></div><div class="col-md-4"><label for="materialUnit" class="form-label">Unidad de pedido</label><input id="materialUnit" class="form-control" maxlength="80" value="unidad" required></div><div class="col-md-4"><label for="materialUnitPrice" class="form-label">Precio unitario</label><input id="materialUnitPrice" class="form-control" type="number" min="0" max="999999999.99" step="0.01" value="0" required></div><div class="col-md-4"><label for="materialSuggestedQuantity" class="form-label">Cantidad sugerida</label><input id="materialSuggestedQuantity" class="form-control" type="number" min="0.01" max="999" step="0.01" value="1" required></div><div class="col-md-4"><label for="materialSortOrder" class="form-label">Orden</label><input id="materialSortOrder" class="form-control" type="number" min="0" step="1" value="100" required></div><div class="col-md-4 d-flex align-items-end"><div class="form-check form-switch mb-2"><input id="materialActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="materialActive">Insumo activo</label></div></div><div class="col-md-7"><label for="materialImageFile" class="form-label">Foto del insumo</label><input id="materialImageFile" class="form-control" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><div class="form-text">Podés conservar la imagen actual o cargar una nueva.</div></div><div class="col-md-5"><div class="material-image-preview-wrap"><img id="materialImagePreview" class="material-image-preview" src="assets/materials/default.svg" alt="Vista previa"></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveMaterialButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
 
-  <div class="modal fade" id="userModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Acceso</div><h5 class="modal-title fw-black">Editar usuario</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="userForm"><input id="userId" type="hidden"><div class="modal-body"><label for="userName" class="form-label">Nombre</label><input id="userName" class="form-control mb-3" maxlength="120"><label for="userRole" class="form-label">Rol</label><select id="userRole" class="form-select mb-3"><option value="operator">Operario especial</option><option value="supplier">Proveedor</option><option value="admin">Administrador</option></select><label for="userService" class="form-label">Servicio asignado</label><select id="userService" class="form-select"></select><div class="form-text">Los administradores pueden quedar sin servicio.</div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
+  <div class="modal fade" id="userModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Acceso</div><h5 class="modal-title fw-black">Editar usuario</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="userForm"><input id="userId" type="hidden"><div class="modal-body"><label for="userName" class="form-label">Nombre</label><input id="userName" class="form-control mb-3" maxlength="120"><label for="userRole" class="form-label">Rol</label><select id="userRole" class="form-select mb-3"><option value="operator">Supervisor</option><option value="supplier">Proveedor</option><option value="admin">Administrador</option></select><label for="userService" class="form-label">Servicio asignado</label><select id="userService" class="form-select"></select><div class="form-text">Los administradores pueden quedar sin servicio.</div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
 
   <div class="toast-container position-fixed bottom-0 end-0 p-3"><div id="appToast" class="toast border-0 shadow" role="alert"><div class="d-flex"><div id="toastBody" class="toast-body fw-bold">Listo</div><button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div></div></div>
 

@@ -1,4 +1,4 @@
--- Pedidos Clean It · esquema Supabase v4
+-- Pedidos Clean It · esquema Supabase v6 · edición administrativa de pedidos
 -- Ejecutar completo en Supabase > SQL Editor sobre un proyecto nuevo.
 -- La aplicación pública usa únicamente funciones RPC seguras; no expone las tablas al rol anon.
 
@@ -13,6 +13,8 @@ create table if not exists public.services(
   notes text,
   zone text,
   supervisor text,
+  monthly_billing numeric(14,2) not null default 0 check(monthly_billing >= 0),
+  budget_limit_percent numeric(5,2) not null default 5 check(budget_limit_percent between 5 and 7),
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -22,11 +24,13 @@ create table if not exists public.materials(
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,
   name text not null,
+  sku text,
   category text not null,
   detail text,
   unit text not null default 'unidad',
   image_url text,
   suggested_quantity numeric(12,2) not null default 1 check(suggested_quantity > 0 and suggested_quantity <= 999),
+  unit_price numeric(14,2) not null default 0 check(unit_price >= 0),
   sort_order integer not null default 100,
   active boolean not null default true,
   created_at timestamptz not null default now(),
@@ -62,6 +66,13 @@ create table if not exists public.orders(
   notes text check(notes is null or char_length(notes) <= 500),
   total_items integer not null default 0 check(total_items >= 0),
   total_units numeric(14,2) not null default 0 check(total_units >= 0),
+  total_amount numeric(14,2) not null default 0 check(total_amount >= 0),
+  monthly_billing_snapshot numeric(14,2) not null default 0 check(monthly_billing_snapshot >= 0),
+  budget_limit_percent_snapshot numeric(5,2) not null default 5 check(budget_limit_percent_snapshot between 5 and 7),
+  budget_limit_amount_snapshot numeric(14,2) not null default 0 check(budget_limit_amount_snapshot >= 0),
+  budget_five_percent_snapshot numeric(14,2) not null default 0 check(budget_five_percent_snapshot >= 0),
+  budget_seven_percent_snapshot numeric(14,2) not null default 0 check(budget_seven_percent_snapshot >= 0),
+  budget_status text not null default 'sin_configurar' check(budget_status in('sin_configurar','dentro','sobre_limite','sobre_7')),
   created_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -73,9 +84,12 @@ create table if not exists public.order_items(
   order_id uuid not null references public.orders(id) on delete cascade,
   material_id uuid references public.materials(id) on delete set null,
   item_name text not null,
+  item_sku text,
   category text,
   unit text not null default 'unidad',
   quantity numeric(12,2) not null check(quantity > 0 and quantity <= 999),
+  unit_price numeric(14,2) not null default 0 check(unit_price >= 0),
+  line_total numeric(14,2) not null default 0 check(line_total >= 0),
   notes text check(notes is null or char_length(notes) <= 300),
   image_url text,
   is_custom boolean not null default false,
@@ -93,6 +107,7 @@ create table if not exists public.order_status_history(
   changed_at timestamptz not null default now()
 );
 
+create unique index if not exists idx_materials_sku_unique on public.materials(lower(sku)) where sku is not null and btrim(sku) <> '';
 create index if not exists idx_service_material_exclusions_material on public.service_material_exclusions(material_id);
 create index if not exists idx_profiles_service on public.profiles(service_id);
 create index if not exists idx_orders_service on public.orders(service_id);
@@ -343,7 +358,7 @@ as $$
     'services', coalesce((
       select jsonb_agg(to_jsonb(s) order by s.name)
       from (
-        select id,name,address,description,zone,supervisor,active
+        select id,name,address,description,zone,supervisor,monthly_billing,budget_limit_percent,active
         from public.services
         where active=true
       ) s
@@ -351,7 +366,7 @@ as $$
     'materials', coalesce((
       select jsonb_agg(to_jsonb(m) order by m.category,m.sort_order,m.name)
       from (
-        select id,slug,name,category,detail,unit,image_url,suggested_quantity,sort_order,active
+        select id,slug,name,sku,category,detail,unit,image_url,suggested_quantity,unit_price,sort_order,active
         from public.materials
         where active=true
       ) m
@@ -380,17 +395,30 @@ set search_path=public
 as $$
 declare
   v_order public.orders%rowtype;
+  v_service public.services%rowtype;
   v_item jsonb;
   v_material public.materials%rowtype;
   v_material_id uuid;
   v_quantity numeric(12,2);
   v_custom_name text;
+  v_custom_sku text;
   v_unit text;
   v_item_notes text;
+  v_unit_price numeric(14,2);
+  v_line_total numeric(14,2);
   v_count integer := 0;
-  v_total numeric(14,2) := 0;
+  v_total_units numeric(14,2) := 0;
+  v_total_amount numeric(14,2) := 0;
+  v_limit_amount numeric(14,2) := 0;
+  v_five_amount numeric(14,2) := 0;
+  v_seven_amount numeric(14,2) := 0;
+  v_budget_status text := 'sin_configurar';
 begin
-  if not exists(select 1 from public.services where id=p_service_id and active=true) then
+  select * into v_service
+  from public.services
+  where id=p_service_id and active=true;
+
+  if not found then
     raise exception 'El servicio seleccionado no existe o está inactivo.';
   end if;
 
@@ -414,13 +442,30 @@ begin
     raise exception 'El pedido supera el máximo de 80 ítems.';
   end if;
 
-  insert into public.orders(service_id,reporter_name,priority,notes,created_by)
-  values(p_service_id,btrim(p_reporter_name),coalesce(p_priority,'normal'),nullif(btrim(coalesce(p_notes,'')),''),auth.uid())
+  v_five_amount := round(v_service.monthly_billing * 0.05, 2);
+  v_seven_amount := round(v_service.monthly_billing * 0.07, 2);
+  v_limit_amount := round(v_service.monthly_billing * v_service.budget_limit_percent / 100, 2);
+
+  insert into public.orders(
+    service_id,reporter_name,priority,notes,created_by,
+    monthly_billing_snapshot,budget_limit_percent_snapshot,
+    budget_limit_amount_snapshot,budget_five_percent_snapshot,budget_seven_percent_snapshot
+  )
+  values(
+    p_service_id,btrim(p_reporter_name),coalesce(p_priority,'normal'),
+    nullif(btrim(coalesce(p_notes,'')),''),auth.uid(),
+    v_service.monthly_billing,v_service.budget_limit_percent,
+    v_limit_amount,v_five_amount,v_seven_amount
+  )
   returning * into v_order;
 
   for v_item in select value from jsonb_array_elements(p_items)
   loop
-    v_quantity := nullif(v_item->>'quantity','')::numeric;
+    begin
+      v_quantity := nullif(v_item->>'quantity','')::numeric;
+    exception when invalid_text_representation then
+      raise exception 'Una de las cantidades no es válida.';
+    end;
     if v_quantity is null or v_quantity <= 0 or v_quantity > 999 then
       raise exception 'Una de las cantidades no es válida.';
     end if;
@@ -447,33 +492,77 @@ begin
         raise exception 'Uno de los insumos no está habilitado para este servicio.';
       end if;
 
-      insert into public.order_items(order_id,material_id,item_name,category,unit,quantity,notes,image_url,is_custom,sort_order)
-      values(v_order.id,v_material.id,v_material.name,v_material.category,v_material.unit,v_quantity,null,v_material.image_url,false,v_material.sort_order);
+      v_unit_price := v_material.unit_price;
+      v_line_total := round(v_quantity * v_unit_price, 2);
+
+      insert into public.order_items(
+        order_id,material_id,item_name,item_sku,category,unit,quantity,unit_price,line_total,
+        notes,image_url,is_custom,sort_order
+      )
+      values(
+        v_order.id,v_material.id,v_material.name,nullif(btrim(v_material.sku),''),v_material.category,
+        v_material.unit,v_quantity,v_unit_price,v_line_total,null,v_material.image_url,false,v_material.sort_order
+      );
     else
       v_custom_name := btrim(coalesce(v_item->>'custom_name',''));
+      v_custom_sku := nullif(btrim(coalesce(v_item->>'sku','')),'');
       v_unit := btrim(coalesce(v_item->>'unit','unidad'));
       v_item_notes := nullif(btrim(coalesce(v_item->>'notes','')),'');
+
+      begin
+        v_unit_price := coalesce(nullif(v_item->>'unit_price','')::numeric,0);
+      exception when invalid_text_representation then
+        raise exception 'El precio del insumo no listado no es válido.';
+      end;
 
       if char_length(v_custom_name) not between 2 and 120 then
         raise exception 'El nombre del insumo no listado no es válido.';
       end if;
+      if v_custom_sku is not null and char_length(v_custom_sku) > 80 then
+        raise exception 'El SKU del insumo no listado es demasiado extenso.';
+      end if;
       if char_length(v_unit) not between 1 and 60 then
         raise exception 'La unidad del insumo no listado no es válida.';
+      end if;
+      if v_unit_price < 0 or v_unit_price > 999999999.99 then
+        raise exception 'El precio del insumo no listado no es válido.';
       end if;
       if v_item_notes is not null and char_length(v_item_notes) > 300 then
         raise exception 'El detalle del insumo no listado es demasiado extenso.';
       end if;
 
-      insert into public.order_items(order_id,material_id,item_name,category,unit,quantity,notes,image_url,is_custom,sort_order)
-      values(v_order.id,null,v_custom_name,'Excepción',v_unit,v_quantity,v_item_notes,'assets/materials/default.svg',true,9999);
+      v_line_total := round(v_quantity * v_unit_price, 2);
+
+      insert into public.order_items(
+        order_id,material_id,item_name,item_sku,category,unit,quantity,unit_price,line_total,
+        notes,image_url,is_custom,sort_order
+      )
+      values(
+        v_order.id,null,v_custom_name,v_custom_sku,'Excepción',v_unit,v_quantity,v_unit_price,v_line_total,
+        v_item_notes,'assets/materials/default.svg',true,9999
+      );
     end if;
 
     v_count := v_count + 1;
-    v_total := v_total + v_quantity;
+    v_total_units := v_total_units + v_quantity;
+    v_total_amount := v_total_amount + v_line_total;
   end loop;
 
+  if v_service.monthly_billing <= 0 then
+    v_budget_status := 'sin_configurar';
+  elsif v_total_amount > v_seven_amount then
+    v_budget_status := 'sobre_7';
+  elsif v_total_amount > v_limit_amount then
+    v_budget_status := 'sobre_limite';
+  else
+    v_budget_status := 'dentro';
+  end if;
+
   update public.orders
-  set total_items=v_count,total_units=v_total
+  set total_items=v_count,
+      total_units=v_total_units,
+      total_amount=v_total_amount,
+      budget_status=v_budget_status
   where id=v_order.id
   returning * into v_order;
 
@@ -482,18 +571,319 @@ begin
     'order_code',v_order.order_code,
     'created_at',v_order.created_at,
     'item_count',v_order.total_items,
-    'total_units',v_order.total_units
+    'total_units',v_order.total_units,
+    'total_amount',v_order.total_amount,
+    'monthly_billing',v_order.monthly_billing_snapshot,
+    'budget_limit_percent',v_order.budget_limit_percent_snapshot,
+    'budget_limit_amount',v_order.budget_limit_amount_snapshot,
+    'budget_five_amount',v_order.budget_five_percent_snapshot,
+    'budget_seven_amount',v_order.budget_seven_percent_snapshot,
+    'budget_status',v_order.budget_status
   );
 exception when others then
   raise;
 end;
 $$;
 
+
+-- Edición atómica del contenido de un pedido por un administrador.
+-- Conserva el precio/snapshot de los renglones existentes y usa el precio actual
+-- del catálogo únicamente para los insumos nuevos que se agregan.
+create or replace function public.admin_replace_order_items(
+  p_order_id uuid,
+  p_expected_updated_at timestamptz,
+  p_items jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_order public.orders%rowtype;
+  v_existing public.order_items%rowtype;
+  v_material public.materials%rowtype;
+  v_item jsonb;
+  v_stage jsonb := '[]'::jsonb;
+  v_source_item_id uuid;
+  v_material_id uuid;
+  v_quantity numeric(12,2);
+  v_line_total numeric(14,2);
+  v_total_units numeric(14,2) := 0;
+  v_total_amount numeric(14,2) := 0;
+  v_count integer := 0;
+  v_position integer := 0;
+  v_budget_status text;
+  v_previous_total numeric(14,2);
+begin
+  if not public.is_admin() then
+    raise exception 'No tenés permisos de administrador para modificar pedidos.';
+  end if;
+
+  if jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) < 1 then
+    raise exception 'El pedido debe incluir al menos un insumo.';
+  end if;
+  if jsonb_array_length(p_items) > 80 then
+    raise exception 'El pedido supera el máximo de 80 ítems.';
+  end if;
+
+  select * into v_order
+  from public.orders
+  where id=p_order_id
+  for update;
+
+  if not found then
+    raise exception 'El pedido no existe.';
+  end if;
+  if v_order.status in ('entregado','cancelado') then
+    raise exception 'El pedido está cerrado. Reabrilo antes de modificar sus insumos.';
+  end if;
+  if p_expected_updated_at is not null and v_order.updated_at is distinct from p_expected_updated_at then
+    raise exception 'El pedido fue modificado por otro usuario. Actualizá los datos antes de guardar.';
+  end if;
+
+  v_previous_total := v_order.total_amount;
+
+  for v_item in select value from jsonb_array_elements(p_items)
+  loop
+    v_position := v_position + 1;
+
+    begin
+      v_quantity := nullif(v_item->>'quantity','')::numeric;
+    exception when invalid_text_representation then
+      raise exception 'Una de las cantidades no es válida.';
+    end;
+    if v_quantity is null or v_quantity <= 0 or v_quantity > 999 then
+      raise exception 'Una de las cantidades no es válida.';
+    end if;
+
+    v_source_item_id := null;
+    if nullif(v_item->>'source_item_id','') is not null then
+      begin
+        v_source_item_id := (v_item->>'source_item_id')::uuid;
+      exception when invalid_text_representation then
+        raise exception 'Uno de los renglones originales no es válido.';
+      end;
+    end if;
+
+    if v_source_item_id is not null then
+      if exists(select 1 from jsonb_array_elements(v_stage) staged where staged->>'source_item_id'=v_source_item_id::text) then
+        raise exception 'Un renglón del pedido está duplicado.';
+      end if;
+
+      select * into v_existing
+      from public.order_items
+      where id=v_source_item_id and order_id=v_order.id;
+
+      if not found then
+        raise exception 'Uno de los renglones originales ya no existe. Actualizá el pedido.';
+      end if;
+
+      if v_existing.material_id is not null and exists(
+        select 1 from jsonb_array_elements(v_stage) staged
+        where staged->>'material_id'=v_existing.material_id::text
+      ) then
+        raise exception 'Un mismo insumo no puede aparecer dos veces en el pedido.';
+      end if;
+
+      v_line_total := round(v_quantity * v_existing.unit_price,2);
+      v_stage := v_stage || jsonb_build_array(jsonb_build_object(
+        'seq',v_position,
+        'source_item_id',v_existing.id,
+        'material_id',v_existing.material_id,
+        'item_name',v_existing.item_name,
+        'item_sku',v_existing.item_sku,
+        'category',v_existing.category,
+        'unit',v_existing.unit,
+        'quantity',v_quantity,
+        'unit_price',v_existing.unit_price,
+        'line_total',v_line_total,
+        'notes',v_existing.notes,
+        'image_url',v_existing.image_url,
+        'is_custom',v_existing.is_custom,
+        'sort_order',v_position*10
+      ));
+    else
+      v_material_id := null;
+      if nullif(v_item->>'material_id','') is not null then
+        begin
+          v_material_id := (v_item->>'material_id')::uuid;
+        exception when invalid_text_representation then
+          raise exception 'Uno de los insumos nuevos no es válido.';
+        end;
+      end if;
+      if v_material_id is null then
+        raise exception 'No se puede incorporar un insumo sin identificar.';
+      end if;
+      if exists(
+        select 1 from jsonb_array_elements(v_stage) staged
+        where staged->>'material_id'=v_material_id::text
+      ) then
+        raise exception 'Un mismo insumo no puede aparecer dos veces en el pedido.';
+      end if;
+
+      select * into v_material
+      from public.materials
+      where id=v_material_id and active=true;
+
+      if not found then
+        raise exception 'Uno de los insumos nuevos ya no está disponible.';
+      end if;
+      if exists(
+        select 1 from public.service_material_exclusions
+        where service_id=v_order.service_id and material_id=v_material_id
+      ) then
+        raise exception 'Uno de los insumos nuevos no está habilitado para este servicio.';
+      end if;
+
+      v_line_total := round(v_quantity * v_material.unit_price,2);
+      v_stage := v_stage || jsonb_build_array(jsonb_build_object(
+        'seq',v_position,
+        'source_item_id',null,
+        'material_id',v_material.id,
+        'item_name',v_material.name,
+        'item_sku',nullif(btrim(v_material.sku),''),
+        'category',v_material.category,
+        'unit',v_material.unit,
+        'quantity',v_quantity,
+        'unit_price',v_material.unit_price,
+        'line_total',v_line_total,
+        'notes',null,
+        'image_url',v_material.image_url,
+        'is_custom',false,
+        'sort_order',v_position*10
+      ));
+    end if;
+  end loop;
+
+  select count(*),coalesce(sum(quantity),0),coalesce(sum(line_total),0)
+  into v_count,v_total_units,v_total_amount
+  from jsonb_to_recordset(v_stage) as staged(quantity numeric,line_total numeric);
+
+  if v_order.monthly_billing_snapshot <= 0 then
+    v_budget_status := 'sin_configurar';
+  elsif v_total_amount > v_order.budget_seven_percent_snapshot then
+    v_budget_status := 'sobre_7';
+  elsif v_total_amount > v_order.budget_limit_amount_snapshot then
+    v_budget_status := 'sobre_limite';
+  else
+    v_budget_status := 'dentro';
+  end if;
+
+  delete from public.order_items where order_id=v_order.id;
+
+  insert into public.order_items(
+    order_id,material_id,item_name,item_sku,category,unit,quantity,unit_price,line_total,
+    notes,image_url,is_custom,sort_order
+  )
+  select v_order.id,staged.material_id,staged.item_name,staged.item_sku,staged.category,
+         staged.unit,staged.quantity,staged.unit_price,staged.line_total,staged.notes,
+         staged.image_url,staged.is_custom,staged.sort_order
+  from jsonb_to_recordset(v_stage) as staged(
+    seq integer,
+    source_item_id uuid,
+    material_id uuid,
+    item_name text,
+    item_sku text,
+    category text,
+    unit text,
+    quantity numeric,
+    unit_price numeric,
+    line_total numeric,
+    notes text,
+    image_url text,
+    is_custom boolean,
+    sort_order integer
+  )
+  order by staged.seq;
+
+  update public.orders
+  set total_items=v_count,
+      total_units=v_total_units,
+      total_amount=v_total_amount,
+      budget_status=v_budget_status
+  where id=v_order.id
+  returning * into v_order;
+
+  insert into public.order_status_history(order_id,old_status,new_status,changed_by,notes)
+  values(
+    v_order.id,v_order.status,v_order.status,auth.uid(),
+    format('Pedido editado: %s insumos, %s unidades. Total: $ %s → $ %s.',
+      v_count,v_total_units,v_previous_total,v_total_amount)
+  );
+
+  return jsonb_build_object(
+    'id',v_order.id,
+    'order_code',v_order.order_code,
+    'total_items',v_order.total_items,
+    'total_units',v_order.total_units,
+    'total_amount',v_order.total_amount,
+    'budget_status',v_order.budget_status,
+    'updated_at',v_order.updated_at
+  );
+end;
+$$;
+
+revoke all on function public.admin_replace_order_items(uuid,timestamptz,jsonb) from public,anon,authenticated;
+grant execute on function public.admin_replace_order_items(uuid,timestamptz,jsonb) to authenticated;
+
+-- Acceso de supervisores: el catálogo y el alta de pedidos requieren sesión.
+create or replace function public.supervisor_order_bootstrap()
+returns jsonb
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if auth.uid() is null or not exists(
+    select 1 from public.profiles where id=auth.uid() and role='operator'
+  ) then
+    raise exception 'Acceso exclusivo para supervisores habilitados.';
+  end if;
+  return public.public_order_bootstrap();
+end;
+$$;
+
+create or replace function public.supervisor_create_order(
+  p_service_id uuid,
+  p_reporter_name text,
+  p_priority text,
+  p_notes text,
+  p_items jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_reporter_name text;
+begin
+  select left(
+    coalesce(nullif(btrim(full_name),''), split_part(email,'@',1)),
+    100
+  )
+  into v_reporter_name
+  from public.profiles
+  where id=auth.uid() and role='operator';
+
+  if auth.uid() is null or v_reporter_name is null then
+    raise exception 'Acceso exclusivo para supervisores habilitados.';
+  end if;
+
+  return public.public_create_order(p_service_id,v_reporter_name,p_priority,p_notes,p_items);
+end;
+$$;
+
 revoke all on public.services, public.materials, public.service_material_exclusions, public.profiles, public.orders, public.order_items, public.order_status_history from anon;
 grant select,insert,update,delete on public.services, public.materials, public.service_material_exclusions, public.profiles, public.orders, public.order_items, public.order_status_history to authenticated;
 grant usage,select on all sequences in schema public to authenticated;
-grant execute on function public.public_order_bootstrap() to anon,authenticated;
-grant execute on function public.public_create_order(uuid,text,text,text,jsonb) to anon,authenticated;
+revoke all on function public.public_order_bootstrap() from public,anon,authenticated;
+revoke all on function public.public_create_order(uuid,text,text,text,jsonb) from public,anon,authenticated;
+revoke all on function public.supervisor_order_bootstrap() from public,anon,authenticated;
+revoke all on function public.supervisor_create_order(uuid,text,text,text,jsonb) from public,anon,authenticated;
+grant execute on function public.supervisor_order_bootstrap() to authenticated;
+grant execute on function public.supervisor_create_order(uuid,text,text,text,jsonb) to authenticated;
 revoke all on function public.staff_update_order_status(uuid,text,text) from public;
 grant execute on function public.staff_update_order_status(uuid,text,text) to authenticated;
 revoke all on function public.admin_set_service_hidden_materials(uuid,uuid[]) from public;

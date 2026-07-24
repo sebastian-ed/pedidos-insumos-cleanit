@@ -8,7 +8,9 @@
     "suggested_quantity": 1,
     "sort_order": 10,
     "image_url": "assets/materials/detergente-bio-ultra.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "perfume-flower",
@@ -19,7 +21,9 @@
     "suggested_quantity": 1,
     "sort_order": 20,
     "image_url": "assets/materials/perfume-flower.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "lavandina-bio-lav",
@@ -30,7 +34,9 @@
     "suggested_quantity": 1,
     "sort_order": 30,
     "image_url": "assets/materials/lavandina-bio-lav.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "rapid-plus-gel",
@@ -41,7 +47,9 @@
     "suggested_quantity": 1,
     "sort_order": 40,
     "image_url": "assets/materials/rapid-plus-gel.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "wood-thames",
@@ -52,7 +60,9 @@
     "suggested_quantity": 1,
     "sort_order": 50,
     "image_url": "assets/materials/wood-thames.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "steel-shine",
@@ -63,7 +73,9 @@
     "suggested_quantity": 1,
     "sort_order": 60,
     "image_url": "assets/materials/steel-shine.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "cream-thames",
@@ -74,7 +86,9 @@
     "suggested_quantity": 1,
     "sort_order": 70,
     "image_url": "assets/materials/cream-thames.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "sarro-attack",
@@ -85,7 +99,9 @@
     "suggested_quantity": 1,
     "sort_order": 80,
     "image_url": "assets/materials/sarro-attack.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "smell-thames",
@@ -96,7 +112,9 @@
     "suggested_quantity": 3,
     "sort_order": 90,
     "image_url": "assets/materials/smell-thames.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "alcohol-al70",
@@ -107,7 +125,9 @@
     "suggested_quantity": 1,
     "sort_order": 100,
     "image_url": "assets/materials/alcohol-al70.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "bolsas-negras-45-60",
@@ -118,7 +138,9 @@
     "suggested_quantity": 1,
     "sort_order": 110,
     "image_url": "assets/materials/bolsas-negras-45-60.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "bolsas-verdes-45-60",
@@ -129,7 +151,9 @@
     "suggested_quantity": 1,
     "sort_order": 120,
     "image_url": "assets/materials/bolsas-verdes-45-60.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "bolsas-negras-70-50",
@@ -140,7 +164,9 @@
     "suggested_quantity": 1,
     "sort_order": 130,
     "image_url": "assets/materials/bolsas-negras-70-50.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "bolsas-verdes-70-50",
@@ -151,7 +177,9 @@
     "suggested_quantity": 1,
     "sort_order": 140,
     "image_url": "assets/materials/bolsas-verdes-70-50.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "bolsas-negras-90-110",
@@ -162,7 +190,9 @@
     "suggested_quantity": 1,
     "sort_order": 150,
     "image_url": "assets/materials/bolsas-negras-90-110.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "bolsas-verdes-90-110",
@@ -173,7 +203,9 @@
     "suggested_quantity": 1,
     "sort_order": 160,
     "image_url": "assets/materials/bolsas-verdes-90-110.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "guantes-mapa-8",
@@ -184,7 +216,9 @@
     "suggested_quantity": 1,
     "sort_order": 170,
     "image_url": "assets/materials/guantes-mapa-8.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "balde-reforzado",
@@ -195,7 +229,9 @@
     "suggested_quantity": 1,
     "sort_order": 180,
     "image_url": "assets/materials/balde-reforzado.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "pulverizador-gatillo",
@@ -206,7 +242,9 @@
     "suggested_quantity": 2,
     "sort_order": 190,
     "image_url": "assets/materials/pulverizador-gatillo.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "medidor",
@@ -217,7 +255,9 @@
     "suggested_quantity": 1,
     "sort_order": 200,
     "image_url": "assets/materials/medidor.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "embudo-mediano",
@@ -228,7 +268,9 @@
     "suggested_quantity": 1,
     "sort_order": 210,
     "image_url": "assets/materials/embudo-mediano.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "escoba-cabo",
@@ -239,7 +281,9 @@
     "suggested_quantity": 2,
     "sort_order": 220,
     "image_url": "assets/materials/escoba-cabo.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "escobillon-cochera",
@@ -250,7 +294,9 @@
     "suggested_quantity": 1,
     "sort_order": 230,
     "image_url": "assets/materials/escobillon-cochera.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "pala-cabo",
@@ -261,7 +307,9 @@
     "suggested_quantity": 1,
     "sort_order": 240,
     "image_url": "assets/materials/pala-cabo.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "secador-cabo",
@@ -272,7 +320,9 @@
     "suggested_quantity": 1,
     "sort_order": 250,
     "image_url": "assets/materials/secador-cabo.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "trapo-piso",
@@ -283,7 +333,9 @@
     "suggested_quantity": 2,
     "sort_order": 260,
     "image_url": "assets/materials/trapo-piso.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "rejilla",
@@ -294,7 +346,9 @@
     "suggested_quantity": 2,
     "sort_order": 270,
     "image_url": "assets/materials/rejilla.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "microfibra",
@@ -305,7 +359,9 @@
     "suggested_quantity": 2,
     "sort_order": 280,
     "image_url": "assets/materials/microfibra.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "fibra-verde",
@@ -316,7 +372,9 @@
     "suggested_quantity": 2,
     "sort_order": 290,
     "image_url": "assets/materials/fibra-verde.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "esponja-acero",
@@ -327,7 +385,9 @@
     "suggested_quantity": 2,
     "sort_order": 300,
     "image_url": "assets/materials/esponja-acero.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "esponja-amarilla",
@@ -338,7 +398,9 @@
     "suggested_quantity": 2,
     "sort_order": 310,
     "image_url": "assets/materials/esponja-amarilla.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "plumero-microfibra",
@@ -349,7 +411,9 @@
     "suggested_quantity": 1,
     "sort_order": 320,
     "image_url": "assets/materials/plumero-microfibra.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "ballerina",
@@ -360,7 +424,9 @@
     "suggested_quantity": 2,
     "sort_order": 330,
     "image_url": "assets/materials/ballerina.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "kit-vidrios",
@@ -371,7 +437,9 @@
     "suggested_quantity": 1,
     "sort_order": 340,
     "image_url": "assets/materials/kit-vidrios.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   },
   {
     "slug": "globo-telaranas",
@@ -382,6 +450,8 @@
     "suggested_quantity": 1,
     "sort_order": 350,
     "image_url": "assets/materials/globo-telaranas.svg",
-    "active": true
+    "active": true,
+    "sku": null,
+    "unit_price": 0
   }
 ]
