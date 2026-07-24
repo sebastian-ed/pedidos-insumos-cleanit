@@ -183,6 +183,12 @@
     E.appShell.addEventListener('click', handleAppClick);
     E.appShell.addEventListener('input', handleAppInput);
 
+    // El modal de detalle está fuera de #appShell en el HTML.
+    // Por eso sus controles dinámicos (+, -, cantidad manual y quitar)
+    // necesitan la misma delegación de eventos dentro del propio modal.
+    E.orderDetailModal.addEventListener('click', handleAppClick);
+    E.orderDetailModal.addEventListener('input', handleAppInput);
+
     document.querySelectorAll('[data-admin-tab]').forEach((button) => {
       button.addEventListener('click', () => switchTab(button.dataset.adminTab));
     });
