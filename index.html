@@ -77,17 +77,27 @@
           <div class="small mt-1">Editá <code>config.js</code> con la URL y la clave pública anon del nuevo proyecto.</div>
         </div>
         <form id="publicEntryForm" novalidate>
+          <label for="publicServiceSearch" class="form-label">Buscar servicio</label>
+          <div class="service-search-wrap mb-3">
+            <div class="input-group input-group-lg">
+              <span class="input-group-text"><i class="bi bi-search"></i></span>
+              <input id="publicServiceSearch" class="form-control" type="search" autocomplete="off" placeholder="Escribí el nombre, la dirección o la zona">
+            </div>
+            <div id="publicServiceSuggestions" class="service-search-suggestions d-none" role="listbox" aria-label="Servicios encontrados"></div>
+          </div>
+          <div class="service-selector-divider"><span>o elegí desde el listado</span></div>
           <label for="publicServiceSelect" class="form-label">Servicio o consorcio</label>
           <select id="publicServiceSelect" class="form-select form-select-lg mb-3" required>
             <option value="">Cargando servicios...</option>
           </select>
-          <label for="publicReporterName" class="form-label">Supervisor responsable</label>
-          <input id="publicReporterName" class="form-control mb-3" maxlength="100" autocomplete="name" placeholder="Usuario autenticado" readonly required>
+          <label for="publicReporterName" class="form-label">Operario responsable</label>
+          <input id="publicReporterName" class="form-control mb-3" maxlength="100" autocomplete="off" placeholder="Nombre y apellido del operario" required>
+          <div class="form-text mb-3">Indicá quién está a cargo del servicio. El supervisor que carga el pedido queda registrado automáticamente.</div>
           <div id="publicEntryError" class="alert alert-danger py-2 d-none"></div>
           <button id="publicStartButton" class="btn btn-primary btn-lg w-100 fw-bold" type="submit"><i class="bi bi-cart-plus me-2"></i>Armar pedido</button>
         </form>
         <div class="public-admin-link">
-          <span><i class="bi bi-person-check me-2"></i>Pedido asociado al usuario autenticado</span>
+          <span><i class="bi bi-person-check me-2"></i>Pedido vinculado al supervisor que inició sesión</span>
           <div class="d-flex gap-2">
             <button id="publicLogoutButton" class="btn btn-link fw-bold p-0" type="button">Cerrar sesión</button>
             <button id="openAdminLoginButton" class="btn btn-link fw-bold p-0 d-none" type="button">Administración</button>
@@ -125,7 +135,7 @@
               <p id="operatorServiceAddress" class="mb-0 text-white-50">Dirección</p>
               <div id="operatorServiceDescription" class="service-frequency-card d-none"><i class="bi bi-calendar-week"></i><span></span></div>
             </div>
-            <div class="hero-meta"><div class="hero-meta-label">Responsable</div><div id="operatorReporter" class="hero-meta-value">Operario</div></div>
+            <div class="hero-meta"><div class="hero-meta-label">Operario responsable</div><div id="operatorReporter" class="hero-meta-value">Operario</div></div>
           </div>
 
           <div class="row g-3 mb-4">
@@ -211,13 +221,13 @@
           <div class="panel-heading"><div><span class="eyebrow">Operación</span><h1>Pedidos</h1><p>Filtrá, revisá, copiá y actualizá el estado de cada pedido.</p></div></div>
           <div class="section-card mb-4">
             <div class="row g-3">
-              <div class="col-lg-4"><label for="ordersSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="ordersSearch" class="form-control" type="search" placeholder="Código, servicio o responsable"></div></div>
+              <div class="col-lg-4"><label for="ordersSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="ordersSearch" class="form-control" type="search" placeholder="Código, servicio u operario"></div></div>
               <div class="col-lg-3"><label for="ordersServiceFilter" class="form-label">Servicio</label><select id="ordersServiceFilter" class="form-select"></select></div>
               <div class="col-lg-3"><label for="ordersStatusFilter" class="form-label">Estado</label><select id="ordersStatusFilter" class="form-select"><option value="">Todos</option><option value="pendiente">Pendiente</option><option value="preparacion">En preparación</option><option value="enviado">Enviado</option><option value="entregado">Entregado</option><option value="cancelado">Cancelado</option></select></div>
               <div class="col-lg-2"><label for="ordersPriorityFilter" class="form-label">Prioridad</label><select id="ordersPriorityFilter" class="form-select"><option value="">Todas</option><option value="normal">Normal</option><option value="urgente">Urgente</option></select></div>
             </div>
           </div>
-          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Pedido</th><th>Servicio</th><th>Responsable</th><th>Contenido</th><th>Prioridad</th><th>Estado</th><th></th></tr></thead><tbody id="ordersTableBody"></tbody></table></div></div>
+          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Pedido</th><th>Servicio</th><th>Operario responsable</th><th>Contenido</th><th>Prioridad</th><th>Estado</th><th></th></tr></thead><tbody id="ordersTableBody"></tbody></table></div></div>
         </section>
 
         <section id="adminMaterials" class="admin-panel d-none">

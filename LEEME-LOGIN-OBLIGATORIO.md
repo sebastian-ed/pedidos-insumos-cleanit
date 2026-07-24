@@ -9,7 +9,7 @@ Esta versión agrega una pantalla de acceso antes de ingresar a la aplicación.
 - **Proveedor** (`role = supplier`): inicia sesión y entra directamente a su panel restringido.
 - **Visitante sin sesión**: no puede ver servicios, insumos ni generar pedidos.
 
-El nombre responsable del pedido se toma del perfil del usuario autenticado y no puede modificarse manualmente. Esto mejora la trazabilidad y evita que una persona cargue un pedido con el nombre de otra.
+La cuenta autenticada identifica al supervisor que cargó el pedido y queda registrada automáticamente. El campo **Operario responsable** se completa manualmente para identificar a la persona que está a cargo del servicio. Ambos datos quedan separados para conservar la trazabilidad.
 
 ## Instalación
 

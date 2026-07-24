@@ -856,22 +856,18 @@ language plpgsql
 security definer
 set search_path=public
 as $$
-declare
-  v_reporter_name text;
 begin
-  select left(
-    coalesce(nullif(btrim(full_name),''), split_part(email,'@',1)),
-    100
-  )
-  into v_reporter_name
-  from public.profiles
-  where id=auth.uid() and role='operator';
-
-  if auth.uid() is null or v_reporter_name is null then
+  if auth.uid() is null or not exists(
+    select 1 from public.profiles where id=auth.uid() and role='operator'
+  ) then
     raise exception 'Acceso exclusivo para supervisores habilitados.';
   end if;
 
-  return public.public_create_order(p_service_id,v_reporter_name,p_priority,p_notes,p_items);
+  if char_length(btrim(coalesce(p_reporter_name,''))) not between 2 and 100 then
+    raise exception 'Ingresá el nombre del operario responsable.';
+  end if;
+
+  return public.public_create_order(p_service_id,btrim(p_reporter_name),p_priority,p_notes,p_items);
 end;
 $$;
 

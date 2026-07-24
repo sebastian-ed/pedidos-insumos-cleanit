@@ -40,6 +40,7 @@
     selectedServiceMaterialsId: null,
     serviceMaterialsDraftHidden: new Set(),
     publicServiceId: null,
+    orderReporterName: '',
     draft: new Map(),
     extras: [],
     tab: 'dashboard',
@@ -128,6 +129,14 @@
     E.accessLoginForm.addEventListener('submit', accessLogin);
     E.accessTogglePassword.addEventListener('click', toggleAccessPassword);
     E.publicEntryForm.addEventListener('submit', startPublicOrder);
+    E.publicServiceSearch.addEventListener('input', handlePublicServiceSearch);
+    E.publicServiceSearch.addEventListener('focus', () => renderPublicServiceSuggestions(E.publicServiceSearch.value, true));
+    E.publicServiceSearch.addEventListener('keydown', handlePublicServiceSearchKeydown);
+    E.publicServiceSelect.addEventListener('change', handlePublicServiceSelectChange);
+    E.publicServiceSuggestions.addEventListener('click', handlePublicServiceSuggestionClick);
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('.service-search-wrap')) hidePublicServiceSuggestions();
+    });
     E.openAdminLoginButton.addEventListener('click', openAdminLogin);
     E.headerAdminLoginButton.addEventListener('click', openAdminLogin);
     E.switchServiceButton.addEventListener('click', requestServiceSwitch);
@@ -252,9 +261,8 @@
       }
 
       S.mode = 'operator';
+      S.orderReporterName = '';
       await loadPublicData();
-      E.publicReporterName.value = authenticatedReporterName();
-      E.publicReporterName.readOnly = true;
       showPublicEntry();
     } catch (error) {
       console.error(error);
@@ -295,20 +303,116 @@
     E.loginGateView.classList.add('d-none');
     E.appShell.classList.add('d-none');
     E.authView.classList.remove('d-none');
-    E.publicReporterName.value = authenticatedReporterName();
-    E.publicReporterName.readOnly = true;
+    E.publicReporterName.readOnly = false;
+    E.publicReporterName.value = S.orderReporterName || '';
     populatePublicServiceSelect();
+    hidePublicServiceSuggestions();
+  }
+
+  function activePublicServices() {
+    return S.services
+      .filter((item) => item.active !== false)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es'));
+  }
+
+  function publicServiceHaystack(service) {
+    return normalize(`${service.name || ''} ${service.address || ''} ${service.zone || ''} ${service.description || ''}`);
   }
 
   function populatePublicServiceSelect() {
-    const active = S.services.filter((item) => item.active !== false);
+    const active = activePublicServices();
     const remembered = localStorage.getItem('pedidosCleanItService') || '';
+    const current = E.publicServiceSelect.value || remembered;
     E.publicServiceSelect.innerHTML = '<option value="">Seleccionar servicio...</option>' + active
       .map((item) => `<option value="${ea(item.id)}">${eh(item.name)}</option>`)
       .join('');
-    if (active.some((item) => item.id === remembered)) E.publicServiceSelect.value = remembered;
+    if (active.some((item) => item.id === current)) E.publicServiceSelect.value = current;
     E.publicStartButton.disabled = !configured || active.length === 0;
     if (configured && active.length === 0) showEntryError('No hay servicios activos cargados.');
+  }
+
+  function matchingPublicServices(rawQuery) {
+    const query = normalize(rawQuery);
+    const active = activePublicServices();
+    if (!query) return active.slice(0, 8);
+    return active.filter((service) => publicServiceHaystack(service).includes(query)).slice(0, 12);
+  }
+
+  function renderPublicServiceSuggestions(rawQuery, force = false) {
+    const query = String(rawQuery || '').trim();
+    const matches = matchingPublicServices(query);
+    if (!force && !query) {
+      hidePublicServiceSuggestions();
+      return;
+    }
+
+    E.publicServiceSuggestions.innerHTML = matches.length
+      ? matches.map((service) => `
+          <button class="service-search-option" type="button" role="option" data-public-service-id="${ea(service.id)}">
+            <span class="service-search-option-icon"><i class="bi bi-building"></i></span>
+            <span class="service-search-option-copy">
+              <strong>${eh(service.name || 'Servicio')}</strong>
+              <small>${eh([service.address, service.zone].filter(Boolean).join(' · ') || 'Sin dirección informada')}</small>
+            </span>
+            <i class="bi bi-chevron-right service-search-option-arrow"></i>
+          </button>`).join('')
+      : '<div class="service-search-empty"><i class="bi bi-search"></i><span>No se encontraron servicios con ese criterio.</span></div>';
+    E.publicServiceSuggestions.classList.remove('d-none');
+  }
+
+  function hidePublicServiceSuggestions() {
+    E.publicServiceSuggestions.classList.add('d-none');
+  }
+
+  function selectPublicService(serviceId) {
+    const service = activePublicServices().find((item) => item.id === serviceId);
+    if (!service) return;
+    E.publicServiceSelect.value = service.id;
+    E.publicServiceSearch.value = service.name || '';
+    hidePublicServiceSuggestions();
+    hideEntryError();
+  }
+
+  function handlePublicServiceSearch() {
+    const query = E.publicServiceSearch.value;
+    const selected = activePublicServices().find((item) => item.id === E.publicServiceSelect.value);
+    if (selected && normalize(selected.name) !== normalize(query)) E.publicServiceSelect.value = '';
+    renderPublicServiceSuggestions(query, true);
+  }
+
+  function handlePublicServiceSearchKeydown(event) {
+    if (event.key === 'Escape') {
+      hidePublicServiceSuggestions();
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      const first = E.publicServiceSuggestions.querySelector('[data-public-service-id]');
+      if (first) {
+        event.preventDefault();
+        first.focus();
+      }
+      return;
+    }
+    if (event.key === 'Enter') {
+      const first = E.publicServiceSuggestions.querySelector('[data-public-service-id]');
+      if (first && !E.publicServiceSuggestions.classList.contains('d-none')) {
+        event.preventDefault();
+        selectPublicService(first.dataset.publicServiceId);
+      }
+    }
+  }
+
+  function handlePublicServiceSuggestionClick(event) {
+    const button = event.target.closest('[data-public-service-id]');
+    if (!button) return;
+    selectPublicService(button.dataset.publicServiceId);
+  }
+
+  function handlePublicServiceSelectChange() {
+    const service = activePublicServices().find((item) => item.id === E.publicServiceSelect.value);
+    E.publicServiceSearch.value = service?.name || '';
+    hidePublicServiceSuggestions();
+    hideEntryError();
   }
 
   function populateOperatorCategories() {
@@ -327,20 +431,21 @@
     hideEntryError();
 
     const serviceId = E.publicServiceSelect.value;
-    const reporter = authenticatedReporterName();
+    const reporter = E.publicReporterName.value.trim();
 
     if (!serviceId) {
       showEntryError('Seleccioná el servicio para el que vas a hacer el pedido.');
       return;
     }
     if (reporter.length < 2) {
-      showEntryError('Ingresá tu nombre para continuar.');
+      showEntryError('Ingresá el nombre y apellido del operario responsable.');
       E.publicReporterName.focus();
       return;
     }
 
     localStorage.setItem('pedidosCleanItService', serviceId);
     S.publicServiceId = serviceId;
+    S.orderReporterName = reporter;
     S.draft.clear();
     S.extras = [];
     S.lastBudgetStatus = null;
@@ -381,7 +486,7 @@
 
     E.operatorServiceName.textContent = service.name || 'Servicio';
     E.operatorServiceAddress.textContent = service.address || 'Dirección no informada';
-    E.operatorReporter.textContent = authenticatedReporterName();
+    E.operatorReporter.textContent = S.orderReporterName || 'Operario no informado';
     const description = String(service.description || '').trim();
     E.operatorServiceDescription.classList.toggle('d-none', !description);
     E.operatorServiceDescription.querySelector('span').textContent = description;
@@ -715,9 +820,9 @@
 
   async function submitOrder() {
     const service = currentService();
-    const reporter = authenticatedReporterName();
+    const reporter = String(S.orderReporterName || '').trim();
     if (!service || reporter.length < 2) {
-      toast('Falta identificar el servicio o el responsable.', 'error');
+      toast('Falta identificar el servicio o el operario responsable.', 'error');
       return;
     }
 
@@ -769,7 +874,7 @@
         : (result.budget_status === 'sobre_limite' ? ` · Excepción: supera el límite de ${formatPercent(result.budget_limit_percent)}` : '');
       E.successOrderCode.textContent = result.order_code;
       E.successOrderSummary.textContent = `${service.name} · ${summary}${budgetNote}`;
-      S.lastSuccessText = `Pedido ${result.order_code}\nServicio: ${service.name}\nResponsable: ${reporter}\n${summary}${budgetNote}\nFecha: ${dtf.format(new Date(result.created_at))}`;
+      S.lastSuccessText = `Pedido ${result.order_code}\nServicio: ${service.name}\nOperario responsable: ${reporter}\nCargado por: ${authenticatedReporterName()}\n${summary}${budgetNote}\nFecha: ${dtf.format(new Date(result.created_at))}`;
 
       S.draft.clear();
       S.extras = [];
@@ -790,7 +895,12 @@
   function startAnotherOrder() {
     M.orderSuccess.hide();
     S.publicServiceId = null;
+    S.orderReporterName = '';
+    E.publicReporterName.value = '';
+    E.publicServiceSearch.value = '';
+    E.publicServiceSelect.value = '';
     showPublicEntry();
+    setTimeout(() => E.publicServiceSearch.focus(), 150);
   }
 
   function requestServiceSwitch() {
@@ -881,6 +991,7 @@
     S.materials = [];
     S.serviceMaterialExclusions = [];
     S.publicServiceId = null;
+    S.orderReporterName = '';
     S.draft.clear();
     S.extras = [];
   }
@@ -1114,9 +1225,11 @@
     const budgetValue = order.budget_status === 'sin_configurar'
       ? 'Sin tope configurado'
       : `${formatCurrency(order.total_amount)} / ${formatCurrency(order.budget_limit_amount_snapshot)} (${formatPercent(order.budget_limit_percent_snapshot)})`;
+    const creator = S.profiles.find((profile) => profile.id === order.created_by);
     E.orderDetailMeta.innerHTML = [
       ['Servicio', service?.name || 'Servicio eliminado'],
-      ['Responsable', order.reporter_name],
+      ['Operario responsable', order.reporter_name],
+      ['Cargado por', creator?.full_name || creator?.email || 'Usuario no disponible'],
       ['Fecha', dtf.format(new Date(order.created_at))],
       ['Prioridad', PRIORITY_LABELS[order.priority] || order.priority],
       ['Estado', STATUS_LABELS[order.status] || order.status],
@@ -1473,7 +1586,7 @@
       `PEDIDO ${order.order_code}`,
       `Servicio: ${service?.name || 'Servicio'}`,
       service?.address ? `Dirección: ${service.address}` : null,
-      `Responsable: ${order.reporter_name}`,
+      `Operario responsable: ${order.reporter_name}`,
       `Fecha: ${dtf.format(new Date(order.created_at))}`,
       `Prioridad: ${PRIORITY_LABELS[order.priority] || order.priority}`,
       `Estado: ${STATUS_LABELS[order.status] || order.status}`,
@@ -2081,7 +2194,7 @@
 
   function publicCreateErrorMessage(error) {
     const message = String(error?.message || '');
-    if (message.includes('supervisor_create_order') || message.includes('schema cache')) return 'La función de pedidos no está actualizada. Ejecutá actualizar-login-obligatorio.sql en Supabase.';
+    if (message.includes('supervisor_create_order') || message.includes('schema cache')) return 'La función de pedidos no está actualizada. Ejecutá actualizar-operario-y-buscador-servicios.sql en Supabase.';
     return message || 'No se pudo registrar el pedido.';
   }
 
