@@ -18,8 +18,9 @@
   };
 
   const PRIORITY_LABELS = { normal: 'Normal', urgente: 'Urgente' };
-  const ROLE_LABELS = { admin: 'Administrador', supplier: 'Proveedor', operator: 'Operario especial' };
+  const ROLE_LABELS = { admin: 'Administrador', supplier: 'Proveedor', operator: 'Supervisor' };
   const FULL_ADMIN_ROLE = 'admin';
+  const NAON_DISCOUNT_PERCENT = 7;
 
   const STATUS_OPTIONS = Object.entries(STATUS_LABELS)
     .map(([value, label]) => `<option value="${value}">${label}</option>`)
@@ -29,7 +30,7 @@
     sb: null,
     session: null,
     profile: null,
-    mode: 'public',
+    mode: 'signed-out',
     services: [],
     materials: [],
     orders: [],
@@ -40,6 +41,7 @@
     selectedServiceMaterialsId: null,
     serviceMaterialsDraftHidden: new Set(),
     publicServiceId: null,
+    orderReporterName: '',
     draft: new Map(),
     extras: [],
     tab: 'dashboard',
@@ -47,11 +49,13 @@
     orderEditDraft: [],
     orderEditOriginalUpdatedAt: null,
     orderEditMode: false,
+    orderEditPickupAtNaon: true,
     lastSuccessText: '',
     channel: null,
     refreshTimer: null,
     lastBudgetStatus: null,
-    initialized: false
+    initialized: false,
+    passwordRecovery: false
   };
 
   const E = {};
@@ -87,15 +91,14 @@
 
     document.title = cfg.APP_NAME || 'Pedidos Clean It';
     E.appTitle.textContent = document.title;
-    E.publicReporterName.value = localStorage.getItem('pedidosCleanItReporter') || '';
+    E.publicReporterName.value = '';
     E.orderDetailStatus.innerHTML = STATUS_OPTIONS;
 
     if (!configured) {
       E.loadingScreen.classList.add('d-none');
-      E.setupWarning.classList.remove('d-none');
-      E.publicStartButton.disabled = true;
-      E.openAdminLoginButton.disabled = true;
-      showPublicEntry();
+      E.accessSetupWarning.classList.remove('d-none');
+      E.accessLoginButton.disabled = true;
+      showLoginGate();
       return;
     }
 
@@ -103,26 +106,53 @@
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
     });
 
-    S.sb.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT' && S.mode === 'admin') {
-        setTimeout(() => returnToPublic(), 0);
+    S.sb.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        S.passwordRecovery = true;
+        S.session = session;
+        setTimeout(showPasswordResetView, 0);
+        return;
+      }
+      if (event === 'SIGNED_OUT') {
+        setTimeout(() => {
+          if (S.mode !== 'signed-out') resetSessionAndShowLogin();
+        }, 0);
       }
     });
 
     try {
-      await loadPublicData();
-      showPublicEntry();
+      const { data, error } = await S.sb.auth.getSession();
+      if (error) throw error;
+      const recoveryInUrl = /(?:^|[&#?])type=recovery(?:&|$)/.test(`${window.location.hash}&${window.location.search}`);
+      if ((S.passwordRecovery || recoveryInUrl) && data.session) {
+        S.passwordRecovery = true;
+        S.session = data.session;
+        showPasswordResetView();
+      } else if (data.session) await routeAuthenticatedSession(data.session);
+      else showLoginGate();
     } catch (error) {
       console.error(error);
-      showPublicEntry();
-      showEntryError(publicErrorMessage(error));
+      showLoginGate();
+      showAccessLoginError(error.message || 'No se pudo validar la sesión.');
     } finally {
       E.loadingScreen.classList.add('d-none');
     }
   }
 
   function bindEvents() {
+    E.accessLoginForm.addEventListener('submit', accessLogin);
+    E.accessTogglePassword.addEventListener('click', toggleAccessPassword);
+    E.forgotPasswordButton.addEventListener('click', sendPasswordRecovery);
+    E.passwordResetForm.addEventListener('submit', updateRecoveredPassword);
     E.publicEntryForm.addEventListener('submit', startPublicOrder);
+    E.publicServiceSearch.addEventListener('input', handlePublicServiceSearch);
+    E.publicServiceSearch.addEventListener('focus', () => renderPublicServiceSuggestions(E.publicServiceSearch.value, true));
+    E.publicServiceSearch.addEventListener('keydown', handlePublicServiceSearchKeydown);
+    E.publicServiceSelect.addEventListener('change', handlePublicServiceSelectChange);
+    E.publicServiceSuggestions.addEventListener('click', handlePublicServiceSuggestionClick);
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('.service-search-wrap')) hidePublicServiceSuggestions();
+    });
     E.openAdminLoginButton.addEventListener('click', openAdminLogin);
     E.headerAdminLoginButton.addEventListener('click', openAdminLogin);
     E.switchServiceButton.addEventListener('click', requestServiceSwitch);
@@ -130,6 +160,7 @@
     E.loginForm.addEventListener('submit', login);
     E.togglePassword.addEventListener('click', togglePassword);
     E.logoutButton.addEventListener('click', logout);
+    E.publicLogoutButton.addEventListener('click', logout);
 
     E.operatorSearch.addEventListener('input', renderOperatorGrid);
     E.operatorCategory.addEventListener('change', renderOperatorGrid);
@@ -178,6 +209,7 @@
     E.cancelOrderEditButton.addEventListener('click', cancelOrderEdit);
     E.saveOrderChangesButton.addEventListener('click', saveOrderChanges);
     E.addOrderMaterialButton.addEventListener('click', addMaterialToOrderDraft);
+    E.orderNaonPickupCheckbox.addEventListener('change', handleOrderNaonPickupChange);
     E.orderDetailModal.addEventListener('hidden.bs.modal', resetOrderEditState);
 
     E.appShell.addEventListener('click', handleAppClick);
@@ -194,8 +226,165 @@
     });
   }
 
+  function showLoginGate() {
+    E.loadingScreen.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
+    E.authView.classList.add('d-none');
+    E.appShell.classList.add('d-none');
+    E.loginGateView.classList.remove('d-none');
+    hideAccessLoginError();
+    hideAccessLoginSuccess();
+    setTimeout(() => E.accessLoginEmail?.focus(), 150);
+  }
+
+  function showPasswordResetView() {
+    E.loadingScreen.classList.add('d-none');
+    E.loginGateView.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
+    E.authView.classList.add('d-none');
+    E.appShell.classList.add('d-none');
+    E.passwordResetView.classList.remove('d-none');
+    E.passwordResetError.classList.add('d-none');
+    E.passwordResetError.textContent = '';
+    E.newPassword.value = '';
+    E.confirmNewPassword.value = '';
+    setTimeout(() => E.newPassword.focus(), 150);
+  }
+
+  function passwordRecoveryRedirectUrl() {
+    return `${window.location.origin}${window.location.pathname}`;
+  }
+
+  async function sendPasswordRecovery() {
+    hideAccessLoginError();
+    hideAccessLoginSuccess();
+    const email = E.accessLoginEmail.value.trim();
+    if (!email) {
+      showAccessLoginError('Ingresá el correo del usuario para enviar el enlace de recuperación.');
+      E.accessLoginEmail.focus();
+      return;
+    }
+
+    buttonBusy(E.forgotPasswordButton, true, 'Enviando enlace...');
+    try {
+      const { error } = await S.sb.auth.resetPasswordForEmail(email, {
+        redirectTo: passwordRecoveryRedirectUrl()
+      });
+      if (error) throw error;
+      showAccessLoginSuccess('Si el correo está registrado, recibirá un enlace para cambiar la contraseña. Revisá también la carpeta de spam.');
+    } catch (error) {
+      console.error(error);
+      showAccessLoginError(error.message || 'No se pudo enviar el enlace de recuperación.');
+    } finally {
+      buttonBusy(E.forgotPasswordButton, false);
+    }
+  }
+
+  async function updateRecoveredPassword(event) {
+    event.preventDefault();
+    E.passwordResetError.classList.add('d-none');
+    E.passwordResetError.textContent = '';
+
+    const password = E.newPassword.value;
+    const confirmation = E.confirmNewPassword.value;
+    if (password.length < 8) {
+      E.passwordResetError.textContent = 'La contraseña debe tener como mínimo 8 caracteres.';
+      E.passwordResetError.classList.remove('d-none');
+      return;
+    }
+    if (password !== confirmation) {
+      E.passwordResetError.textContent = 'Las contraseñas no coinciden.';
+      E.passwordResetError.classList.remove('d-none');
+      return;
+    }
+
+    buttonBusy(E.passwordResetButton, true, 'Guardando...');
+    try {
+      const { error } = await S.sb.auth.updateUser({ password });
+      if (error) throw error;
+      S.passwordRecovery = false;
+      await S.sb.auth.signOut();
+      resetSessionState();
+      showLoginGate();
+      setTimeout(() => showAccessLoginSuccess('Contraseña actualizada. Ya podés ingresar con la nueva contraseña.'), 50);
+      window.history.replaceState({}, document.title, passwordRecoveryRedirectUrl());
+    } catch (error) {
+      console.error(error);
+      E.passwordResetError.textContent = error.message || 'No se pudo actualizar la contraseña. Solicitá un nuevo enlace e intentá nuevamente.';
+      E.passwordResetError.classList.remove('d-none');
+    } finally {
+      buttonBusy(E.passwordResetButton, false);
+    }
+  }
+
+  async function accessLogin(event) {
+    event.preventDefault();
+    hideAccessLoginError();
+    hideAccessLoginSuccess();
+    buttonBusy(E.accessLoginButton, true, 'Ingresando...');
+    try {
+      const { data, error } = await S.sb.auth.signInWithPassword({
+        email: E.accessLoginEmail.value.trim(),
+        password: E.accessLoginPassword.value
+      });
+      if (error) throw error;
+      await routeAuthenticatedSession(data.session);
+      E.accessLoginPassword.value = '';
+    } catch (error) {
+      console.error(error);
+      showAccessLoginError(error.message === 'Invalid login credentials'
+        ? 'Correo o contraseña incorrectos.'
+        : (error.message || 'No se pudo iniciar sesión.'));
+    } finally {
+      buttonBusy(E.accessLoginButton, false);
+    }
+  }
+
+  async function routeAuthenticatedSession(session) {
+    if (!session?.user?.id) throw new Error('La sesión no es válida.');
+    showLoading();
+    try {
+      const { data: profile, error } = await S.sb.from('profiles').select('*').eq('id', session.user.id).single();
+      if (error || !profile) throw new Error('El usuario no tiene un perfil habilitado. Revisalo en Administración → Usuarios.');
+      if (!['admin', 'supplier', 'operator'].includes(profile.role)) throw new Error('El usuario no tiene un rol válido para ingresar.');
+
+      S.session = session;
+      S.profile = profile;
+      E.loginGateView.classList.add('d-none');
+
+      if (['admin', 'supplier'].includes(profile.role)) {
+        S.mode = 'admin';
+        await refreshAdmin(false);
+        setupRealtime();
+        showAdminApp();
+        return;
+      }
+
+      S.mode = 'operator';
+      S.orderReporterName = '';
+      await loadPublicData();
+      showPublicEntry();
+    } catch (error) {
+      console.error(error);
+      await S.sb.auth.signOut();
+      resetSessionState();
+      showLoginGate();
+      showAccessLoginError(error.message || 'No se pudo abrir la aplicación.');
+      throw error;
+    } finally {
+      E.loadingScreen.classList.add('d-none');
+    }
+  }
+
+  function authenticatedReporterName() {
+    const profileName = String(S.profile?.full_name || '').trim();
+    if (profileName) return profileName.slice(0, 100);
+    const email = String(S.profile?.email || S.session?.user?.email || '').trim();
+    return email ? email.split('@')[0].slice(0, 100) : 'Supervisor';
+  }
+
   async function loadPublicData() {
-    const { data, error } = await S.sb.rpc('public_order_bootstrap');
+    const { data, error } = await S.sb.rpc('supervisor_order_bootstrap');
     if (error) throw error;
     const payload = typeof data === 'string' ? JSON.parse(data) : (data || {});
     S.services = Array.isArray(payload.services) ? payload.services : [];
@@ -206,21 +395,125 @@
   }
 
   function showPublicEntry() {
+    if (!S.session || S.profile?.role !== 'operator') {
+      showLoginGate();
+      return;
+    }
     E.loadingScreen.classList.add('d-none');
+    E.loginGateView.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
     E.appShell.classList.add('d-none');
     E.authView.classList.remove('d-none');
+    E.publicReporterName.readOnly = false;
+    E.publicReporterName.value = S.orderReporterName || '';
     populatePublicServiceSelect();
+    hidePublicServiceSuggestions();
+  }
+
+  function activePublicServices() {
+    return S.services
+      .filter((item) => item.active !== false)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es'));
+  }
+
+  function publicServiceHaystack(service) {
+    return normalize(`${service.name || ''} ${service.address || ''} ${service.zone || ''} ${service.description || ''}`);
   }
 
   function populatePublicServiceSelect() {
-    const active = S.services.filter((item) => item.active !== false);
+    const active = activePublicServices();
     const remembered = localStorage.getItem('pedidosCleanItService') || '';
+    const current = E.publicServiceSelect.value || remembered;
     E.publicServiceSelect.innerHTML = '<option value="">Seleccionar servicio...</option>' + active
       .map((item) => `<option value="${ea(item.id)}">${eh(item.name)}</option>`)
       .join('');
-    if (active.some((item) => item.id === remembered)) E.publicServiceSelect.value = remembered;
+    if (active.some((item) => item.id === current)) E.publicServiceSelect.value = current;
     E.publicStartButton.disabled = !configured || active.length === 0;
     if (configured && active.length === 0) showEntryError('No hay servicios activos cargados.');
+  }
+
+  function matchingPublicServices(rawQuery) {
+    const query = normalize(rawQuery);
+    const active = activePublicServices();
+    if (!query) return active.slice(0, 8);
+    return active.filter((service) => publicServiceHaystack(service).includes(query)).slice(0, 12);
+  }
+
+  function renderPublicServiceSuggestions(rawQuery, force = false) {
+    const query = String(rawQuery || '').trim();
+    const matches = matchingPublicServices(query);
+    if (!force && !query) {
+      hidePublicServiceSuggestions();
+      return;
+    }
+
+    E.publicServiceSuggestions.innerHTML = matches.length
+      ? matches.map((service) => `
+          <button class="service-search-option" type="button" role="option" data-public-service-id="${ea(service.id)}">
+            <span class="service-search-option-icon"><i class="bi bi-building"></i></span>
+            <span class="service-search-option-copy">
+              <strong>${eh(service.name || 'Servicio')}</strong>
+              <small>${eh([service.address, service.zone].filter(Boolean).join(' · ') || 'Sin dirección informada')}</small>
+            </span>
+            <i class="bi bi-chevron-right service-search-option-arrow"></i>
+          </button>`).join('')
+      : '<div class="service-search-empty"><i class="bi bi-search"></i><span>No se encontraron servicios con ese criterio.</span></div>';
+    E.publicServiceSuggestions.classList.remove('d-none');
+  }
+
+  function hidePublicServiceSuggestions() {
+    E.publicServiceSuggestions.classList.add('d-none');
+  }
+
+  function selectPublicService(serviceId) {
+    const service = activePublicServices().find((item) => item.id === serviceId);
+    if (!service) return;
+    E.publicServiceSelect.value = service.id;
+    E.publicServiceSearch.value = service.name || '';
+    hidePublicServiceSuggestions();
+    hideEntryError();
+  }
+
+  function handlePublicServiceSearch() {
+    const query = E.publicServiceSearch.value;
+    const selected = activePublicServices().find((item) => item.id === E.publicServiceSelect.value);
+    if (selected && normalize(selected.name) !== normalize(query)) E.publicServiceSelect.value = '';
+    renderPublicServiceSuggestions(query, true);
+  }
+
+  function handlePublicServiceSearchKeydown(event) {
+    if (event.key === 'Escape') {
+      hidePublicServiceSuggestions();
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      const first = E.publicServiceSuggestions.querySelector('[data-public-service-id]');
+      if (first) {
+        event.preventDefault();
+        first.focus();
+      }
+      return;
+    }
+    if (event.key === 'Enter') {
+      const first = E.publicServiceSuggestions.querySelector('[data-public-service-id]');
+      if (first && !E.publicServiceSuggestions.classList.contains('d-none')) {
+        event.preventDefault();
+        selectPublicService(first.dataset.publicServiceId);
+      }
+    }
+  }
+
+  function handlePublicServiceSuggestionClick(event) {
+    const button = event.target.closest('[data-public-service-id]');
+    if (!button) return;
+    selectPublicService(button.dataset.publicServiceId);
+  }
+
+  function handlePublicServiceSelectChange() {
+    const service = activePublicServices().find((item) => item.id === E.publicServiceSelect.value);
+    E.publicServiceSearch.value = service?.name || '';
+    hidePublicServiceSuggestions();
+    hideEntryError();
   }
 
   function populateOperatorCategories() {
@@ -246,14 +539,14 @@
       return;
     }
     if (reporter.length < 2) {
-      showEntryError('Ingresá tu nombre para continuar.');
+      showEntryError('Ingresá el nombre y apellido del operario responsable.');
       E.publicReporterName.focus();
       return;
     }
 
     localStorage.setItem('pedidosCleanItService', serviceId);
-    localStorage.setItem('pedidosCleanItReporter', reporter);
     S.publicServiceId = serviceId;
+    S.orderReporterName = reporter;
     S.draft.clear();
     S.extras = [];
     S.lastBudgetStatus = null;
@@ -267,17 +560,20 @@
   }
 
   function showOperatorApp() {
+    S.mode = 'operator';
+    E.loginGateView.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
     E.authView.classList.add('d-none');
     E.appShell.classList.remove('d-none');
     E.adminView.classList.add('d-none');
     E.operatorView.classList.remove('d-none');
     E.adminMenuButton.classList.add('d-none');
     E.switchServiceButton.classList.remove('d-none');
-    E.headerAdminLoginButton.classList.remove('d-none');
-    E.logoutButton.classList.add('d-none');
+    E.headerAdminLoginButton.classList.add('d-none');
+    E.logoutButton.classList.remove('d-none');
     E.headerUserChip.classList.remove('d-none');
-    E.headerUserName.textContent = localStorage.getItem('pedidosCleanItReporter') || 'Operario';
-    E.headerUserRole.textContent = 'Carga pública';
+    E.headerUserName.textContent = authenticatedReporterName();
+    E.headerUserRole.textContent = 'Supervisor';
     E.appSubtitle.textContent = 'Pedido de insumos';
     renderOperator();
   }
@@ -292,7 +588,7 @@
 
     E.operatorServiceName.textContent = service.name || 'Servicio';
     E.operatorServiceAddress.textContent = service.address || 'Dirección no informada';
-    E.operatorReporter.textContent = localStorage.getItem('pedidosCleanItReporter') || 'Operario';
+    E.operatorReporter.textContent = S.orderReporterName || 'Operario no informado';
     const description = String(service.description || '').trim();
     E.operatorServiceDescription.classList.toggle('d-none', !description);
     E.operatorServiceDescription.querySelector('span').textContent = description;
@@ -626,9 +922,9 @@
 
   async function submitOrder() {
     const service = currentService();
-    const reporter = localStorage.getItem('pedidosCleanItReporter') || '';
+    const reporter = String(S.orderReporterName || '').trim();
     if (!service || reporter.length < 2) {
-      toast('Falta identificar el servicio o el responsable.', 'error');
+      toast('Falta identificar el servicio o el operario responsable.', 'error');
       return;
     }
 
@@ -664,7 +960,7 @@
 
     buttonBusy(E.operatorSaveButton, true, 'Enviando...');
     try {
-      const { data, error } = await S.sb.rpc('public_create_order', {
+      const { data, error } = await S.sb.rpc('supervisor_create_order', {
         p_service_id: service.id,
         p_reporter_name: reporter,
         p_priority: E.operatorPriority.value,
@@ -680,7 +976,7 @@
         : (result.budget_status === 'sobre_limite' ? ` · Excepción: supera el límite de ${formatPercent(result.budget_limit_percent)}` : '');
       E.successOrderCode.textContent = result.order_code;
       E.successOrderSummary.textContent = `${service.name} · ${summary}${budgetNote}`;
-      S.lastSuccessText = `Pedido ${result.order_code}\nServicio: ${service.name}\nResponsable: ${reporter}\n${summary}${budgetNote}\nFecha: ${dtf.format(new Date(result.created_at))}`;
+      S.lastSuccessText = `Pedido ${result.order_code}\nServicio: ${service.name}\nOperario responsable: ${reporter}\nCargado por: ${authenticatedReporterName()}\n${summary}${budgetNote}\nFecha: ${dtf.format(new Date(result.created_at))}`;
 
       S.draft.clear();
       S.extras = [];
@@ -701,7 +997,12 @@
   function startAnotherOrder() {
     M.orderSuccess.hide();
     S.publicServiceId = null;
+    S.orderReporterName = '';
+    E.publicReporterName.value = '';
+    E.publicServiceSearch.value = '';
+    E.publicServiceSelect.value = '';
     showPublicEntry();
+    setTimeout(() => E.publicServiceSearch.focus(), 150);
   }
 
   function requestServiceSwitch() {
@@ -768,28 +1069,43 @@
     }
   }
 
-  async function logout() {
-    buttonBusy(E.logoutButton, true);
-    await S.sb.auth.signOut();
-    buttonBusy(E.logoutButton, false);
-    await returnToPublic();
+  async function logout(event) {
+    const button = event?.currentTarget || E.logoutButton;
+    buttonBusy(button, true, 'Saliendo...');
+    try {
+      await S.sb.auth.signOut();
+    } finally {
+      buttonBusy(button, false);
+      resetSessionAndShowLogin();
+    }
   }
 
-  async function returnToPublic() {
+  function resetSessionState() {
     teardownRealtime();
     S.session = null;
     S.profile = null;
-    S.mode = 'public';
+    S.mode = 'signed-out';
     S.orders = [];
     S.orderItems = [];
     S.profiles = [];
     S.history = [];
+    S.services = [];
+    S.materials = [];
     S.serviceMaterialExclusions = [];
-    try { await loadPublicData(); } catch (error) { console.error(error); }
-    showPublicEntry();
+    S.publicServiceId = null;
+    S.orderReporterName = '';
+    S.draft.clear();
+    S.extras = [];
+  }
+
+  function resetSessionAndShowLogin() {
+    resetSessionState();
+    showLoginGate();
   }
 
   function showAdminApp() {
+    E.loginGateView.classList.add('d-none');
+    E.passwordResetView.classList.add('d-none');
     E.authView.classList.add('d-none');
     E.appShell.classList.remove('d-none');
     E.operatorView.classList.add('d-none');
@@ -987,7 +1303,7 @@
         <td><div class="order-code">${eh(order.order_code)}</div><div class="order-date">${dtf.format(new Date(order.created_at))}</div></td>
         <td><div class="order-service">${eh(service?.name || 'Servicio eliminado')}</div><div class="table-subtitle">${eh(service?.address || '')}</div></td>
         <td>${eh(order.reporter_name)}</td>
-        <td><strong>${order.total_items}</strong> insumos<div class="order-content-summary">${formatQty(order.total_units)} unidades · ${formatCurrency(order.total_amount)}</div>${budgetBadge(order)}</td>
+        <td><strong>${order.total_items}</strong> insumos<div class="order-content-summary">${formatQty(order.total_units)} unidades · ${formatCurrency(order.total_amount)}</div>${budgetBadge(order)}${orderBudgetMiniProgress(order)}</td>
         <td><span class="priority-badge ${ea(order.priority)}">${eh(PRIORITY_LABELS[order.priority] || order.priority)}</span></td>
         <td><span class="status-badge ${ea(order.status)}">${eh(STATUS_LABELS[order.status] || order.status)}</span></td>
         <td><div class="action-group"><button class="btn btn-outline-primary" type="button" title="Ver pedido" data-order-open="${ea(order.id)}"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary" type="button" title="Copiar" data-order-copy="${ea(order.id)}"><i class="bi bi-copy"></i></button>${isFullAdmin() ? `<button class="btn btn-outline-danger" type="button" title="Eliminar" data-order-delete="${ea(order.id)}"><i class="bi bi-trash3"></i></button>` : ''}</div></td>
@@ -1009,26 +1325,40 @@
     const items = itemsForOrder(order.id);
 
     E.orderDetailTitle.textContent = order.order_code;
-    const budgetValue = order.budget_status === 'sin_configurar'
-      ? 'Sin tope configurado'
-      : `${formatCurrency(order.total_amount)} / ${formatCurrency(order.budget_limit_amount_snapshot)} (${formatPercent(order.budget_limit_percent_snapshot)})`;
-    E.orderDetailMeta.innerHTML = [
+    const creator = S.profiles.find((profile) => profile.id === order.created_by);
+    const deliveryMode = order.pickup_at_naon === true
+      ? `Retiro en Naón · ${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)} aplicado`
+      : (order.pickup_at_naon === false ? 'Entrega directa al servicio · sin descuento' : 'Pendiente de definir por Operaciones');
+    const detailMeta = [
       ['Servicio', service?.name || 'Servicio eliminado'],
-      ['Responsable', order.reporter_name],
+      ['Operario responsable', order.reporter_name],
+      ['Cargado por', creator?.full_name || creator?.email || 'Usuario no disponible'],
       ['Fecha', dtf.format(new Date(order.created_at))],
       ['Prioridad', PRIORITY_LABELS[order.priority] || order.priority],
       ['Estado', STATUS_LABELS[order.status] || order.status],
       ['Contenido', `${order.total_items} insumos · ${formatQty(order.total_units)} unidades`],
-      ['Total', formatCurrency(order.total_amount)],
-      ['Control presupuestario', `${budgetStatusText(order.budget_status)} · ${budgetValue}`]
-    ].map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
+      ['Modalidad', deliveryMode]
+    ];
+    if (order.pickup_at_naon === true) {
+      detailMeta.push(['Subtotal sin descuento', formatCurrency(order.gross_total_amount || order.total_amount)]);
+      detailMeta.push([`Descuento Naón (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)})`, `− ${formatCurrency(order.discount_amount)}`]);
+    }
+    detailMeta.push(['Total', formatCurrency(order.total_amount)]);
+    E.orderDetailBudgetOverview.innerHTML = orderBudgetOverview(order);
+    E.orderDetailMeta.innerHTML = detailMeta.map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
 
-    E.orderDetailItems.innerHTML = items.map((item) => `
+    E.orderDetailItems.innerHTML = items.map((item) => {
+      const basePrice = orderItemBaseUnitPrice(item);
+      const pricingText = order.pickup_at_naon === true
+        ? `Precio de lista: ${formatCurrency(basePrice)} · Precio Naón: ${formatCurrency(item.unit_price)}`
+        : `Precio unitario: ${formatCurrency(item.unit_price)}`;
+      return `
       <div class="order-detail-item">
         <img class="order-detail-thumb" src="${ea(item.image_url || 'assets/materials/default.svg')}" alt="${ea(item.item_name)}" onerror="this.src='assets/materials/default.svg'">
-        <div><div class="order-detail-name">${eh(item.item_name)}</div><div class="order-detail-sub">${eh(item.item_sku ? `SKU ${item.item_sku} · ` : '')}${eh(item.category || (item.is_custom ? 'No listado' : 'General'))}${item.notes ? ` · ${eh(item.notes)}` : ''}</div><div class="order-detail-sub">Precio unitario: ${eh(formatCurrency(item.unit_price))}</div></div>
+        <div><div class="order-detail-name">${eh(item.item_name)}</div><div class="order-detail-sub">${eh(item.item_sku ? `SKU ${item.item_sku} · ` : '')}${eh(item.category || (item.is_custom ? 'No listado' : 'General'))}${item.notes ? ` · ${eh(item.notes)}` : ''}</div><div class="order-detail-sub">${eh(pricingText)}</div></div>
         <div class="order-detail-qty">${formatQty(item.quantity)}<div class="order-detail-sub">${eh(item.unit || 'unidad')}</div><strong class="order-line-total">${eh(formatCurrency(item.line_total))}</strong></div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
     E.orderDetailNotesWrap.classList.toggle('d-none', !order.notes);
     E.orderDetailNotes.textContent = order.notes || '';
@@ -1044,6 +1374,8 @@
     S.orderEditDraft = [];
     S.orderEditOriginalUpdatedAt = null;
     S.orderEditMode = false;
+    S.orderEditPickupAtNaon = true;
+    if (E.orderNaonPickupCheckbox) E.orderNaonPickupCheckbox.checked = true;
     if (E.orderEditItems) E.orderEditItems.innerHTML = '';
     if (E.orderAddMaterialSelect) E.orderAddMaterialSelect.innerHTML = '<option value="">Seleccionar insumo...</option>';
   }
@@ -1070,6 +1402,7 @@
       unit: item.unit || 'unidad',
       quantity: number(item.quantity),
       unit_price: number(item.unit_price),
+      list_unit_price: orderItemBaseUnitPrice(item),
       notes: item.notes || '',
       image_url: item.image_url || 'assets/materials/default.svg',
       is_custom: Boolean(item.is_custom),
@@ -1077,7 +1410,10 @@
       is_new: false
     }));
     S.orderEditOriginalUpdatedAt = order.updated_at;
+    S.orderEditPickupAtNaon = order.pickup_at_naon == null ? true : Boolean(order.pickup_at_naon);
+    E.orderNaonPickupCheckbox.checked = S.orderEditPickupAtNaon;
     setOrderEditMode(true);
+    renderOrderNaonOption();
     renderOrderEditItems();
     renderOrderAddMaterialOptions();
     renderOrderEditSummary();
@@ -1101,13 +1437,19 @@
   }
 
   function renderOrderEditItems() {
-    E.orderEditItems.innerHTML = S.orderEditDraft.map((item) => `
+    E.orderEditItems.innerHTML = S.orderEditDraft.map((item) => {
+      const basePrice = orderEditBaseUnitPrice(item);
+      const effectivePrice = orderEditEffectiveUnitPrice(item);
+      const pricingText = S.orderEditPickupAtNaon
+        ? `Precio de lista: ${formatCurrency(basePrice)} · Naón −${formatPercent(NAON_DISCOUNT_PERCENT)}: ${formatCurrency(effectivePrice)}`
+        : `Precio unitario: ${formatCurrency(basePrice)} · Sin descuento`;
+      return `
       <div class="order-edit-item" data-order-edit-row="${ea(item.key)}">
         <img class="order-detail-thumb" src="${ea(item.image_url || 'assets/materials/default.svg')}" alt="${ea(item.item_name)}" onerror="this.src='assets/materials/default.svg'">
         <div class="order-edit-item-info">
           <div class="order-detail-name">${eh(item.item_name)}</div>
           <div class="order-detail-sub">${eh(item.item_sku ? `SKU ${item.item_sku} · ` : '')}${eh(item.category || 'General')} · ${eh(item.unit || 'unidad')}</div>
-          <div class="order-detail-sub">Precio unitario: ${eh(formatCurrency(item.unit_price))}${item.is_new ? ' · Precio actual del catálogo' : ' · Precio registrado en el pedido'}</div>
+          <div class="order-detail-sub">${eh(pricingText)}${item.is_new ? ' · Precio actual del catálogo' : ' · Precio base registrado'}</div>
         </div>
         <div class="order-edit-item-actions">
           <div class="order-edit-qty-control">
@@ -1115,10 +1457,11 @@
             <input class="form-control order-edit-qty-input" type="number" min="0.01" max="999" step="0.01" value="${ea(formatInputQty(item.quantity))}" data-order-edit-input data-order-edit-key="${ea(item.key)}" aria-label="Cantidad de ${ea(item.item_name)}">
             <button class="btn btn-outline-primary" type="button" data-order-edit-action="plus" data-order-edit-key="${ea(item.key)}" aria-label="Sumar una unidad"><i class="bi bi-plus-lg"></i></button>
           </div>
-          <strong class="order-edit-line-total" data-order-edit-line-total>${eh(formatCurrency(number(item.quantity) * number(item.unit_price)))}</strong>
+          <strong class="order-edit-line-total" data-order-edit-line-total>${eh(formatCurrency(roundMoney(number(item.quantity) * effectivePrice)))}</strong>
           <button class="btn btn-outline-danger btn-sm order-edit-remove" type="button" data-order-edit-remove="${ea(item.key)}"><i class="bi bi-trash3 me-1"></i>Quitar</button>
         </div>
-      </div>`).join('') || '<div class="empty-inline border rounded-4">El pedido quedó sin insumos. Agregá al menos uno para poder guardar.</div>';
+      </div>`;
+    }).join('') || '<div class="empty-inline border rounded-4">El pedido quedó sin insumos. Agregá al menos uno para poder guardar.</div>';
   }
 
   function renderOrderAddMaterialOptions() {
@@ -1132,7 +1475,11 @@
       .sort(materialSort);
 
     E.orderAddMaterialSelect.innerHTML = '<option value="">Seleccionar insumo...</option>' + available
-      .map((material) => `<option value="${ea(material.id)}">${eh(material.name)}${material.sku ? ` · SKU ${eh(material.sku)}` : ''} · ${eh(formatCurrency(material.unit_price))}</option>`)
+      .map((material) => {
+        const effectivePrice = S.orderEditPickupAtNaon ? applyNaonDiscount(material.unit_price) : roundMoney(material.unit_price);
+        const priceLabel = S.orderEditPickupAtNaon ? ` · Naón ${formatCurrency(effectivePrice)}` : ` · ${formatCurrency(effectivePrice)}`;
+        return `<option value="${ea(material.id)}">${eh(material.name)}${material.sku ? ` · SKU ${eh(material.sku)}` : ''}${eh(priceLabel)}</option>`;
+      })
       .join('');
     E.orderAddMaterialSelect.disabled = available.length === 0;
     E.addOrderMaterialButton.disabled = available.length === 0;
@@ -1169,6 +1516,7 @@
         unit: material.unit || 'unidad',
         quantity: clampQty(material.suggested_quantity || 1, 0.01),
         unit_price: number(material.unit_price),
+        list_unit_price: roundMoney(material.unit_price),
         notes: '',
         image_url: material.image_url || 'assets/materials/default.svg',
         is_custom: false,
@@ -1203,7 +1551,7 @@
     item.quantity = input.value === '' ? 0 : clampQty(input.value, 0);
     const row = input.closest('[data-order-edit-row]');
     const lineTotal = row?.querySelector('[data-order-edit-line-total]');
-    if (lineTotal) lineTotal.textContent = formatCurrency(number(item.quantity) * number(item.unit_price));
+    if (lineTotal) lineTotal.textContent = formatCurrency(roundMoney(number(item.quantity) * orderEditEffectiveUnitPrice(item)));
     input.classList.toggle('is-invalid', number(item.quantity) <= 0 || number(item.quantity) > 999);
     renderOrderEditSummary();
   }
@@ -1216,17 +1564,54 @@
     renderOrderEditSummary();
   }
 
+  function handleOrderNaonPickupChange() {
+    if (!S.orderEditMode || !isFullAdmin()) return;
+    S.orderEditPickupAtNaon = Boolean(E.orderNaonPickupCheckbox.checked);
+    renderOrderNaonOption();
+    renderOrderEditItems();
+    renderOrderAddMaterialOptions();
+    renderOrderEditSummary();
+  }
+
+  function renderOrderNaonOption() {
+    if (!E.orderNaonPickupBadge || !E.orderNaonPickupHelp) return;
+    E.orderNaonPickupBadge.textContent = S.orderEditPickupAtNaon ? `${formatPercent(NAON_DISCOUNT_PERCENT)} aplicado` : 'Sin descuento';
+    E.orderNaonPickupBadge.classList.toggle('is-active', S.orderEditPickupAtNaon);
+    E.orderNaonPickupHelp.textContent = S.orderEditPickupAtNaon
+      ? 'El proveedor deja el pedido en Naón. Se descuenta el 7% en cada precio unitario.'
+      : 'El proveedor entrega directamente en el servicio. Se mantienen los precios de lista.';
+  }
+
+  function orderItemBaseUnitPrice(item) {
+    return item?.list_unit_price == null ? roundMoney(item?.unit_price) : roundMoney(item.list_unit_price);
+  }
+
+  function orderEditBaseUnitPrice(item) {
+    return item?.list_unit_price == null ? roundMoney(item?.unit_price) : roundMoney(item.list_unit_price);
+  }
+
+  function applyNaonDiscount(value) {
+    return roundMoney(roundMoney(value) * (1 - NAON_DISCOUNT_PERCENT / 100));
+  }
+
+  function orderEditEffectiveUnitPrice(item) {
+    const basePrice = orderEditBaseUnitPrice(item);
+    return S.orderEditPickupAtNaon ? applyNaonDiscount(basePrice) : basePrice;
+  }
+
   function orderEditMetrics(order) {
     const validItems = S.orderEditDraft.filter((item) => number(item.quantity) > 0);
     const totalUnits = validItems.reduce((sum, item) => sum + number(item.quantity), 0);
-    const totalAmount = Math.round(validItems.reduce((sum, item) => sum + number(item.quantity) * number(item.unit_price), 0) * 100) / 100;
+    const grossTotalAmount = roundMoney(validItems.reduce((sum, item) => sum + roundMoney(number(item.quantity) * orderEditBaseUnitPrice(item)), 0));
+    const totalAmount = roundMoney(validItems.reduce((sum, item) => sum + roundMoney(number(item.quantity) * orderEditEffectiveUnitPrice(item)), 0));
+    const discountAmount = roundMoney(Math.max(0, grossTotalAmount - totalAmount));
     const billing = number(order?.monthly_billing_snapshot);
     const limitAmount = number(order?.budget_limit_amount_snapshot);
     const sevenAmount = number(order?.budget_seven_percent_snapshot);
     const status = billing <= 0 ? 'sin_configurar' : (totalAmount > sevenAmount ? 'sobre_7' : (totalAmount > limitAmount ? 'sobre_limite' : 'dentro'));
-    const differenceToSeven = Math.round((sevenAmount - totalAmount) * 100) / 100;
+    const differenceToSeven = roundMoney(sevenAmount - totalAmount);
     const usagePercent = sevenAmount > 0 ? totalAmount / sevenAmount * 100 : 0;
-    return { totalItems: validItems.length, totalUnits, totalAmount, billing, limitAmount, sevenAmount, status, differenceToSeven, usagePercent };
+    return { totalItems: validItems.length, totalUnits, grossTotalAmount, totalAmount, discountAmount, billing, limitAmount, sevenAmount, status, differenceToSeven, usagePercent };
   }
 
   function renderOrderEditSummary() {
@@ -1247,13 +1632,17 @@
         <div><div class="order-meta-label">Total ajustado</div><div class="order-edit-total">${eh(formatCurrency(metrics.totalAmount))}</div></div>
         <span class="order-edit-status-pill">${eh(budgetStatusText(metrics.status))}</span>
       </div>
+      <div class="order-edit-price-breakdown">
+        <span>Subtotal sin descuento: <strong>${eh(formatCurrency(metrics.grossTotalAmount))}</strong></span>
+        <span class="${S.orderEditPickupAtNaon ? 'is-discount' : ''}">${S.orderEditPickupAtNaon ? `Descuento Naón (${formatPercent(NAON_DISCOUNT_PERCENT)}): <strong>− ${eh(formatCurrency(metrics.discountAmount))}</strong>` : 'Entrega al servicio: <strong>sin descuento</strong>'}</span>
+      </div>
       <div class="order-edit-budget-grid">
         <div><span>Contenido</span><strong>${metrics.totalItems} insumos · ${eh(formatQty(metrics.totalUnits))} unidades</strong></div>
         <div><span>Límite configurado</span><strong>${metrics.billing > 0 ? `${eh(formatCurrency(metrics.limitAmount))} (${eh(formatPercent(order.budget_limit_percent_snapshot))})` : 'Sin configurar'}</strong></div>
         <div><span>Referencia máxima 7%</span><strong>${metrics.billing > 0 ? eh(formatCurrency(metrics.sevenAmount)) : 'Sin configurar'}</strong></div>
         <div class="order-edit-difference"><span>Resultado</span><strong>${eh(differenceText)}</strong></div>
       </div>
-      ${metrics.billing > 0 ? `<div class="order-edit-progress" aria-label="Uso del límite del 7%"><span style="width:${progress.toFixed(2)}%"></span></div><div class="order-detail-sub mt-1">El pedido utiliza ${eh(formatPercent(metrics.usagePercent))} de la referencia del 7%.</div>` : ''}`;
+      ${metrics.billing > 0 ? `<div class="order-edit-progress" role="progressbar" aria-label="Uso de la referencia máxima del 7%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.max(0, Math.min(100, metrics.usagePercent)))}"><span style="width:${progress.toFixed(2)}%"></span>${budgetLimitMarker(order)}</div><div class="order-detail-sub mt-1">El pedido utiliza ${eh(formatPercent(metrics.usagePercent))} de la referencia del 7%. La marca vertical indica el límite operativo de ${eh(formatPercent(order.budget_limit_percent_snapshot))}.</div>` : ''}`;
   }
 
   async function saveOrderChanges() {
@@ -1292,7 +1681,8 @@
       const { error } = await S.sb.rpc('admin_replace_order_items', {
         p_order_id: order.id,
         p_expected_updated_at: S.orderEditOriginalUpdatedAt,
-        p_items: payload
+        p_items: payload,
+        p_pickup_at_naon: S.orderEditPickupAtNaon
       });
       if (error) throw error;
 
@@ -1311,7 +1701,7 @@
       if (message.includes('modificado por otro usuario')) {
         toast('El pedido cambió mientras lo editabas. Actualizá y volvé a revisar.', 'error');
       } else if (message.includes('admin_replace_order_items') || message.includes('schema cache')) {
-        toast('Falta instalar la actualización SQL de edición de pedidos.', 'error');
+        toast('Falta ejecutar actualizar-descuento-naon.sql en Supabase.', 'error');
       } else {
         toast(message || 'No se pudieron guardar los cambios.', 'error');
       }
@@ -1371,18 +1761,25 @@
       `PEDIDO ${order.order_code}`,
       `Servicio: ${service?.name || 'Servicio'}`,
       service?.address ? `Dirección: ${service.address}` : null,
-      `Responsable: ${order.reporter_name}`,
+      `Operario responsable: ${order.reporter_name}`,
       `Fecha: ${dtf.format(new Date(order.created_at))}`,
       `Prioridad: ${PRIORITY_LABELS[order.priority] || order.priority}`,
       `Estado: ${STATUS_LABELS[order.status] || order.status}`,
+      `Modalidad: ${order.pickup_at_naon === true ? `Retiro en Naón (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)} de descuento)` : (order.pickup_at_naon === false ? 'Entrega directa al servicio (sin descuento)' : 'Pendiente de definir')}`,
       '',
       'INSUMOS:'
     ].filter((line) => line !== null);
 
     items.forEach((item) => {
       const sku = item.item_sku ? ` [SKU ${item.item_sku}]` : '';
-      lines.push(`• ${formatQty(item.quantity)} ${item.unit || 'unidad'} — ${item.item_name}${sku} · ${formatCurrency(item.unit_price)} c/u · ${formatCurrency(item.line_total)}${item.notes ? ` (${item.notes})` : ''}`);
+      const basePrice = orderItemBaseUnitPrice(item);
+      const priceInfo = order.pickup_at_naon === true ? `${formatCurrency(basePrice)} lista → ${formatCurrency(item.unit_price)} Naón` : `${formatCurrency(item.unit_price)} c/u`;
+      lines.push(`• ${formatQty(item.quantity)} ${item.unit || 'unidad'} — ${item.item_name}${sku} · ${priceInfo} · ${formatCurrency(item.line_total)}${item.notes ? ` (${item.notes})` : ''}`);
     });
+    if (order.pickup_at_naon === true) {
+      lines.push('', `SUBTOTAL SIN DESCUENTO: ${formatCurrency(order.gross_total_amount || order.total_amount)}`);
+      lines.push(`DESCUENTO NAÓN (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)}): − ${formatCurrency(order.discount_amount)}`);
+    }
     lines.push('', `TOTAL: ${formatCurrency(order.total_amount)}`);
     if (number(order.monthly_billing_snapshot) > 0) {
       lines.push(`Tope ${formatPercent(order.budget_limit_percent_snapshot)}: ${formatCurrency(order.budget_limit_amount_snapshot)}`);
@@ -1840,8 +2237,86 @@
     })[status] || 'Sin información';
   }
 
+  function orderBudgetMetrics(order) {
+    const totalAmount = roundMoney(number(order?.total_amount));
+    const billing = number(order?.monthly_billing_snapshot);
+    const snapshotLimitAmount = roundMoney(number(order?.budget_limit_amount_snapshot));
+    const snapshotLimitPercent = number(order?.budget_limit_percent_snapshot);
+    const limitPercent = snapshotLimitPercent > 0
+      ? Math.min(7, Math.max(0, snapshotLimitPercent))
+      : (billing > 0 && snapshotLimitAmount > 0 ? Math.min(7, snapshotLimitAmount / billing * 100) : 0);
+    const limitAmount = snapshotLimitAmount > 0
+      ? snapshotLimitAmount
+      : roundMoney(billing * limitPercent / 100);
+    const sevenAmount = number(order?.budget_seven_percent_snapshot) > 0
+      ? roundMoney(order.budget_seven_percent_snapshot)
+      : roundMoney(billing * 0.07);
+    const status = billing <= 0 || sevenAmount <= 0
+      ? 'sin_configurar'
+      : (totalAmount > sevenAmount ? 'sobre_7' : (totalAmount > limitAmount ? 'sobre_limite' : 'dentro'));
+    const usagePercent = sevenAmount > 0 ? totalAmount / sevenAmount * 100 : 0;
+    const differenceToSeven = roundMoney(sevenAmount - totalAmount);
+    const differenceToLimit = roundMoney(limitAmount - totalAmount);
+    const limitMarkerPercent = sevenAmount > 0 ? Math.max(0, Math.min(100, limitAmount / sevenAmount * 100)) : 0;
+    return { totalAmount, billing, limitPercent, limitAmount, sevenAmount, status, usagePercent, differenceToSeven, differenceToLimit, limitMarkerPercent };
+  }
+
+  function budgetVisualClass(status) {
+    return status === 'sobre_7' ? 'danger' : (status === 'sobre_limite' ? 'warning' : (status === 'dentro' ? 'success' : 'muted'));
+  }
+
+  function budgetLimitMarker(order) {
+    const metrics = orderBudgetMetrics(order);
+    if (metrics.status === 'sin_configurar') return '';
+    return `<i class="budget-limit-marker" style="left:${metrics.limitMarkerPercent.toFixed(2)}%" aria-hidden="true"></i>`;
+  }
+
+  function orderBudgetMiniProgress(order) {
+    const metrics = orderBudgetMetrics(order);
+    if (metrics.status === 'sin_configurar') {
+      return `<div class="order-budget-mini is-muted"><div class="order-budget-mini-head"><span>Sin referencia presupuestaria</span></div><div class="order-budget-track"><span style="width:0%"></span></div></div>`;
+    }
+    const visual = budgetVisualClass(metrics.status);
+    const progress = Math.max(0, Math.min(100, metrics.usagePercent));
+    return `<div class="order-budget-mini is-${visual}" title="${ea(`Uso del 7%: ${formatPercent(metrics.usagePercent)} · Límite operativo: ${formatPercent(metrics.limitPercent)}`)}">
+      <div class="order-budget-mini-head"><span>Uso del máximo 7%</span><strong>${eh(formatPercent(metrics.usagePercent))}</strong></div>
+      <div class="order-budget-track" role="progressbar" aria-label="Uso de la referencia máxima del 7%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.max(0, Math.min(100, metrics.usagePercent)))}"><span style="width:${progress.toFixed(2)}%"></span>${budgetLimitMarker(order)}</div>
+    </div>`;
+  }
+
+  function orderBudgetOverview(order) {
+    const metrics = orderBudgetMetrics(order);
+    const visual = budgetVisualClass(metrics.status);
+    if (metrics.status === 'sin_configurar') {
+      return `<section class="order-budget-overview is-muted" aria-label="Control presupuestario">
+        <div class="order-budget-overview-head"><div><div class="order-meta-label">Control presupuestario</div><div class="order-budget-overview-total">${eh(formatCurrency(metrics.totalAmount))}</div></div><span class="order-budget-overview-pill">Sin configurar</span></div>
+        <div class="order-budget-empty"><i class="bi bi-info-circle"></i><span>Este servicio no tiene facturación mensual configurada, por lo que no puede calcularse la barra de referencia.</span></div>
+      </section>`;
+    }
+    const progress = Math.max(0, Math.min(100, metrics.usagePercent));
+    const resultText = metrics.status === 'sobre_7'
+      ? `Exceso sobre el 7%: ${formatCurrency(Math.abs(metrics.differenceToSeven))}`
+      : (metrics.status === 'sobre_limite'
+        ? `Supera el límite operativo por ${formatCurrency(Math.abs(metrics.differenceToLimit))}`
+        : `Margen hasta el límite: ${formatCurrency(Math.max(0, metrics.differenceToLimit))}`);
+    return `<section class="order-budget-overview is-${visual}" aria-label="Control presupuestario">
+      <div class="order-budget-overview-head">
+        <div><div class="order-meta-label">Total actual del pedido</div><div class="order-budget-overview-total">${eh(formatCurrency(metrics.totalAmount))}</div></div>
+        <span class="order-budget-overview-pill">${eh(budgetStatusText(metrics.status))}</span>
+      </div>
+      <div class="order-budget-overview-grid">
+        <div><span>Límite operativo</span><strong>${eh(formatCurrency(metrics.limitAmount))} (${eh(formatPercent(metrics.limitPercent))})</strong></div>
+        <div><span>Referencia máxima</span><strong>${eh(formatCurrency(metrics.sevenAmount))} (7%)</strong></div>
+        <div><span>Uso del máximo</span><strong>${eh(formatPercent(metrics.usagePercent))}</strong></div>
+        <div><span>Resultado</span><strong>${eh(resultText)}</strong></div>
+      </div>
+      <div class="order-budget-overview-track" role="progressbar" aria-label="Uso de la referencia máxima del 7%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.max(0, Math.min(100, metrics.usagePercent)))}"><span style="width:${progress.toFixed(2)}%"></span>${budgetLimitMarker(order)}</div>
+      <div class="order-budget-overview-caption">La marca vertical indica el límite operativo configurado. La barra completa representa el 7% de la facturación mensual.</div>
+    </section>`;
+  }
+
   function budgetBadge(order) {
-    const status = order.budget_status || 'sin_configurar';
+    const status = orderBudgetMetrics(order).status;
     const klass = status === 'sobre_7' ? 'budget-badge-danger' : (status === 'sobre_limite' ? 'budget-badge-warning' : (status === 'dentro' ? 'budget-badge-ok' : 'budget-badge-muted'));
     return `<div class="budget-badge ${klass}">${eh(budgetStatusText(status))}</div>`;
   }
@@ -1889,6 +2364,13 @@
     E.loadingScreen.classList.remove('d-none');
   }
 
+  function toggleAccessPassword() {
+    const show = E.accessLoginPassword.type === 'password';
+    E.accessLoginPassword.type = show ? 'text' : 'password';
+    E.accessTogglePassword.innerHTML = `<i class="bi ${show ? 'bi-eye-slash' : 'bi-eye'}"></i>`;
+    E.accessTogglePassword.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
+  }
+
   function togglePassword() {
     const show = E.loginPassword.type === 'password';
     E.loginPassword.type = show ? 'text' : 'password';
@@ -1903,6 +2385,26 @@
   function hideEntryError() {
     E.publicEntryError.classList.add('d-none');
     E.publicEntryError.textContent = '';
+  }
+
+  function showAccessLoginError(message) {
+    E.accessLoginError.textContent = message;
+    E.accessLoginError.classList.remove('d-none');
+  }
+
+  function hideAccessLoginError() {
+    E.accessLoginError.classList.add('d-none');
+    E.accessLoginError.textContent = '';
+  }
+
+  function showAccessLoginSuccess(message) {
+    E.accessLoginSuccess.textContent = message;
+    E.accessLoginSuccess.classList.remove('d-none');
+  }
+
+  function hideAccessLoginSuccess() {
+    E.accessLoginSuccess.classList.add('d-none');
+    E.accessLoginSuccess.textContent = '';
   }
 
   function showLoginError(message) {
@@ -1956,13 +2458,13 @@
 
   function publicErrorMessage(error) {
     const message = String(error?.message || '');
-    if (message.includes('public_order_bootstrap') || message.includes('schema cache')) return 'La base de datos todavía no tiene instalada la última versión. Ejecutá actualizar-sku-precios-topes.sql.';
+    if (message.includes('supervisor_order_bootstrap') || message.includes('schema cache')) return 'La base de datos todavía no tiene instalada la última versión. Ejecutá actualizar-login-obligatorio.sql.';
     return message || 'No se pudieron cargar los servicios.';
   }
 
   function publicCreateErrorMessage(error) {
     const message = String(error?.message || '');
-    if (message.includes('public_create_order') || message.includes('schema cache')) return 'La función de pedidos no está actualizada. Ejecutá actualizar-sku-precios-topes.sql en Supabase.';
+    if (message.includes('supervisor_create_order') || message.includes('schema cache')) return 'La función de pedidos no está actualizada. Ejecutá actualizar-operario-y-buscador-servicios.sql en Supabase.';
     return message || 'No se pudo registrar el pedido.';
   }
 
@@ -1992,6 +2494,10 @@
   function formatInputQty(value) {
     const qty = number(value);
     return Number.isInteger(qty) ? String(qty) : String(Math.round(qty * 100) / 100);
+  }
+
+  function roundMoney(value) {
+    return Math.round((number(value) + Number.EPSILON) * 100) / 100;
   }
 
   function clampMoney(value) {

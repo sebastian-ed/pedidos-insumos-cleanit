@@ -270,8 +270,8 @@ begin
 end;
 $$;
 
-grant execute on function public.public_order_bootstrap() to anon,authenticated;
-grant execute on function public.public_create_order(uuid,text,text,text,jsonb) to anon,authenticated;
+revoke all on function public.public_order_bootstrap() from public,anon,authenticated;
+revoke all on function public.public_create_order(uuid,text,text,text,jsonb) from public,anon,authenticated;
 revoke all on function public.admin_set_service_hidden_materials(uuid,uuid[]) from public;
 grant execute on function public.admin_set_service_hidden_materials(uuid,uuid[]) to authenticated;
 
