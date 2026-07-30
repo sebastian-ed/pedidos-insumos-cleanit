@@ -8,7 +8,7 @@ Web app responsive para que los supervisores autorizados soliciten insumos de ma
 
 - Login obligatorio mediante Supabase Auth.
 - Acceso únicamente para perfiles con rol `operator`, mostrado como **Supervisor**.
-- Selección de servicio con el responsable tomado automáticamente del usuario autenticado.
+- Selección de servicio y carga manual del operario responsable; el supervisor autenticado queda registrado automáticamente como creador del pedido.
 - Catálogo visual con imágenes, buscador y filtro por categoría.
 - Selector de cantidades con botones `+` y `−`.
 - Prioridad normal o urgente.
@@ -79,7 +79,7 @@ Los visitantes anónimos no pueden consultar el catálogo ni crear pedidos. Los 
 
 - exponen únicamente servicios e insumos activos;
 - validan el rol Supervisor, el servicio, las cantidades y la cantidad máxima de ítems;
-- toman el nombre del responsable desde el perfil autenticado, sin confiar en un nombre enviado por el navegador;
+- validan el operario informado y registran por separado al supervisor autenticado que generó el pedido;
 - crean la cabecera y el detalle del pedido;
 - no permiten consultar otros pedidos, usuarios ni historial.
 
@@ -119,6 +119,7 @@ Esta versión incorpora un rol `Proveedor` para delegar la gestión operativa de
 | Copiar / compartir pedidos | Sí | Sí |
 | Cambiar estado de pedidos | Sí | Sí |
 | Ver historial | Sí | Sí |
+| Ver análisis de consumos | Sí | No |
 | Crear / editar / eliminar insumos | Sí | No |
 | Cargar imágenes de insumos | Sí | No |
 | Crear / editar / eliminar servicios | Sí | No |
@@ -209,3 +210,21 @@ El administrador puede definir desde la edición del pedido si el proveedor entr
 ## Actualización: barras presupuestarias visibles
 
 Se agregó un termómetro presupuestario por pedido en el listado administrativo y un panel completo en la vista de detalle. Ambos se recalculan después de guardar una edición. Ver `LEEME-BARRAS-PRESUPUESTARIAS.md`.
+
+## Actualización: consumos por servicio
+
+Se agregó la sección administrativa **Consumos**, que consolida únicamente pedidos `Entregado` y permite analizar:
+
+- consumo mensual de cada producto por servicio;
+- mes anterior y promedio de los tres meses previos;
+- variaciones y señales de consumo alto, bajo, habitual o nuevo;
+- histórico acumulado y detalle visual de los últimos 12 meses;
+- exportación del reporte filtrado a CSV.
+
+Para una instalación existente, ejecutar:
+
+```text
+actualizar-consumos-por-servicio.sql
+```
+
+Las definiciones, criterios e instrucciones están en `LEEME-CONSUMOS-POR-SERVICIO.md`.

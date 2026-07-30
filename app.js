@@ -55,7 +55,12 @@
     refreshTimer: null,
     lastBudgetStatus: null,
     initialized: false,
-    passwordRecovery: false
+    passwordRecovery: false,
+    consumptionRows: [],
+    consumptionServiceRows: [],
+    consumptionLoadedKey: '',
+    consumptionLoading: false,
+    consumptionHistoryContext: null
   };
 
   const E = {};
@@ -67,7 +72,7 @@
   function canOperateOrders() { return ['admin', 'supplier'].includes(S.profile?.role); }
   function canManageMasterData() { return isFullAdmin(); }
   function canManageUsers() { return isFullAdmin(); }
-  function allowedTabs() { return isFullAdmin() ? ['dashboard','orders','materials','services','users','history'] : ['dashboard','orders','history']; }
+  function allowedTabs() { return isFullAdmin() ? ['dashboard','orders','consumption','materials','services','users','history'] : ['dashboard','orders','history']; }
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -85,7 +90,9 @@
     M.serviceMaterials = new bootstrap.Modal(E.serviceMaterialsModal);
     M.material = new bootstrap.Modal(E.materialModal);
     M.user = new bootstrap.Modal(E.userModal);
+    M.consumptionHistory = new bootstrap.Modal(E.consumptionHistoryModal);
     M.toast = new bootstrap.Toast(E.appToast, { delay: 3200 });
+    if (E.consumptionMonth) E.consumptionMonth.value = monthInputValue(new Date());
 
     bindEvents();
 
@@ -176,6 +183,11 @@
     E.ordersServiceFilter.addEventListener('change', renderOrders);
     E.ordersStatusFilter.addEventListener('change', renderOrders);
     E.ordersPriorityFilter.addEventListener('change', renderOrders);
+    E.consumptionMonth.addEventListener('change', () => loadConsumptionReport(true));
+    E.consumptionServiceFilter.addEventListener('change', () => loadConsumptionReport(true));
+    E.consumptionSearch.addEventListener('input', renderConsumption);
+    E.refreshConsumptionButton.addEventListener('click', () => loadConsumptionReport(true));
+    E.exportConsumptionButton.addEventListener('click', exportConsumptionCsv);
     E.materialsSearch.addEventListener('input', renderMaterials);
     E.materialsStatusFilter.addEventListener('change', renderMaterials);
     E.adminServiceSearch.addEventListener('input', renderServices);
@@ -818,6 +830,12 @@
       return;
     }
 
+    const consumptionHistoryButton = event.target.closest('[data-consumption-history]');
+    if (consumptionHistoryButton) {
+      openConsumptionHistory(consumptionHistoryButton.dataset.consumptionService, consumptionHistoryButton.dataset.consumptionHistory);
+      return;
+    }
+
     const editUserButton = event.target.closest('[data-edit-user]');
     if (editUserButton) openUser(editUserButton.dataset.editUser);
   }
@@ -1092,6 +1110,11 @@
     S.services = [];
     S.materials = [];
     S.serviceMaterialExclusions = [];
+    S.consumptionRows = [];
+    S.consumptionServiceRows = [];
+    S.consumptionLoadedKey = '';
+    S.consumptionLoading = false;
+    S.consumptionHistoryContext = null;
     S.publicServiceId = null;
     S.orderReporterName = '';
     S.draft.clear();
@@ -1166,6 +1189,7 @@
       S.orderItems = itemsResult.data || [];
       S.profiles = profilesResult.data || [];
       S.history = historyResult.data || [];
+      S.consumptionLoadedKey = '';
 
       populateAdminFilters();
       renderAdmin();
@@ -1211,6 +1235,12 @@
     E.ordersServiceFilter.innerHTML = options;
     if (S.services.some((service) => service.id === activeValue)) E.ordersServiceFilter.value = activeValue;
 
+    const currentConsumptionService = E.consumptionServiceFilter?.value || '';
+    if (E.consumptionServiceFilter) {
+      E.consumptionServiceFilter.innerHTML = options;
+      if (S.services.some((service) => service.id === currentConsumptionService)) E.consumptionServiceFilter.value = currentConsumptionService;
+    }
+
     const currentUserService = E.userService.value || '';
     E.userService.innerHTML = '<option value="">Sin asignar</option>' + S.services
       .map((service) => `<option value="${ea(service.id)}">${eh(service.name)}</option>`)
@@ -1234,6 +1264,7 @@
     const panels = {
       dashboard: E.adminDashboard,
       orders: E.adminOrders,
+      consumption: E.adminConsumption,
       materials: E.adminMaterials,
       services: E.adminServices,
       users: E.adminUsers,
@@ -1243,6 +1274,7 @@
 
     if (S.tab === 'dashboard') renderDashboard();
     if (S.tab === 'orders') renderOrders();
+    if (S.tab === 'consumption') loadConsumptionReport(false);
     if (S.tab === 'materials') renderMaterials();
     if (S.tab === 'services') renderServices();
     if (S.tab === 'users') renderUsers();
@@ -2155,6 +2187,306 @@
     } catch (error) {
       toast(error.message || 'No se pudo actualizar el usuario.', 'error');
     }
+  }
+
+
+  async function loadConsumptionReport(force = false) {
+    if (!isFullAdmin() || S.mode !== 'admin') return;
+
+    const month = E.consumptionMonth.value || monthInputValue(new Date());
+    E.consumptionMonth.value = month;
+    const serviceId = E.consumptionServiceFilter.value || null;
+    const key = `${month}|${serviceId || 'all'}`;
+
+    if (!force && S.consumptionLoadedKey === key) {
+      renderConsumption();
+      return;
+    }
+    if (S.consumptionLoading) return;
+
+    S.consumptionLoading = true;
+    E.consumptionError.classList.add('d-none');
+    E.consumptionError.textContent = '';
+    buttonBusy(E.refreshConsumptionButton, true, 'Actualizando...');
+    renderConsumptionLoading();
+
+    try {
+      const parameters = { p_month: `${month}-01`, p_service_id: serviceId };
+      const [servicesResult, productsResult] = await Promise.all([
+        S.sb.rpc('admin_consumption_service_summary', parameters),
+        S.sb.rpc('admin_consumption_report', parameters)
+      ]);
+      if (servicesResult.error) throw servicesResult.error;
+      if (productsResult.error) throw productsResult.error;
+
+      S.consumptionServiceRows = servicesResult.data || [];
+      S.consumptionRows = productsResult.data || [];
+      S.consumptionLoadedKey = key;
+    } catch (error) {
+      console.error(error);
+      S.consumptionServiceRows = [];
+      S.consumptionRows = [];
+      S.consumptionLoadedKey = '';
+      E.consumptionError.textContent = consumptionErrorMessage(error);
+      E.consumptionError.classList.remove('d-none');
+    } finally {
+      S.consumptionLoading = false;
+      buttonBusy(E.refreshConsumptionButton, false);
+      renderConsumption();
+    }
+  }
+
+  function renderConsumptionLoading() {
+    E.consumptionServiceTableBody.innerHTML = '<tr class="consumption-loading-row"><td colspan="9"><span class="spinner-border spinner-border-sm me-2"></span>Calculando consumo por servicio...</td></tr>';
+    E.consumptionProductsTableBody.innerHTML = '<tr class="consumption-loading-row"><td colspan="9"><span class="spinner-border spinner-border-sm me-2"></span>Consolidando productos e histórico...</td></tr>';
+  }
+
+  function renderConsumption() {
+    if (!E.adminConsumption || S.tab !== 'consumption') return;
+    if (S.consumptionLoading) return;
+
+    const month = E.consumptionMonth.value || monthInputValue(new Date());
+    const selectedServiceId = E.consumptionServiceFilter.value || '';
+    const monthText = monthLabel(month);
+    const productRows = filteredConsumptionRows();
+    const visibleServiceRows = S.consumptionServiceRows.filter((row) => {
+      if (selectedServiceId) return row.service_id === selectedServiceId;
+      return number(row.historical_orders) > 0 || number(row.month_orders) > 0;
+    });
+
+    const activeServices = visibleServiceRows.filter((row) => number(row.month_orders) > 0);
+    const currentProducts = S.consumptionRows.filter((row) => number(row.month_quantity) > 0);
+    const deliveredOrders = activeServices.reduce((sum, row) => sum + number(row.month_orders), 0);
+    const monthAmount = activeServices.reduce((sum, row) => sum + number(row.month_amount), 0);
+
+    E.consumptionKpiServices.textContent = String(activeServices.length);
+    E.consumptionKpiProducts.textContent = String(currentProducts.length);
+    E.consumptionKpiOrders.textContent = formatQty(deliveredOrders);
+    E.consumptionKpiAmount.textContent = formatCurrency(monthAmount);
+    E.consumptionKpiServicesFoot.textContent = `Consumo confirmado en ${monthText}`;
+    E.consumptionServiceCount.textContent = `${visibleServiceRows.length} ${visibleServiceRows.length === 1 ? 'servicio' : 'servicios'}`;
+    E.consumptionProductCount.textContent = `${productRows.length} ${productRows.length === 1 ? 'registro' : 'registros'}`;
+    E.consumptionResultsCaption.textContent = `Cantidades de ${monthText}, promedio de los tres meses anteriores e histórico acumulado.`;
+
+    E.consumptionServiceTableBody.innerHTML = visibleServiceRows.map((row) => {
+      const signal = consumptionSignal(row.month_amount, row.avg_previous_3_amount, row.previous_3_months_with_activity);
+      const variation = consumptionVariation(row.month_amount, row.avg_previous_3_amount, row.previous_3_months_with_activity);
+      const meter = consumptionMeter(row.month_amount, row.avg_previous_3_amount, signal);
+      return `<tr>
+        <td><div class="consumption-service-name">${eh(row.service_name)}</div><span class="consumption-subvalue">${row.last_consumption_at ? `Último consumo: ${eh(dtf.format(new Date(row.last_consumption_at)))}` : 'Sin entregas registradas'}</span></td>
+        <td><span class="consumption-value">${formatQty(row.month_orders)}</span></td>
+        <td><span class="consumption-value">${formatQty(row.month_products)}</span></td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span>${meter}</td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.previous_month_amount))}</span></td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.avg_previous_3_amount))}</span><span class="consumption-subvalue">Incluye meses sin consumo</span></td>
+        <td>${consumptionVariationBadge(variation)}</td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.historical_amount))}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos entregados</span></td>
+        <td>${consumptionSignalBadge(signal)}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="9"><div class="consumption-empty">No hay pedidos entregados para construir un resumen de consumo.</div></td></tr>';
+
+    E.consumptionProductsTableBody.innerHTML = productRows.map((row) => {
+      const signal = consumptionSignal(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
+      const variation = consumptionVariation(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
+      const meter = consumptionMeter(row.month_quantity, row.avg_previous_3_quantity, signal);
+      const sku = row.item_sku ? `SKU ${row.item_sku} · ` : '';
+      return `<tr>
+        <td class="consumption-product-cell"><strong>${eh(row.item_name)}</strong><small>${eh(row.service_name)} · ${eh(sku)}${eh(row.unit || 'unidad')}</small></td>
+        <td><span class="consumption-value">${formatQty(row.month_quantity)} ${eh(row.unit || 'unidad')}</span><span class="consumption-subvalue">${formatQty(row.month_orders)} pedidos</span>${meter}</td>
+        <td><span class="consumption-value">${formatQty(row.previous_month_quantity)} ${eh(row.unit || 'unidad')}</span></td>
+        <td><span class="consumption-value">${formatQty(row.avg_previous_3_quantity)} ${eh(row.unit || 'unidad')}</span><span class="consumption-subvalue">Promedio calendario</span></td>
+        <td>${consumptionVariationBadge(variation)}</td>
+        <td><span class="consumption-value">${formatQty(row.historical_quantity)} ${eh(row.unit || 'unidad')}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos · ${eh(formatCurrency(row.historical_amount))}</span></td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span></td>
+        <td>${consumptionSignalBadge(signal)}</td>
+        <td><button class="btn btn-outline-primary btn-sm consumption-history-button" type="button" data-consumption-service="${ea(row.service_id)}" data-consumption-history="${ea(row.material_key)}"><i class="bi bi-bar-chart-line me-1"></i>Histórico</button></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="9"><div class="consumption-empty">No hay consumos que coincidan con los filtros. Los pedidos deben estar marcados como Entregados.</div></td></tr>';
+  }
+
+  function filteredConsumptionRows() {
+    const query = normalize(E.consumptionSearch?.value);
+    return S.consumptionRows.filter((row) => {
+      if (!query) return true;
+      return normalize(`${row.item_name} ${row.item_sku || ''} ${row.service_name} ${row.unit || ''}`).includes(query);
+    });
+  }
+
+  function consumptionSignal(currentValue, baselineValue, activeMonths) {
+    const current = number(currentValue);
+    const baseline = number(baselineValue);
+    const months = number(activeMonths);
+    if (months <= 0 || baseline <= 0) return current > 0 ? 'new' : 'none';
+    const ratio = current / baseline;
+    if (ratio > 1.2) return 'high';
+    if (ratio < 0.8) return 'low';
+    return 'normal';
+  }
+
+  function consumptionVariation(currentValue, baselineValue, activeMonths) {
+    const baseline = number(baselineValue);
+    if (number(activeMonths) <= 0 || baseline <= 0) return null;
+    return ((number(currentValue) - baseline) / baseline) * 100;
+  }
+
+  function consumptionVariationBadge(variation) {
+    if (variation == null || !Number.isFinite(variation)) return '<span class="consumption-variation is-stable">Sin referencia</span>';
+    const rounded = Math.round(variation * 10) / 10;
+    const cls = rounded > 5 ? 'is-up' : (rounded < -5 ? 'is-down' : 'is-stable');
+    const icon = rounded > 5 ? 'bi-arrow-up-right' : (rounded < -5 ? 'bi-arrow-down-right' : 'bi-dash');
+    const prefix = rounded > 0 ? '+' : '';
+    return `<span class="consumption-variation ${cls}"><i class="bi ${icon}"></i>${eh(`${prefix}${rounded.toLocaleString('es-AR', { maximumFractionDigits: 1 })}%`)}</span>`;
+  }
+
+  function consumptionSignalBadge(signal) {
+    const config = {
+      high: ['Alto', 'bi-exclamation-triangle-fill'],
+      low: ['Bajo', 'bi-arrow-down-circle-fill'],
+      normal: ['Habitual', 'bi-check-circle-fill'],
+      new: ['Nuevo', 'bi-stars'],
+      none: ['Sin datos', 'bi-dash-circle']
+    }[signal] || ['Sin datos', 'bi-dash-circle'];
+    return `<span class="consumption-signal ${ea(signal)}"><i class="bi ${config[1]}"></i>${eh(config[0])}</span>`;
+  }
+
+  function consumptionMeter(currentValue, baselineValue, signal) {
+    const current = number(currentValue);
+    const baseline = number(baselineValue);
+    const ratio = baseline > 0 ? current / baseline : (current > 0 ? 1 : 0);
+    const width = Math.max(0, Math.min(100, ratio * 62.5));
+    const cls = signal === 'high' ? 'is-high' : (signal === 'low' ? 'is-low' : '');
+    return `<div class="consumption-meter ${cls}" title="${ea(baseline > 0 ? `Consumo frente al promedio de tres meses: ${formatPercent(ratio * 100)}` : 'Sin promedio histórico suficiente')}"><span style="width:${width.toFixed(2)}%"></span></div>`;
+  }
+
+  async function openConsumptionHistory(serviceId, materialKey) {
+    if (!isFullAdmin()) return;
+    const row = S.consumptionRows.find((item) => item.service_id === serviceId && item.material_key === materialKey);
+    if (!row) return;
+
+    S.consumptionHistoryContext = row;
+    E.consumptionHistoryTitle.textContent = row.item_name;
+    E.consumptionHistorySubtitle.textContent = `${row.service_name} · ${row.item_sku ? `SKU ${row.item_sku} · ` : ''}${row.unit || 'unidad'} · 12 meses hasta ${monthLabel(E.consumptionMonth.value)}`;
+    E.consumptionHistoryLoading.classList.remove('d-none');
+    E.consumptionHistoryContent.classList.add('d-none');
+    E.consumptionHistoryError.classList.add('d-none');
+    E.consumptionHistoryError.textContent = '';
+    M.consumptionHistory.show();
+
+    try {
+      const { data, error } = await S.sb.rpc('admin_consumption_history', {
+        p_service_id: serviceId,
+        p_material_key: materialKey,
+        p_until_month: `${E.consumptionMonth.value || monthInputValue(new Date())}-01`,
+        p_months: 12
+      });
+      if (error) throw error;
+      renderConsumptionHistory(data || [], row);
+    } catch (error) {
+      console.error(error);
+      E.consumptionHistoryLoading.classList.add('d-none');
+      E.consumptionHistoryError.textContent = consumptionErrorMessage(error);
+      E.consumptionHistoryError.classList.remove('d-none');
+    }
+  }
+
+  function renderConsumptionHistory(rows, context) {
+    const totalQty = rows.reduce((sum, row) => sum + number(row.quantity), 0);
+    const totalAmount = rows.reduce((sum, row) => sum + number(row.amount), 0);
+    const maxQty = Math.max(0, ...rows.map((row) => number(row.quantity)));
+    const average = rows.length ? totalQty / rows.length : 0;
+
+    E.consumptionHistoryTotal.textContent = `${formatQty(totalQty)} ${context.unit || 'unidad'}`;
+    E.consumptionHistoryAverage.textContent = `${formatQty(average)} ${context.unit || 'unidad'}`;
+    E.consumptionHistoryMax.textContent = `${formatQty(maxQty)} ${context.unit || 'unidad'}`;
+    E.consumptionHistoryAmount.textContent = formatCurrency(totalAmount);
+    E.consumptionHistoryBars.innerHTML = rows.map((row) => {
+      const qty = number(row.quantity);
+      const width = maxQty > 0 ? Math.max(qty > 0 ? 3 : 0, qty / maxQty * 100) : 0;
+      return `<div class="consumption-history-row">
+        <div class="consumption-history-month">${eh(monthLabelFromDate(row.consumption_month))}</div>
+        <div class="consumption-history-track"><span style="width:${width.toFixed(2)}%"></span></div>
+        <div class="consumption-history-qty">${formatQty(qty)} ${eh(context.unit || 'unidad')}</div>
+        <div class="consumption-history-amount">${formatQty(row.orders)} pedidos · ${eh(formatCurrency(row.amount))}</div>
+      </div>`;
+    }).join('') || '<div class="consumption-empty">No hay información histórica.</div>';
+    E.consumptionHistoryLoading.classList.add('d-none');
+    E.consumptionHistoryContent.classList.remove('d-none');
+  }
+
+  function exportConsumptionCsv() {
+    const rows = filteredConsumptionRows();
+    if (!rows.length) {
+      toast('No hay datos de consumo para exportar.', 'error');
+      return;
+    }
+    const month = E.consumptionMonth.value || monthInputValue(new Date());
+    const headers = ['Mes','Servicio','Producto','SKU','Unidad','Cantidad mes','Valor mes','Pedidos mes','Cantidad mes anterior','Promedio 3 meses','Variación vs promedio','Cantidad histórica','Valor histórico','Pedidos históricos','Señal'];
+    const lines = [headers, ...rows.map((row) => {
+      const signal = consumptionSignal(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
+      const variation = consumptionVariation(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
+      return [
+        month,
+        row.service_name,
+        row.item_name,
+        row.item_sku || '',
+        row.unit || 'unidad',
+        csvNumber(row.month_quantity),
+        csvNumber(row.month_amount),
+        csvNumber(row.month_orders),
+        csvNumber(row.previous_month_quantity),
+        csvNumber(row.avg_previous_3_quantity),
+        variation == null ? '' : csvNumber(Math.round(variation * 100) / 100),
+        csvNumber(row.historical_quantity),
+        csvNumber(row.historical_amount),
+        csvNumber(row.historical_orders),
+        ({ high: 'Alto', low: 'Bajo', normal: 'Habitual', new: 'Nuevo', none: 'Sin datos' })[signal]
+      ];
+    })].map((row) => row.map(csvCell).join(';')).join('\r\n');
+
+    const blob = new Blob([`\ufeff${lines}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `consumo-clean-it-${month}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function csvNumber(value) {
+    return number(value).toLocaleString('es-AR', { useGrouping: false, maximumFractionDigits: 2 });
+  }
+
+  function csvCell(value) {
+    const text = String(value ?? '').replace(/"/g, '""');
+    return `"${text}"`;
+  }
+
+  function consumptionErrorMessage(error) {
+    const message = String(error?.message || '');
+    if (message.includes('admin_consumption_') || message.includes('schema cache') || String(error?.code || '').includes('PGRST202')) {
+      return 'El módulo de consumos todavía no está instalado en Supabase. Ejecutá actualizar-consumos-por-servicio.sql desde SQL Editor y volvé a actualizar.';
+    }
+    return message || 'No se pudo calcular el consumo por servicio.';
+  }
+
+  function monthInputValue(date) {
+    const value = new Date(date);
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function monthLabel(value) {
+    if (!/^\d{4}-\d{2}$/.test(String(value || ''))) return 'el mes seleccionado';
+    const [year, month] = value.split('-').map(Number);
+    return new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 15));
+  }
+
+  function monthLabelFromDate(value) {
+    const text = String(value || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(text)) return '—';
+    const [year, month] = text.split('-').map(Number);
+    return new Intl.DateTimeFormat('es-AR', { month: 'short', year: 'numeric' }).format(new Date(year, month - 1, 15));
   }
 
   function renderHistory() {
