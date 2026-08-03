@@ -37,6 +37,7 @@
     orderItems: [],
     profiles: [],
     history: [],
+    priceHistory: [],
     serviceMaterialExclusions: [],
     selectedServiceMaterialsId: null,
     serviceMaterialsDraftHidden: new Set(),
@@ -200,6 +201,8 @@
     E.materialsSearch.addEventListener('input', renderMaterials);
     E.materialsStatusFilter.addEventListener('change', renderMaterials);
     E.adminServiceSearch.addEventListener('input', renderServices);
+    E.historyTypeFilter.addEventListener('change', renderHistory);
+    E.historySearch.addEventListener('input', renderHistory);
 
     E.addMaterialButton.addEventListener('click', () => openMaterial());
     E.importPricesButton.addEventListener('click', openPriceImport);
@@ -1132,6 +1135,7 @@
     S.orderItems = [];
     S.profiles = [];
     S.history = [];
+    S.priceHistory = [];
     S.services = [];
     S.materials = [];
     S.serviceMaterialExclusions = [];
@@ -1181,6 +1185,12 @@
       else button.classList.toggle('active', tab === S.tab);
     });
 
+    if (E.historyTypeFilter) {
+      const priceOption = E.historyTypeFilter.querySelector('option[value="price"]');
+      if (priceOption) priceOption.disabled = !isFullAdmin();
+      if (!isFullAdmin() && E.historyTypeFilter.value === 'price') E.historyTypeFilter.value = 'all';
+    }
+
     const masterButtons = [
       E.addMaterialButton, E.importPricesButton, E.addServiceButton, E.saveMaterialButton, E.saveServiceButton,
       E.saveServiceMaterialsButton, E.showAllServiceMaterialsButton, E.hideAllServiceMaterialsButton
@@ -1195,17 +1205,22 @@
     if (feedback) buttonBusy(E.refreshAdminButton, true, 'Actualizando...');
 
     try {
-      const [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult] = await Promise.all([
+      const priceHistoryRequest = isFullAdmin()
+        ? S.sb.from('material_price_history').select('*').order('changed_at', { ascending: false }).limit(1000)
+        : Promise.resolve({ data: [], error: null });
+
+      const [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult, priceHistoryResult] = await Promise.all([
         S.sb.from('services').select('*').order('name'),
         S.sb.from('materials').select('*').order('category').order('sort_order').order('name'),
         S.sb.from('service_material_exclusions').select('service_id,material_id'),
         S.sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
         S.sb.from('order_items').select('*').order('sort_order').order('created_at'),
         S.sb.from('profiles').select('*').order('full_name'),
-        S.sb.from('order_status_history').select('*').order('changed_at', { ascending: false }).limit(500)
+        S.sb.from('order_status_history').select('*').order('changed_at', { ascending: false }).limit(500),
+        priceHistoryRequest
       ]);
 
-      [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult]
+      [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult, priceHistoryResult]
         .forEach((result) => { if (result.error) throw result.error; });
 
       S.services = servicesResult.data || [];
@@ -1215,6 +1230,7 @@
       S.orderItems = itemsResult.data || [];
       S.profiles = profilesResult.data || [];
       S.history = historyResult.data || [];
+      S.priceHistory = priceHistoryResult.data || [];
       S.consumptionLoadedKey = '';
 
       populateAdminFilters();
@@ -1238,8 +1254,11 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'materials' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'service_material_exclusions' }, scheduleAdminRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, scheduleAdminRefresh)
-      .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, scheduleAdminRefresh);
+    if (isFullAdmin()) {
+      S.channel.on('postgres_changes', { event: '*', schema: 'public', table: 'material_price_history' }, scheduleAdminRefresh);
+    }
+    S.channel.subscribe();
   }
 
   function teardownRealtime() {
@@ -3156,16 +3175,88 @@
   }
 
   function renderHistory() {
-    E.historyTableBody.innerHTML = S.history.map((entry) => {
+    const typeFilter = E.historyTypeFilter?.value || 'all';
+    const query = normalize(E.historySearch?.value || '');
+
+    const orderEvents = S.history.map((entry) => {
       const order = S.orders.find((item) => item.id === entry.order_id);
       const service = order ? serviceById(order.service_id) : null;
       const profile = S.profiles.find((item) => item.id === entry.changed_by);
       const isEdit = Boolean(entry.old_status && entry.old_status === entry.new_status);
-      const change = isEdit
+      const changeHtml = isEdit
         ? '<div class="history-change"><span class="badge text-bg-primary"><i class="bi bi-pencil-square me-1"></i>Pedido editado</span></div>'
         : `<div class="history-change"><span class="status-badge ${ea(entry.old_status || 'pendiente')}">${eh(entry.old_status ? STATUS_LABELS[entry.old_status] : 'Creado')}</span><i class="bi bi-arrow-right history-arrow"></i><span class="status-badge ${ea(entry.new_status)}">${eh(STATUS_LABELS[entry.new_status] || entry.new_status)}</span></div>`;
-      return `<tr><td>${dtf.format(new Date(entry.changed_at))}</td><td><button class="btn btn-link p-0 fw-bold text-decoration-none" type="button" data-order-open="${ea(entry.order_id)}">${eh(order?.order_code || 'Pedido eliminado')}</button></td><td>${eh(service?.name || '—')}</td><td>${change}</td><td>${eh(profile?.full_name || profile?.email || 'Sistema')}</td><td>${eh(entry.notes || '')}</td></tr>`;
-    }).join('') || '<tr><td colspan="6"><div class="empty-inline">Todavía no hay cambios registrados.</div></td></tr>';
+      const userName = profile?.full_name || profile?.email || 'Sistema';
+      const reference = order?.order_code || 'Pedido eliminado';
+      const context = service?.name || '—';
+      const detail = entry.notes || '';
+      return {
+        type: 'order',
+        timestamp: entry.changed_at,
+        searchText: normalize(`${reference} ${context} ${userName} ${detail} pedido ${entry.old_status || ''} ${entry.new_status || ''}`),
+        html: `<tr>
+          <td class="history-date">${dtf.format(new Date(entry.changed_at))}</td>
+          <td><span class="history-type is-order"><i class="bi bi-bag-check"></i>Pedido</span></td>
+          <td><button class="btn btn-link p-0 fw-bold text-decoration-none" type="button" data-order-open="${ea(entry.order_id)}">${eh(reference)}</button></td>
+          <td>${eh(context)}</td>
+          <td>${changeHtml}</td>
+          <td>${eh(userName)}</td>
+          <td>${eh(detail)}</td>
+        </tr>`
+      };
+    });
+
+    const priceEvents = (isFullAdmin() ? S.priceHistory : []).map((entry) => {
+      const material = S.materials.find((item) => item.id === entry.material_id);
+      const profile = S.profiles.find((item) => item.id === entry.changed_by);
+      const materialName = entry.material_name_snapshot || material?.name || 'Insumo eliminado';
+      const sku = entry.sku_snapshot || material?.sku || '';
+      const oldPrice = number(entry.old_price);
+      const newPrice = number(entry.new_price);
+      const difference = roundMoney(newPrice - oldPrice);
+      const percent = oldPrice > 0 ? (difference / oldPrice) * 100 : null;
+      const direction = difference > 0 ? 'increase' : (difference < 0 ? 'decrease' : 'same');
+      const directionLabel = difference > 0 ? 'Aumento' : (difference < 0 ? 'Disminución' : 'Sin variación');
+      const userName = profile?.full_name || profile?.email || 'Sistema';
+      const sourceParts = [];
+      if (entry.source_file) sourceParts.push(`Archivo: ${entry.source_file}`);
+      if (entry.source_sheet) sourceParts.push(`Hoja: ${entry.source_sheet}`);
+      const method = entry.change_method === 'excel' || entry.source_file ? 'Importación Excel' : 'Edición manual';
+      const detailParts = [method, ...sourceParts];
+      if (difference !== 0) {
+        detailParts.push(`${directionLabel}: ${difference > 0 ? '+' : ''}${formatCurrency(difference)}${percent == null ? '' : ` (${percent > 0 ? '+' : ''}${formatPercent(percent)})`}`);
+      }
+      const detail = detailParts.join(' · ');
+      const priceChange = `<div class="history-price-change is-${direction}">
+        <span>${eh(formatCurrency(oldPrice))}</span>
+        <i class="bi bi-arrow-right history-arrow"></i>
+        <strong>${eh(formatCurrency(newPrice))}</strong>
+        ${difference === 0 ? '' : `<small>${difference > 0 ? '+' : ''}${eh(formatCurrency(difference))}${percent == null ? '' : ` · ${percent > 0 ? '+' : ''}${eh(formatPercent(percent))}`}</small>`}
+      </div>`;
+      return {
+        type: 'price',
+        timestamp: entry.changed_at,
+        searchText: normalize(`${materialName} ${sku} ${userName} ${detail} precio`),
+        html: `<tr class="history-price-row">
+          <td class="history-date">${dtf.format(new Date(entry.changed_at))}</td>
+          <td><span class="history-type is-price"><i class="bi bi-currency-dollar"></i>Precio</span></td>
+          <td><div class="history-reference"><strong>${eh(materialName)}</strong>${sku ? `<small>SKU ${eh(sku)}</small>` : ''}</div></td>
+          <td>Catálogo de insumos</td>
+          <td>${priceChange}</td>
+          <td>${eh(userName)}</td>
+          <td>${eh(detail)}</td>
+        </tr>`
+      };
+    });
+
+    const visible = [...orderEvents, ...priceEvents]
+      .filter((event) => typeFilter === 'all' || event.type === typeFilter)
+      .filter((event) => !query || event.searchText.includes(query))
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    E.historyTableBody.innerHTML = visible.map((event) => event.html).join('')
+      || '<tr><td colspan="7"><div class="empty-inline">No hay movimientos que coincidan con los filtros.</div></td></tr>';
+    E.historyResultsCaption.textContent = `${visible.length} ${visible.length === 1 ? 'movimiento visible' : 'movimientos visibles'} · ${orderEvents.length} de pedidos${isFullAdmin() ? ` · ${priceEvents.length} de precios` : ''}`;
   }
 
   function renderServiceBudgetPreview() {

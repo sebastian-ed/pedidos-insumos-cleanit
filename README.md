@@ -26,7 +26,7 @@ Web app responsive para que los supervisores autorizados soliciten insumos de ma
 - Copia del pedido para WhatsApp o portapapeles.
 - Gestión de insumos, imágenes, servicios y usuarios.
 - Habilitación u ocultamiento de insumos por servicio, con catálogo completo por defecto.
-- Historial de cambios de estado.
+- Historial unificado de pedidos y cambios de precios.
 - Actualización en vivo mediante Supabase Realtime.
 
 ## Instalación en un proyecto nuevo de Supabase
@@ -240,3 +240,15 @@ actualizar-importacion-precios-excel.sql
 ```
 
 Las instrucciones completas están en `LEEME-IMPORTACION-PRECIOS-EXCEL.md`.
+
+## Actualización: historial de cambios de precios
+
+La sección **Historial** ahora muestra, además de los movimientos de pedidos, cada variación del catálogo de precios con producto, SKU, precio anterior, precio nuevo, diferencia, porcentaje, fecha, usuario y origen del cambio.
+
+La auditoría contempla tanto las actualizaciones masivas desde Excel como las ediciones manuales del precio de un insumo. Para una base existente, ejecutar:
+
+```text
+actualizar-historial-cambios-precios.sql
+```
+
+Las instrucciones completas están en `LEEME-HISTORIAL-CAMBIOS-PRECIOS.md`.

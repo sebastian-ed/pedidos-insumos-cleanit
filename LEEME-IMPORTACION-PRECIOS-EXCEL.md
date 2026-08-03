@@ -68,3 +68,13 @@ La actualización cambia el `unit_price` del catálogo maestro. Por lo tanto:
 - La comparación se realiza en el navegador.
 - La base valida nuevamente el SKU y el precio anterior antes de guardar.
 - Si otro usuario cambió un precio durante el análisis, la operación se cancela para evitar sobrescrituras silenciosas.
+
+## Visualización en el historial
+
+Para mostrar estos cambios dentro de **Administración → Historial** y registrar también modificaciones manuales, ejecutar además:
+
+```text
+actualizar-historial-cambios-precios.sql
+```
+
+Cada producto actualizado genera su propio movimiento con precio anterior, precio nuevo, diferencia, usuario, fecha, archivo y hoja de origen.

@@ -307,8 +307,27 @@
         </section>
 
         <section id="adminHistory" class="admin-panel d-none">
-          <div class="panel-heading"><div><span class="eyebrow">Trazabilidad</span><h1>Historial</h1><p>Cambios de estado con fecha, pedido y responsable.</p></div></div>
-          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Fecha</th><th>Pedido</th><th>Servicio</th><th>Cambio</th><th>Usuario</th><th>Detalle</th></tr></thead><tbody id="historyTableBody"></tbody></table></div></div>
+          <div class="panel-heading"><div><span class="eyebrow">Trazabilidad integral</span><h1>Historial</h1><p>Consultá cambios de pedidos y variaciones de precios, con fecha, responsable y valores anteriores y nuevos.</p></div></div>
+          <div class="filters-card mb-3">
+            <div class="row g-3 align-items-end">
+              <div class="col-12 col-md-4">
+                <label class="form-label fw-bold" for="historyTypeFilter">Tipo de movimiento</label>
+                <select id="historyTypeFilter" class="form-select">
+                  <option value="all">Todos los movimientos</option>
+                  <option value="order">Cambios de pedidos</option>
+                  <option value="price">Cambios de precios</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-8">
+                <label class="form-label fw-bold" for="historySearch">Buscar</label>
+                <div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="historySearch" class="form-control" type="search" placeholder="Pedido, servicio, producto, SKU, archivo o usuario"></div>
+              </div>
+            </div>
+          </div>
+          <div class="section-card p-0 overflow-hidden">
+            <div class="history-caption" id="historyResultsCaption">0 movimientos visibles</div>
+            <div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Fecha</th><th>Tipo</th><th>Referencia</th><th>Contexto</th><th>Cambio</th><th>Usuario</th><th>Detalle</th></tr></thead><tbody id="historyTableBody"></tbody></table></div>
+          </div>
         </section>
       </main>
     </section>
