@@ -8,7 +8,7 @@ Web app responsive para que los supervisores autorizados soliciten insumos de ma
 
 - Login obligatorio mediante Supabase Auth.
 - Acceso únicamente para perfiles con rol `operator`, mostrado como **Supervisor**.
-- Selección de servicio con el responsable tomado automáticamente del usuario autenticado.
+- Selección de servicio y carga manual del operario responsable; el supervisor autenticado queda registrado automáticamente como creador del pedido.
 - Catálogo visual con imágenes, buscador y filtro por categoría.
 - Selector de cantidades con botones `+` y `−`.
 - Prioridad normal o urgente.
@@ -79,7 +79,7 @@ Los visitantes anónimos no pueden consultar el catálogo ni crear pedidos. Los 
 
 - exponen únicamente servicios e insumos activos;
 - validan el rol Supervisor, el servicio, las cantidades y la cantidad máxima de ítems;
-- toman el nombre del responsable desde el perfil autenticado, sin confiar en un nombre enviado por el navegador;
+- validan el operario informado y registran por separado al supervisor autenticado que generó el pedido;
 - crean la cabecera y el detalle del pedido;
 - no permiten consultar otros pedidos, usuarios ni historial.
 
@@ -119,6 +119,7 @@ Esta versión incorpora un rol `Proveedor` para delegar la gestión operativa de
 | Copiar / compartir pedidos | Sí | Sí |
 | Cambiar estado de pedidos | Sí | Sí |
 | Ver historial | Sí | Sí |
+| Ver análisis de consumos | Sí | No |
 | Crear / editar / eliminar insumos | Sí | No |
 | Cargar imágenes de insumos | Sí | No |
 | Crear / editar / eliminar servicios | Sí | No |
@@ -190,7 +191,7 @@ Esta versión elimina la carga anónima de pedidos.
 - `operator` se muestra en la interfaz como **Supervisor**.
 - Los supervisores ingresan con correo y contraseña y acceden al formulario de pedidos.
 - Administradores y proveedores ingresan desde la misma pantalla y son dirigidos automáticamente a sus paneles.
-- El nombre del responsable queda asociado a su perfil y no puede editarse desde el formulario.
+- El supervisor escribe el operario responsable del servicio; la cuenta autenticada queda registrada por separado como creadora del pedido.
 - Las funciones antiguas de carga anónima quedan bloqueadas en Supabase.
 
 Para una instalación existente, ejecutar en último lugar:
@@ -205,3 +206,37 @@ Luego reemplazar `index.html`, `app.js` y `styles.css`. Las instrucciones están
 ## Actualización: descuento por retiro en Naón
 
 El administrador puede definir desde la edición del pedido si el proveedor entrega en Naón. La opción viene marcada por defecto y aplica un 7% de descuento por precio unitario, recalculando en tiempo real subtotales, total y control presupuestario. Para instalarla, ejecutar `actualizar-descuento-naon.sql`.
+
+## Actualización: barras presupuestarias visibles
+
+Se agregó un termómetro presupuestario por pedido en el listado administrativo y un panel completo en la vista de detalle. Ambos se recalculan después de guardar una edición. Ver `LEEME-BARRAS-PRESUPUESTARIAS.md`.
+
+## Actualización: consumos por servicio
+
+Se agregó la sección administrativa **Consumos**, que consolida únicamente pedidos `Entregado` y permite analizar:
+
+- consumo mensual de cada producto por servicio;
+- mes anterior y promedio de los tres meses previos;
+- variaciones y señales de consumo alto, bajo, habitual o nuevo;
+- histórico acumulado y detalle visual de los últimos 12 meses;
+- exportación del reporte filtrado a CSV.
+
+Para una instalación existente, ejecutar:
+
+```text
+actualizar-consumos-por-servicio.sql
+```
+
+Las definiciones, criterios e instrucciones están en `LEEME-CONSUMOS-POR-SERVICIO.md`.
+
+## Actualización: listas de precios desde Excel
+
+En **Administración → Insumos** se agregó la opción **Actualizar desde Excel**. Permite adjuntar XLSX, XLS, XLSB o CSV, detectar las columnas de SKU y precio, comparar con el catálogo y actualizar cambios de forma individual o masiva.
+
+La comparación identifica aumentos, disminuciones, precios sin cambios, SKU faltantes en cualquiera de los dos lados, insumos sin SKU, filas inválidas y duplicados. Para una base existente, ejecutar:
+
+```text
+actualizar-importacion-precios-excel.sql
+```
+
+Las instrucciones completas están en `LEEME-IMPORTACION-PRECIOS-EXCEL.md`.

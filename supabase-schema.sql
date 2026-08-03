@@ -1115,3 +1115,389 @@ insert into public.materials(slug,name,category,detail,unit,image_url,suggested_
   ('kit-vidrios','Corderito + Secador + Agarre secador','Vidrios y altura','Kit para limpieza de vidrios','kit','assets/materials/kit-vidrios.svg',1.0,340,true),
   ('globo-telaranas','Globo para telarañas + cabo telescópico','Vidrios y altura','Cabo telescópico 2 + 2 metros','unidad','assets/materials/globo-telaranas.svg',1.0,350,true)
 on conflict(slug) do update set name=excluded.name,category=excluded.category,detail=excluded.detail,unit=excluded.unit,image_url=excluded.image_url,suggested_quantity=excluded.suggested_quantity,sort_order=excluded.sort_order,active=excluded.active;
+
+
+
+-- Pedidos Clean It · módulo de consumos por servicio
+-- Ejecutar en Supabase > SQL Editor sobre el proyecto actual.
+-- No modifica pedidos existentes. Agrega índices y funciones de reporte exclusivas para administradores.
+
+create index if not exists idx_orders_consumption_delivered
+  on public.orders(service_id, closed_at, updated_at)
+  where status = 'entregado';
+
+create index if not exists idx_order_items_consumption_material
+  on public.order_items(order_id, material_id);
+
+create or replace function public.admin_consumption_service_summary(
+  p_month date default date_trunc('month', now())::date,
+  p_service_id uuid default null
+)
+returns table(
+  service_id uuid,
+  service_name text,
+  month_orders bigint,
+  month_products bigint,
+  month_amount numeric,
+  previous_month_amount numeric,
+  avg_previous_3_amount numeric,
+  previous_3_months_with_activity bigint,
+  historical_amount numeric,
+  historical_orders bigint,
+  last_consumption_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Acceso restringido a administradores.';
+  end if;
+
+  p_month := date_trunc('month', coalesce(p_month, current_date))::date;
+
+  return query
+  with delivered_orders as (
+    select
+      o.id as order_id,
+      o.service_id,
+      date_trunc('month', coalesce(o.closed_at, o.updated_at, o.created_at))::date as consumption_month,
+      coalesce(o.closed_at, o.updated_at, o.created_at) as consumed_at,
+      o.total_amount
+    from public.orders o
+    where o.status = 'entregado'
+      and (p_service_id is null or o.service_id = p_service_id)
+  ),
+  product_counts as (
+    select
+      d.service_id,
+      count(distinct case
+        when oi.material_id is not null then 'material:' || oi.material_id::text
+        when nullif(btrim(coalesce(oi.item_sku, '')), '') is not null then 'sku:' || lower(btrim(oi.item_sku))
+        else 'custom:' || md5(lower(btrim(oi.item_name)) || '|' || lower(btrim(coalesce(oi.unit, 'unidad'))))
+      end)::bigint as products
+    from delivered_orders d
+    join public.order_items oi on oi.order_id = d.order_id
+    where d.consumption_month = p_month
+    group by d.service_id
+  )
+  select
+    s.id,
+    s.name,
+    count(distinct d.order_id) filter (where d.consumption_month = p_month)::bigint as month_orders,
+    coalesce(pc.products, 0)::bigint as month_products,
+    coalesce(sum(d.total_amount) filter (where d.consumption_month = p_month), 0)::numeric as month_amount,
+    coalesce(sum(d.total_amount) filter (where d.consumption_month = (p_month - interval '1 month')::date), 0)::numeric as previous_month_amount,
+    (coalesce(sum(d.total_amount) filter (
+      where d.consumption_month >= (p_month - interval '3 months')::date
+        and d.consumption_month < p_month
+    ), 0) / 3.0)::numeric as avg_previous_3_amount,
+    count(distinct d.consumption_month) filter (
+      where d.consumption_month >= (p_month - interval '3 months')::date
+        and d.consumption_month < p_month
+    )::bigint as previous_3_months_with_activity,
+    coalesce(sum(d.total_amount), 0)::numeric as historical_amount,
+    count(distinct d.order_id)::bigint as historical_orders,
+    max(d.consumed_at) as last_consumption_at
+  from public.services s
+  left join delivered_orders d on d.service_id = s.id
+  left join product_counts pc on pc.service_id = s.id
+  where p_service_id is null or s.id = p_service_id
+  group by s.id, s.name, pc.products
+  order by s.name;
+end;
+$$;
+
+create or replace function public.admin_consumption_report(
+  p_month date default date_trunc('month', now())::date,
+  p_service_id uuid default null
+)
+returns table(
+  service_id uuid,
+  service_name text,
+  material_key text,
+  material_id uuid,
+  item_name text,
+  item_sku text,
+  unit text,
+  month_quantity numeric,
+  month_amount numeric,
+  month_orders bigint,
+  previous_month_quantity numeric,
+  previous_month_amount numeric,
+  avg_previous_3_quantity numeric,
+  avg_previous_3_amount numeric,
+  previous_3_months_with_activity bigint,
+  historical_quantity numeric,
+  historical_amount numeric,
+  historical_orders bigint,
+  last_consumption_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Acceso restringido a administradores.';
+  end if;
+
+  p_month := date_trunc('month', coalesce(p_month, current_date))::date;
+
+  return query
+  with delivered_items as (
+    select
+      o.service_id,
+      s.name as service_name,
+      o.id as order_id,
+      date_trunc('month', coalesce(o.closed_at, o.updated_at, o.created_at))::date as consumption_month,
+      coalesce(o.closed_at, o.updated_at, o.created_at) as consumed_at,
+      case
+        when oi.material_id is not null then 'material:' || oi.material_id::text
+        when nullif(btrim(coalesce(oi.item_sku, '')), '') is not null then 'sku:' || lower(btrim(oi.item_sku))
+        else 'custom:' || md5(lower(btrim(oi.item_name)) || '|' || lower(btrim(coalesce(oi.unit, 'unidad'))))
+      end as material_key,
+      oi.material_id,
+      oi.item_name,
+      oi.item_sku,
+      coalesce(nullif(btrim(oi.unit), ''), 'unidad') as unit,
+      oi.quantity,
+      oi.line_total
+    from public.orders o
+    join public.services s on s.id = o.service_id
+    join public.order_items oi on oi.order_id = o.id
+    where o.status = 'entregado'
+      and (p_service_id is null or o.service_id = p_service_id)
+  ),
+  dimensions as (
+    select distinct on (d.service_id, d.material_key)
+      d.service_id,
+      d.service_name,
+      d.material_key,
+      d.material_id,
+      d.item_name,
+      d.item_sku,
+      d.unit
+    from delivered_items d
+    order by d.service_id, d.material_key, d.consumed_at desc, d.order_id desc
+  ),
+  monthly as (
+    select
+      d.service_id,
+      d.material_key,
+      d.consumption_month,
+      sum(d.quantity)::numeric as quantity,
+      sum(d.line_total)::numeric as amount,
+      count(distinct d.order_id)::bigint as orders,
+      max(d.consumed_at) as last_consumption_at
+    from delivered_items d
+    group by d.service_id, d.material_key, d.consumption_month
+  )
+  select
+    dim.service_id,
+    dim.service_name,
+    dim.material_key,
+    dim.material_id,
+    dim.item_name,
+    dim.item_sku,
+    dim.unit,
+    coalesce(sum(m.quantity) filter (where m.consumption_month = p_month), 0)::numeric as month_quantity,
+    coalesce(sum(m.amount) filter (where m.consumption_month = p_month), 0)::numeric as month_amount,
+    coalesce(sum(m.orders) filter (where m.consumption_month = p_month), 0)::bigint as month_orders,
+    coalesce(sum(m.quantity) filter (where m.consumption_month = (p_month - interval '1 month')::date), 0)::numeric as previous_month_quantity,
+    coalesce(sum(m.amount) filter (where m.consumption_month = (p_month - interval '1 month')::date), 0)::numeric as previous_month_amount,
+    (coalesce(sum(m.quantity) filter (
+      where m.consumption_month >= (p_month - interval '3 months')::date
+        and m.consumption_month < p_month
+    ), 0) / 3.0)::numeric as avg_previous_3_quantity,
+    (coalesce(sum(m.amount) filter (
+      where m.consumption_month >= (p_month - interval '3 months')::date
+        and m.consumption_month < p_month
+    ), 0) / 3.0)::numeric as avg_previous_3_amount,
+    count(distinct m.consumption_month) filter (
+      where m.consumption_month >= (p_month - interval '3 months')::date
+        and m.consumption_month < p_month
+        and m.quantity > 0
+    )::bigint as previous_3_months_with_activity,
+    coalesce(sum(m.quantity), 0)::numeric as historical_quantity,
+    coalesce(sum(m.amount), 0)::numeric as historical_amount,
+    coalesce(sum(m.orders), 0)::bigint as historical_orders,
+    max(m.last_consumption_at) as last_consumption_at
+  from dimensions dim
+  left join monthly m
+    on m.service_id = dim.service_id
+   and m.material_key = dim.material_key
+  group by
+    dim.service_id,
+    dim.service_name,
+    dim.material_key,
+    dim.material_id,
+    dim.item_name,
+    dim.item_sku,
+    dim.unit
+  order by dim.service_name, dim.item_name;
+end;
+$$;
+
+create or replace function public.admin_consumption_history(
+  p_service_id uuid,
+  p_material_key text,
+  p_until_month date default date_trunc('month', now())::date,
+  p_months integer default 12
+)
+returns table(
+  consumption_month date,
+  quantity numeric,
+  amount numeric,
+  orders bigint
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Acceso restringido a administradores.';
+  end if;
+  if p_service_id is null or nullif(btrim(p_material_key), '') is null then
+    raise exception 'Servicio e insumo son obligatorios.';
+  end if;
+
+  p_until_month := date_trunc('month', coalesce(p_until_month, current_date))::date;
+  p_months := greatest(3, least(coalesce(p_months, 12), 36));
+
+  return query
+  with months as (
+    select generate_series(
+      p_until_month - make_interval(months => p_months - 1),
+      p_until_month,
+      interval '1 month'
+    )::date as consumption_month
+  ),
+  delivered_items as (
+    select
+      date_trunc('month', coalesce(o.closed_at, o.updated_at, o.created_at))::date as consumption_month,
+      o.id as order_id,
+      oi.quantity,
+      oi.line_total,
+      case
+        when oi.material_id is not null then 'material:' || oi.material_id::text
+        when nullif(btrim(coalesce(oi.item_sku, '')), '') is not null then 'sku:' || lower(btrim(oi.item_sku))
+        else 'custom:' || md5(lower(btrim(oi.item_name)) || '|' || lower(btrim(coalesce(oi.unit, 'unidad'))))
+      end as material_key
+    from public.orders o
+    join public.order_items oi on oi.order_id = o.id
+    where o.status = 'entregado'
+      and o.service_id = p_service_id
+  ),
+  monthly as (
+    select
+      d.consumption_month,
+      sum(d.quantity)::numeric as quantity,
+      sum(d.line_total)::numeric as amount,
+      count(distinct d.order_id)::bigint as orders
+    from delivered_items d
+    where d.material_key = p_material_key
+    group by d.consumption_month
+  )
+  select
+    m.consumption_month,
+    coalesce(a.quantity, 0)::numeric,
+    coalesce(a.amount, 0)::numeric,
+    coalesce(a.orders, 0)::bigint
+  from months m
+  left join monthly a on a.consumption_month = m.consumption_month
+  order by m.consumption_month;
+end;
+$$;
+
+revoke all on function public.admin_consumption_service_summary(date, uuid) from public;
+revoke all on function public.admin_consumption_report(date, uuid) from public;
+revoke all on function public.admin_consumption_history(uuid, text, date, integer) from public;
+
+grant execute on function public.admin_consumption_service_summary(date, uuid) to authenticated;
+grant execute on function public.admin_consumption_report(date, uuid) to authenticated;
+grant execute on function public.admin_consumption_history(uuid, text, date, integer) to authenticated;
+
+
+-- Importación masiva de precios desde Excel
+create table if not exists public.material_price_history(
+  id bigint generated by default as identity primary key,
+  material_id uuid not null references public.materials(id) on delete cascade,
+  sku_snapshot text,
+  old_price numeric(14,2) not null check(old_price >= 0),
+  new_price numeric(14,2) not null check(new_price >= 0),
+  source_file text,
+  source_sheet text,
+  changed_by uuid references public.profiles(id) on delete set null,
+  changed_at timestamptz not null default now()
+);
+create index if not exists idx_material_price_history_material on public.material_price_history(material_id, changed_at desc);
+create index if not exists idx_material_price_history_changed on public.material_price_history(changed_at desc);
+alter table public.material_price_history enable row level security;
+drop policy if exists material_price_history_admin_read on public.material_price_history;
+create policy material_price_history_admin_read on public.material_price_history for select to authenticated using(public.is_admin());
+revoke all on public.material_price_history from anon;
+grant select on public.material_price_history to authenticated;
+grant usage, select on sequence public.material_price_history_id_seq to authenticated;
+
+create or replace function public.admin_bulk_update_material_prices(
+  p_updates jsonb,
+  p_source_file text default null,
+  p_source_sheet text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_item jsonb;
+  v_material public.materials%rowtype;
+  v_material_id uuid;
+  v_expected_sku text;
+  v_expected_old_price numeric(14,2);
+  v_new_price numeric(14,2);
+  v_updated_count integer := 0;
+  v_unchanged_count integer := 0;
+  v_results jsonb := '[]'::jsonb;
+begin
+  if not public.is_admin() then raise exception 'Solo el administrador puede actualizar precios.'; end if;
+  if p_updates is null or jsonb_typeof(p_updates) <> 'array' then raise exception 'La lista de precios a actualizar no es válida.'; end if;
+  if jsonb_array_length(p_updates) < 1 then raise exception 'No se recibieron precios para actualizar.'; end if;
+  if jsonb_array_length(p_updates) > 1000 then raise exception 'La actualización supera el máximo de 1000 insumos por operación.'; end if;
+  if p_source_file is not null and char_length(p_source_file) > 250 then raise exception 'El nombre del archivo es demasiado extenso.'; end if;
+  if p_source_sheet is not null and char_length(p_source_sheet) > 150 then raise exception 'El nombre de la hoja es demasiado extenso.'; end if;
+
+  for v_item in select value from jsonb_array_elements(p_updates)
+  loop
+    begin v_material_id := nullif(v_item->>'material_id','')::uuid;
+    exception when invalid_text_representation then raise exception 'Uno de los identificadores de insumo no es válido.'; end;
+    begin v_new_price := round(nullif(v_item->>'new_price','')::numeric, 2);
+    exception when invalid_text_representation then raise exception 'Uno de los precios nuevos no es válido.'; end;
+    begin v_expected_old_price := round(nullif(v_item->>'expected_old_price','')::numeric, 2);
+    exception when invalid_text_representation then raise exception 'Uno de los precios anteriores no es válido.'; end;
+    v_expected_sku := nullif(btrim(coalesce(v_item->>'sku','')), '');
+    if v_material_id is null then raise exception 'Falta identificar uno de los insumos.'; end if;
+    if v_new_price is null or v_new_price < 0 or v_new_price > 999999999.99 then raise exception 'Uno de los precios nuevos está fuera del rango permitido.'; end if;
+    select * into v_material from public.materials where id=v_material_id for update;
+    if not found then raise exception 'Uno de los insumos ya no existe. Actualizá los datos y volvé a analizar el archivo.'; end if;
+    if v_expected_sku is not null and upper(btrim(coalesce(v_material.sku,''))) <> upper(v_expected_sku) then raise exception 'El SKU del insumo % cambió desde que se analizó el archivo. Volvé a analizar la lista.',v_material.name; end if;
+    if v_expected_old_price is not null and abs(round(v_material.unit_price,2)-v_expected_old_price) >= 0.01 then raise exception 'El precio de % cambió desde que se analizó el archivo. Volvé a analizar la lista.',v_material.name; end if;
+    if round(v_material.unit_price,2)=v_new_price then
+      v_unchanged_count:=v_unchanged_count+1;
+      v_results:=v_results||jsonb_build_array(jsonb_build_object('material_id',v_material.id,'sku',v_material.sku,'old_price',v_material.unit_price,'new_price',v_new_price,'status','sin_cambios'));
+      continue;
+    end if;
+    insert into public.material_price_history(material_id,sku_snapshot,old_price,new_price,source_file,source_sheet,changed_by)
+    values(v_material.id,v_material.sku,round(v_material.unit_price,2),v_new_price,nullif(btrim(coalesce(p_source_file,'')),''),nullif(btrim(coalesce(p_source_sheet,'')),''),auth.uid());
+    update public.materials set unit_price=v_new_price where id=v_material.id;
+    v_updated_count:=v_updated_count+1;
+    v_results:=v_results||jsonb_build_array(jsonb_build_object('material_id',v_material.id,'sku',v_material.sku,'old_price',round(v_material.unit_price,2),'new_price',v_new_price,'status','actualizado'));
+  end loop;
+  return jsonb_build_object('updated_count',v_updated_count,'unchanged_count',v_unchanged_count,'results',v_results);
+end;
+$$;
+revoke all on function public.admin_bulk_update_material_prices(jsonb,text,text) from public;
+grant execute on function public.admin_bulk_update_material_prices(jsonb,text,text) to authenticated;

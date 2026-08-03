@@ -55,7 +55,20 @@
     refreshTimer: null,
     lastBudgetStatus: null,
     initialized: false,
-    passwordRecovery: false
+    passwordRecovery: false,
+    consumptionRows: [],
+    consumptionServiceRows: [],
+    consumptionLoadedKey: '',
+    consumptionLoading: false,
+    consumptionHistoryContext: null,
+    priceImportWorkbook: null,
+    priceImportRows: [],
+    priceImportFileName: '',
+    priceImportSheetName: '',
+    priceImportComparison: null,
+    priceImportSelected: new Set(),
+    priceImportFilter: 'changes',
+    priceImportSearch: ''
   };
 
   const E = {};
@@ -67,7 +80,7 @@
   function canOperateOrders() { return ['admin', 'supplier'].includes(S.profile?.role); }
   function canManageMasterData() { return isFullAdmin(); }
   function canManageUsers() { return isFullAdmin(); }
-  function allowedTabs() { return isFullAdmin() ? ['dashboard','orders','materials','services','users','history'] : ['dashboard','orders','history']; }
+  function allowedTabs() { return isFullAdmin() ? ['dashboard','orders','consumption','materials','services','users','history'] : ['dashboard','orders','history']; }
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -84,8 +97,11 @@
     M.service = new bootstrap.Modal(E.serviceModal);
     M.serviceMaterials = new bootstrap.Modal(E.serviceMaterialsModal);
     M.material = new bootstrap.Modal(E.materialModal);
+    M.priceImport = new bootstrap.Modal(E.priceImportModal);
     M.user = new bootstrap.Modal(E.userModal);
+    M.consumptionHistory = new bootstrap.Modal(E.consumptionHistoryModal);
     M.toast = new bootstrap.Toast(E.appToast, { delay: 3200 });
+    if (E.consumptionMonth) E.consumptionMonth.value = monthInputValue(new Date());
 
     bindEvents();
 
@@ -176,11 +192,32 @@
     E.ordersServiceFilter.addEventListener('change', renderOrders);
     E.ordersStatusFilter.addEventListener('change', renderOrders);
     E.ordersPriorityFilter.addEventListener('change', renderOrders);
+    E.consumptionMonth.addEventListener('change', () => loadConsumptionReport(true));
+    E.consumptionServiceFilter.addEventListener('change', () => loadConsumptionReport(true));
+    E.consumptionSearch.addEventListener('input', renderConsumption);
+    E.refreshConsumptionButton.addEventListener('click', () => loadConsumptionReport(true));
+    E.exportConsumptionButton.addEventListener('click', exportConsumptionCsv);
     E.materialsSearch.addEventListener('input', renderMaterials);
     E.materialsStatusFilter.addEventListener('change', renderMaterials);
     E.adminServiceSearch.addEventListener('input', renderServices);
 
     E.addMaterialButton.addEventListener('click', () => openMaterial());
+    E.importPricesButton.addEventListener('click', openPriceImport);
+    E.priceImportFile.addEventListener('change', handlePriceImportFile);
+    E.priceImportSheet.addEventListener('change', handlePriceImportSheetChange);
+    E.priceImportHeaderRow.addEventListener('input', handlePriceImportHeaderChange);
+    E.priceImportSkuColumn.addEventListener('change', renderPriceImportPreview);
+    E.priceImportPriceColumn.addEventListener('change', renderPriceImportPreview);
+    E.priceImportDescriptionColumn.addEventListener('change', renderPriceImportPreview);
+    E.priceImportAnalyzeButton.addEventListener('click', analyzePriceImport);
+    E.priceImportResetButton.addEventListener('click', resetPriceImport);
+    E.priceImportResultFilter.addEventListener('change', handlePriceImportFilterChange);
+    E.priceImportSearch.addEventListener('input', handlePriceImportSearch);
+    E.priceImportSelectAll.addEventListener('change', toggleVisiblePriceImportSelections);
+    E.priceImportResultsBody.addEventListener('change', handlePriceImportResultChange);
+    E.priceImportResultsBody.addEventListener('click', handlePriceImportResultClick);
+    E.priceImportApplyButton.addEventListener('click', applySelectedPriceUpdates);
+    E.priceImportModal.addEventListener('hidden.bs.modal', () => hidePriceImportError());
     E.materialForm.addEventListener('submit', saveMaterial);
     E.materialImageFile.addEventListener('change', previewMaterialImage);
     E.addServiceButton.addEventListener('click', () => openService());
@@ -818,6 +855,12 @@
       return;
     }
 
+    const consumptionHistoryButton = event.target.closest('[data-consumption-history]');
+    if (consumptionHistoryButton) {
+      openConsumptionHistory(consumptionHistoryButton.dataset.consumptionService, consumptionHistoryButton.dataset.consumptionHistory);
+      return;
+    }
+
     const editUserButton = event.target.closest('[data-edit-user]');
     if (editUserButton) openUser(editUserButton.dataset.editUser);
   }
@@ -1092,6 +1135,12 @@
     S.services = [];
     S.materials = [];
     S.serviceMaterialExclusions = [];
+    S.consumptionRows = [];
+    S.consumptionServiceRows = [];
+    S.consumptionLoadedKey = '';
+    S.consumptionLoading = false;
+    S.consumptionHistoryContext = null;
+    clearPriceImportState();
     S.publicServiceId = null;
     S.orderReporterName = '';
     S.draft.clear();
@@ -1133,7 +1182,7 @@
     });
 
     const masterButtons = [
-      E.addMaterialButton, E.addServiceButton, E.saveMaterialButton, E.saveServiceButton,
+      E.addMaterialButton, E.importPricesButton, E.addServiceButton, E.saveMaterialButton, E.saveServiceButton,
       E.saveServiceMaterialsButton, E.showAllServiceMaterialsButton, E.hideAllServiceMaterialsButton
     ];
     masterButtons.forEach((button) => { if (button) button.disabled = !canManageMasterData(); });
@@ -1166,6 +1215,7 @@
       S.orderItems = itemsResult.data || [];
       S.profiles = profilesResult.data || [];
       S.history = historyResult.data || [];
+      S.consumptionLoadedKey = '';
 
       populateAdminFilters();
       renderAdmin();
@@ -1211,6 +1261,12 @@
     E.ordersServiceFilter.innerHTML = options;
     if (S.services.some((service) => service.id === activeValue)) E.ordersServiceFilter.value = activeValue;
 
+    const currentConsumptionService = E.consumptionServiceFilter?.value || '';
+    if (E.consumptionServiceFilter) {
+      E.consumptionServiceFilter.innerHTML = options;
+      if (S.services.some((service) => service.id === currentConsumptionService)) E.consumptionServiceFilter.value = currentConsumptionService;
+    }
+
     const currentUserService = E.userService.value || '';
     E.userService.innerHTML = '<option value="">Sin asignar</option>' + S.services
       .map((service) => `<option value="${ea(service.id)}">${eh(service.name)}</option>`)
@@ -1234,6 +1290,7 @@
     const panels = {
       dashboard: E.adminDashboard,
       orders: E.adminOrders,
+      consumption: E.adminConsumption,
       materials: E.adminMaterials,
       services: E.adminServices,
       users: E.adminUsers,
@@ -1243,6 +1300,7 @@
 
     if (S.tab === 'dashboard') renderDashboard();
     if (S.tab === 'orders') renderOrders();
+    if (S.tab === 'consumption') loadConsumptionReport(false);
     if (S.tab === 'materials') renderMaterials();
     if (S.tab === 'services') renderServices();
     if (S.tab === 'users') renderUsers();
@@ -1303,7 +1361,7 @@
         <td><div class="order-code">${eh(order.order_code)}</div><div class="order-date">${dtf.format(new Date(order.created_at))}</div></td>
         <td><div class="order-service">${eh(service?.name || 'Servicio eliminado')}</div><div class="table-subtitle">${eh(service?.address || '')}</div></td>
         <td>${eh(order.reporter_name)}</td>
-        <td><strong>${order.total_items}</strong> insumos<div class="order-content-summary">${formatQty(order.total_units)} unidades · ${formatCurrency(order.total_amount)}</div>${budgetBadge(order)}</td>
+        <td><strong>${order.total_items}</strong> insumos<div class="order-content-summary">${formatQty(order.total_units)} unidades · ${formatCurrency(order.total_amount)}</div>${budgetBadge(order)}${orderBudgetMiniProgress(order)}</td>
         <td><span class="priority-badge ${ea(order.priority)}">${eh(PRIORITY_LABELS[order.priority] || order.priority)}</span></td>
         <td><span class="status-badge ${ea(order.status)}">${eh(STATUS_LABELS[order.status] || order.status)}</span></td>
         <td><div class="action-group"><button class="btn btn-outline-primary" type="button" title="Ver pedido" data-order-open="${ea(order.id)}"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary" type="button" title="Copiar" data-order-copy="${ea(order.id)}"><i class="bi bi-copy"></i></button>${isFullAdmin() ? `<button class="btn btn-outline-danger" type="button" title="Eliminar" data-order-delete="${ea(order.id)}"><i class="bi bi-trash3"></i></button>` : ''}</div></td>
@@ -1325,9 +1383,6 @@
     const items = itemsForOrder(order.id);
 
     E.orderDetailTitle.textContent = order.order_code;
-    const budgetValue = order.budget_status === 'sin_configurar'
-      ? 'Sin tope configurado'
-      : `${formatCurrency(order.total_amount)} / ${formatCurrency(order.budget_limit_amount_snapshot)} (${formatPercent(order.budget_limit_percent_snapshot)})`;
     const creator = S.profiles.find((profile) => profile.id === order.created_by);
     const deliveryMode = order.pickup_at_naon === true
       ? `Retiro en Naón · ${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)} aplicado`
@@ -1347,7 +1402,7 @@
       detailMeta.push([`Descuento Naón (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)})`, `− ${formatCurrency(order.discount_amount)}`]);
     }
     detailMeta.push(['Total', formatCurrency(order.total_amount)]);
-    detailMeta.push(['Control presupuestario', `${budgetStatusText(order.budget_status)} · ${budgetValue}`]);
+    E.orderDetailBudgetOverview.innerHTML = orderBudgetOverview(order);
     E.orderDetailMeta.innerHTML = detailMeta.map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
 
     E.orderDetailItems.innerHTML = items.map((item) => {
@@ -1645,7 +1700,7 @@
         <div><span>Referencia máxima 7%</span><strong>${metrics.billing > 0 ? eh(formatCurrency(metrics.sevenAmount)) : 'Sin configurar'}</strong></div>
         <div class="order-edit-difference"><span>Resultado</span><strong>${eh(differenceText)}</strong></div>
       </div>
-      ${metrics.billing > 0 ? `<div class="order-edit-progress" aria-label="Uso del límite del 7%"><span style="width:${progress.toFixed(2)}%"></span></div><div class="order-detail-sub mt-1">El pedido utiliza ${eh(formatPercent(metrics.usagePercent))} de la referencia del 7%.</div>` : ''}`;
+      ${metrics.billing > 0 ? `<div class="order-edit-progress" role="progressbar" aria-label="Uso de la referencia máxima del 7%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.max(0, Math.min(100, metrics.usagePercent)))}"><span style="width:${progress.toFixed(2)}%"></span>${budgetLimitMarker(order)}</div><div class="order-detail-sub mt-1">El pedido utiliza ${eh(formatPercent(metrics.usagePercent))} de la referencia del 7%. La marca vertical indica el límite operativo de ${eh(formatPercent(order.budget_limit_percent_snapshot))}.</div>` : ''}`;
   }
 
   async function saveOrderChanges() {
@@ -1792,6 +1847,646 @@
     }
     if (order.notes) lines.push('', `Observación: ${order.notes}`);
     return lines.join('\n');
+  }
+
+
+  function openPriceImport() {
+    if (!canManageMasterData()) {
+      toast('Solo el administrador puede actualizar precios.', 'error');
+      return;
+    }
+    hidePriceImportError();
+    if (!window.XLSX) {
+      E.priceImportLibraryError.textContent = 'No se pudo cargar el lector de Excel. Revisá la conexión a internet y volvé a abrir la aplicación.';
+      E.priceImportLibraryError.classList.remove('d-none');
+    } else {
+      E.priceImportLibraryError.classList.add('d-none');
+    }
+    if (!S.priceImportWorkbook) resetPriceImport(false);
+    M.priceImport.show();
+  }
+
+  function clearPriceImportState() {
+    S.priceImportWorkbook = null;
+    S.priceImportRows = [];
+    S.priceImportFileName = '';
+    S.priceImportSheetName = '';
+    S.priceImportComparison = null;
+    S.priceImportSelected = new Set();
+    S.priceImportFilter = 'changes';
+    S.priceImportSearch = '';
+  }
+
+  function resetPriceImport(clearFile = true) {
+    clearPriceImportState();
+    if (clearFile && E.priceImportFile) E.priceImportFile.value = '';
+    E.priceImportMapping.classList.add('d-none');
+    E.priceImportResults.classList.add('d-none');
+    E.priceImportAnalyzeButton.classList.add('d-none');
+    E.priceImportApplyButton.classList.add('d-none');
+    E.priceImportResetButton.classList.add('d-none');
+    E.priceImportResultFilter.value = 'changes';
+    E.priceImportSearch.value = '';
+    E.priceImportResultsBody.innerHTML = '';
+    E.priceImportPreviewHead.innerHTML = '';
+    E.priceImportPreviewBody.innerHTML = '';
+    E.priceImportSelectAll.checked = false;
+    E.priceImportSelectAll.indeterminate = false;
+    hidePriceImportError();
+  }
+
+  async function handlePriceImportFile() {
+    hidePriceImportError();
+    const file = E.priceImportFile.files?.[0];
+    if (!file) {
+      resetPriceImport(false);
+      return;
+    }
+    if (!window.XLSX) {
+      showPriceImportError('No está disponible el lector de Excel. Revisá la conexión y recargá la aplicación.');
+      return;
+    }
+    const extension = String(file.name.split('.').pop() || '').toLowerCase();
+    if (!['xlsx', 'xls', 'xlsb', 'csv'].includes(extension)) {
+      showPriceImportError('El archivo debe ser XLSX, XLS, XLSB o CSV.');
+      E.priceImportFile.value = '';
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      showPriceImportError('El archivo supera los 20 MB. Reducilo antes de cargarlo.');
+      E.priceImportFile.value = '';
+      return;
+    }
+
+    buttonBusy(E.priceImportAnalyzeButton, true, 'Leyendo archivo...');
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { cellDates: false, cellNF: false, cellText: true });
+      if (!workbook?.SheetNames?.length) throw new Error('El archivo no contiene hojas legibles.');
+      S.priceImportWorkbook = workbook;
+      S.priceImportFileName = file.name;
+      S.priceImportComparison = null;
+      S.priceImportSelected = new Set();
+      E.priceImportSheet.innerHTML = workbook.SheetNames.map((name) => `<option value="${ea(name)}">${eh(name)}</option>`).join('');
+      E.priceImportSheet.value = workbook.SheetNames[0];
+      E.priceImportFileSummary.textContent = `${file.name} · ${formatFileSize(file.size)}`;
+      loadPriceImportSheet(workbook.SheetNames[0]);
+      E.priceImportMapping.classList.remove('d-none');
+      E.priceImportResults.classList.add('d-none');
+      E.priceImportAnalyzeButton.classList.remove('d-none');
+      E.priceImportApplyButton.classList.add('d-none');
+      E.priceImportResetButton.classList.remove('d-none');
+    } catch (error) {
+      console.error(error);
+      resetPriceImport(true);
+      showPriceImportError(error.message || 'No se pudo leer el archivo de precios.');
+    } finally {
+      buttonBusy(E.priceImportAnalyzeButton, false);
+    }
+  }
+
+  function handlePriceImportSheetChange() {
+    if (!S.priceImportWorkbook) return;
+    loadPriceImportSheet(E.priceImportSheet.value);
+  }
+
+  function loadPriceImportSheet(sheetName) {
+    const sheet = S.priceImportWorkbook?.Sheets?.[sheetName];
+    if (!sheet) {
+      showPriceImportError('No se pudo leer la hoja seleccionada.');
+      return;
+    }
+    S.priceImportSheetName = sheetName;
+    S.priceImportRows = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+      blankrows: false
+    });
+    const detection = detectPriceImportStructure(S.priceImportRows);
+    E.priceImportHeaderRow.max = Math.max(1, Math.min(500, S.priceImportRows.length || 1));
+    E.priceImportHeaderRow.value = detection.headerRow + 1;
+    populatePriceImportColumns(detection);
+    E.priceImportMappingWarning.classList.toggle('d-none', detection.confident);
+    E.priceImportMappingWarning.textContent = detection.confident
+      ? ''
+      : 'No se identificaron con suficiente seguridad las columnas. Revisá manualmente la fila de encabezados, SKU y precio antes de analizar.';
+    renderPriceImportPreview();
+    E.priceImportResults.classList.add('d-none');
+    E.priceImportApplyButton.classList.add('d-none');
+  }
+
+  function handlePriceImportHeaderChange() {
+    const headerIndex = Math.max(0, Math.min(S.priceImportRows.length - 1, Math.round(number(E.priceImportHeaderRow.value)) - 1));
+    const detection = detectColumnsInHeader(S.priceImportRows[headerIndex] || []);
+    populatePriceImportColumns({ headerRow: headerIndex, ...detection });
+    E.priceImportMappingWarning.classList.toggle('d-none', detection.confident);
+    E.priceImportMappingWarning.textContent = detection.confident
+      ? ''
+      : 'Seleccioná manualmente las columnas de SKU y precio.';
+    renderPriceImportPreview();
+  }
+
+  function detectPriceImportStructure(rows) {
+    let best = { headerRow: 0, skuColumn: -1, priceColumn: -1, descriptionColumn: -1, score: -1, confident: false };
+    const maxRows = Math.min(rows.length, 50);
+    for (let rowIndex = 0; rowIndex < maxRows; rowIndex += 1) {
+      const detected = detectColumnsInHeader(rows[rowIndex] || []);
+      const nonEmpty = (rows[rowIndex] || []).filter((value) => String(value || '').trim()).length;
+      const score = detected.score + Math.min(nonEmpty, 10);
+      if (score > best.score) best = { headerRow: rowIndex, ...detected, score };
+    }
+    if (best.score < 0) return { headerRow: 0, skuColumn: -1, priceColumn: -1, descriptionColumn: -1, score: 0, confident: false };
+    return best;
+  }
+
+  function detectColumnsInHeader(header) {
+    let skuColumn = -1;
+    let priceColumn = -1;
+    let descriptionColumn = -1;
+    let skuScore = 0;
+    let priceScore = 0;
+    let descriptionScore = 0;
+    header.forEach((value, index) => {
+      const skuCandidate = priceHeaderScore(value, 'sku');
+      const priceCandidate = priceHeaderScore(value, 'price');
+      const descriptionCandidate = priceHeaderScore(value, 'description');
+      if (skuCandidate > skuScore) { skuScore = skuCandidate; skuColumn = index; }
+      if (priceCandidate > priceScore) { priceScore = priceCandidate; priceColumn = index; }
+      if (descriptionCandidate > descriptionScore) { descriptionScore = descriptionCandidate; descriptionColumn = index; }
+    });
+    if (descriptionColumn === skuColumn || descriptionColumn === priceColumn) descriptionColumn = -1;
+    const confident = skuColumn >= 0 && priceColumn >= 0 && skuColumn !== priceColumn && skuScore >= 55 && priceScore >= 55;
+    return { skuColumn, priceColumn, descriptionColumn, score: skuScore + priceScore + Math.min(descriptionScore, 40), confident };
+  }
+
+  function priceHeaderScore(value, kind) {
+    const text = normalize(value).replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!text) return 0;
+    const aliases = {
+      sku: ['sku', 'codigo sku', 'cod sku', 'codigo articulo', 'cod articulo', 'codigo de articulo', 'cod de articulo', 'codigo producto', 'cod producto', 'codigo proveedor', 'codigo interno', 'referencia', 'codigo', 'cod'],
+      price: ['precio unitario', 'precio lista', 'precio de lista', 'precio venta', 'precio de venta', 'precio neto', 'precio final', 'p unitario', 'p unit', 'precio', 'valor unitario', 'importe unitario', 'costo unitario', 'valor', 'importe', 'costo', 'price'],
+      description: ['descripcion', 'producto', 'articulo', 'insumo', 'detalle', 'nombre', 'denominacion']
+    }[kind] || [];
+    let best = 0;
+    aliases.forEach((alias, index) => {
+      if (text === alias) best = Math.max(best, 100 - index);
+      else if (text.startsWith(`${alias} `) || text.endsWith(` ${alias}`)) best = Math.max(best, 75 - Math.min(index, 20));
+      else if (text.includes(alias)) best = Math.max(best, 55 - Math.min(index, 20));
+    });
+    if (kind === 'price' && /iva|lista|neto|unitario/.test(text) && /precio|valor|importe|costo/.test(text)) best += 12;
+    if (kind === 'sku' && /barra|ean|upc/.test(text) && !text.includes('sku')) best = Math.min(best, 35);
+    return best;
+  }
+
+  function populatePriceImportColumns(detection) {
+    const headerIndex = Math.max(0, Math.min(S.priceImportRows.length - 1, number(E.priceImportHeaderRow.value) - 1));
+    const header = S.priceImportRows[headerIndex] || [];
+    const maxColumns = Math.max(header.length, ...S.priceImportRows.slice(headerIndex, headerIndex + 10).map((row) => row.length), 0);
+    const options = Array.from({ length: maxColumns }, (_, index) => {
+      const label = String(header[index] || '').trim() || 'Sin encabezado';
+      return `<option value="${index}">${columnLetter(index)} · ${eh(label)}</option>`;
+    }).join('');
+    E.priceImportSkuColumn.innerHTML = '<option value="">Seleccionar...</option>' + options;
+    E.priceImportPriceColumn.innerHTML = '<option value="">Seleccionar...</option>' + options;
+    E.priceImportDescriptionColumn.innerHTML = '<option value="">No usar</option>' + options;
+    if (detection.skuColumn >= 0) E.priceImportSkuColumn.value = String(detection.skuColumn);
+    if (detection.priceColumn >= 0) E.priceImportPriceColumn.value = String(detection.priceColumn);
+    if (detection.descriptionColumn >= 0) E.priceImportDescriptionColumn.value = String(detection.descriptionColumn);
+  }
+
+  function renderPriceImportPreview() {
+    if (!S.priceImportRows.length) return;
+    const headerIndex = Math.max(0, Math.min(S.priceImportRows.length - 1, Math.round(number(E.priceImportHeaderRow.value)) - 1));
+    const skuColumn = optionalColumnIndex(E.priceImportSkuColumn.value);
+    const priceColumn = optionalColumnIndex(E.priceImportPriceColumn.value);
+    const descriptionColumn = optionalColumnIndex(E.priceImportDescriptionColumn.value);
+    const selectedColumns = [...new Set([skuColumn, descriptionColumn, priceColumn].filter((index) => index >= 0))];
+    const header = S.priceImportRows[headerIndex] || [];
+    if (!selectedColumns.length) {
+      E.priceImportPreviewHead.innerHTML = '';
+      E.priceImportPreviewBody.innerHTML = '<tr><td class="text-secondary">Seleccioná las columnas para ver la vista previa.</td></tr>';
+      E.priceImportPreviewCaption.textContent = '';
+      return;
+    }
+    E.priceImportPreviewHead.innerHTML = `<tr>${selectedColumns.map((index) => `<th>${columnLetter(index)} · ${eh(header[index] || 'Sin encabezado')}</th>`).join('')}</tr>`;
+    const previewRows = S.priceImportRows.slice(headerIndex + 1).filter((row) => row.some((value) => String(value || '').trim())).slice(0, 6);
+    E.priceImportPreviewBody.innerHTML = previewRows.map((row) => `<tr>${selectedColumns.map((index) => `<td>${eh(row[index] ?? '')}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${selectedColumns.length}" class="text-secondary">No hay filas debajo del encabezado seleccionado.</td></tr>`;
+    E.priceImportPreviewCaption.textContent = `${Math.max(0, S.priceImportRows.length - headerIndex - 1)} filas potenciales`;
+  }
+
+  function analyzePriceImport() {
+    hidePriceImportError();
+    if (!S.priceImportRows.length) {
+      showPriceImportError('Primero cargá una lista de precios.');
+      return;
+    }
+    const headerRow = Math.round(number(E.priceImportHeaderRow.value)) - 1;
+    const skuColumn = optionalColumnIndex(E.priceImportSkuColumn.value);
+    const priceColumn = optionalColumnIndex(E.priceImportPriceColumn.value);
+    const descriptionColumn = optionalColumnIndex(E.priceImportDescriptionColumn.value);
+    if (headerRow < 0 || headerRow >= S.priceImportRows.length) {
+      showPriceImportError('La fila de encabezados no es válida.');
+      return;
+    }
+    if (skuColumn < 0 || priceColumn < 0 || skuColumn === priceColumn) {
+      showPriceImportError('Seleccioná columnas diferentes para SKU y precio.');
+      return;
+    }
+
+    const comparison = buildPriceImportComparison({ headerRow, skuColumn, priceColumn, descriptionColumn });
+    S.priceImportComparison = comparison;
+    S.priceImportSelected = new Set(comparison.changes.map((row) => row.materialId));
+    S.priceImportFilter = 'changes';
+    S.priceImportSearch = '';
+    E.priceImportResultFilter.value = 'changes';
+    E.priceImportSearch.value = '';
+    E.priceImportResults.classList.remove('d-none');
+    E.priceImportApplyButton.classList.remove('d-none');
+    renderPriceImportResults();
+    E.priceImportResults.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function buildPriceImportComparison(mapping) {
+    const { headerRow, skuColumn, priceColumn, descriptionColumn } = mapping;
+    const fileGroups = new Map();
+    const issues = [];
+    const rows = S.priceImportRows.slice(headerRow + 1);
+    rows.forEach((row, offset) => {
+      const excelRow = headerRow + offset + 2;
+      const rawSku = row[skuColumn];
+      const sku = spreadsheetSku(rawSku);
+      const description = descriptionColumn >= 0 ? String(row[descriptionColumn] || '').trim() : '';
+      const parsedPrice = parseSpreadsheetPrice(row[priceColumn]);
+      if (!sku && !String(row[priceColumn] || '').trim() && !description) return;
+      if (!sku) {
+        issues.push({ kind: 'issue', issueType: 'missing-sku', sku: '', name: description || 'Fila sin SKU', fileDescription: description, filePrice: parsedPrice.valid ? parsedPrice.value : null, rowNumber: excelRow, statusLabel: 'Fila sin SKU', detail: `Fila ${excelRow}: no tiene un SKU utilizable.` });
+        return;
+      }
+      const key = skuKey(sku);
+      const zeroPrice = parsedPrice.valid && roundMoney(parsedPrice.value) === 0;
+      const entry = { sku, key, fileDescription: description, filePrice: parsedPrice.value, validPrice: parsedPrice.valid && !zeroPrice, rawPrice: row[priceColumn], rowNumber: excelRow };
+      if (zeroPrice) {
+        issues.push({ ...entry, kind: 'issue', issueType: 'zero-price', name: description || sku, statusLabel: 'Precio en cero', detail: `Fila ${excelRow}: el precio es $ 0 y se excluyó de la actualización para evitar un cambio accidental.` });
+      }
+      if (!fileGroups.has(key)) fileGroups.set(key, []);
+      fileGroups.get(key).push(entry);
+    });
+
+    const canonicalFile = new Map();
+    const fileKeysSeen = new Set(fileGroups.keys());
+    fileGroups.forEach((entries, key) => {
+      const valid = entries.filter((entry) => entry.validPrice);
+      const invalid = entries.filter((entry) => !entry.validPrice);
+      invalid.forEach((entry) => issues.push({ ...entry, kind: 'issue', issueType: 'invalid-price', name: entry.fileDescription || 'Precio inválido', statusLabel: 'Precio inválido', detail: `Fila ${entry.rowNumber}: el precio “${String(entry.rawPrice || '')}” no se pudo interpretar.` }));
+      const distinctPrices = [...new Set(valid.map((entry) => roundMoney(entry.filePrice).toFixed(2)))];
+      if (distinctPrices.length > 1) {
+        const first = entries[0];
+        issues.push({ ...first, kind: 'issue', issueType: 'conflicting-duplicate', name: first.fileDescription || first.sku, statusLabel: 'SKU duplicado con precios distintos', detail: `El SKU aparece ${entries.length} veces con precios diferentes: ${distinctPrices.map((price) => formatCurrency(price)).join(', ')}.` });
+        return;
+      }
+      if (!valid.length) return;
+      const canonical = valid[0];
+      canonical.duplicateCount = entries.length;
+      canonicalFile.set(key, canonical);
+      if (entries.length > 1) {
+        issues.push({ ...canonical, kind: 'issue', issueType: 'duplicate', name: canonical.fileDescription || canonical.sku, statusLabel: 'SKU repetido', detail: `El SKU aparece ${entries.length} veces con el mismo precio. Se usó la primera coincidencia válida.` });
+      }
+    });
+
+    const appMap = new Map();
+    const noSkuInApp = [];
+    S.materials.forEach((material) => {
+      const sku = spreadsheetSku(material.sku);
+      if (!sku) {
+        noSkuInApp.push({ kind: 'issue', issueType: 'app-without-sku', materialId: material.id, sku: '', name: material.name, currentPrice: roundMoney(material.unit_price), statusLabel: 'Insumo sin SKU', detail: 'No puede compararse hasta que se cargue un SKU en la app.', active: material.active !== false });
+        return;
+      }
+      appMap.set(skuKey(sku), { ...material, comparableSku: sku });
+    });
+
+    const changes = [];
+    const unchanged = [];
+    const missingInFile = [];
+    const matched = [];
+
+    appMap.forEach((material, key) => {
+      const fileEntry = canonicalFile.get(key);
+      if (!fileEntry) {
+        if (!fileKeysSeen.has(key)) {
+          missingInFile.push({ kind: 'missing-file', materialId: material.id, sku: material.comparableSku, name: material.name, currentPrice: roundMoney(material.unit_price), active: material.active !== false, statusLabel: 'No aparece en el Excel', detail: 'Puede haber sido eliminado o haber cambiado de SKU en la lista nueva.' });
+        }
+        return;
+      }
+      const currentPrice = roundMoney(material.unit_price);
+      const filePrice = roundMoney(fileEntry.filePrice);
+      const difference = roundMoney(filePrice - currentPrice);
+      const percent = currentPrice > 0 ? difference / currentPrice * 100 : null;
+      const common = {
+        materialId: material.id,
+        kind: Math.abs(difference) >= 0.01 ? (difference > 0 ? 'increase' : 'decrease') : 'unchanged',
+        sku: material.comparableSku,
+        name: material.name,
+        currentPrice,
+        filePrice,
+        difference,
+        percent,
+        fileDescription: fileEntry.fileDescription,
+        rowNumber: fileEntry.rowNumber,
+        active: material.active !== false,
+        duplicateCount: fileEntry.duplicateCount || 1
+      };
+      matched.push(common);
+      if (common.kind === 'unchanged') unchanged.push({ ...common, statusLabel: 'Sin cambios' });
+      else changes.push({ ...common, statusLabel: difference > 0 ? 'Aumento' : 'Disminución' });
+    });
+
+    const missingInApp = [];
+    canonicalFile.forEach((entry, key) => {
+      if (appMap.has(key)) return;
+      missingInApp.push({ kind: 'missing-app', sku: entry.sku, name: entry.fileDescription || 'Artículo del archivo', fileDescription: entry.fileDescription, filePrice: roundMoney(entry.filePrice), rowNumber: entry.rowNumber, statusLabel: 'No existe en la app', detail: 'Puede ser un artículo nuevo o un SKU renombrado.' });
+    });
+
+    addPossibleSkuChangeSuggestions(missingInFile, missingInApp);
+    const allIssues = [...issues, ...noSkuInApp];
+    const increases = changes.filter((row) => row.kind === 'increase');
+    const decreases = changes.filter((row) => row.kind === 'decrease');
+    const allRows = [...changes, ...unchanged, ...missingInFile, ...missingInApp, ...allIssues];
+    return { mapping, matched, changes, increases, decreases, unchanged, missingInFile, missingInApp, issues: allIssues, allRows, sourceRows: rows.length };
+  }
+
+
+  function addPossibleSkuChangeSuggestions(missingInFile, missingInApp) {
+    const claimed = new Set();
+    missingInApp.forEach((fileRow) => {
+      let best = null;
+      let bestScore = 0;
+      missingInFile.forEach((appRow) => {
+        if (claimed.has(appRow.materialId)) return;
+        const score = priceImportNameSimilarity(fileRow.fileDescription || fileRow.name, appRow.name);
+        if (score > bestScore) { bestScore = score; best = appRow; }
+      });
+      if (!best || bestScore < 0.72) return;
+      claimed.add(best.materialId);
+      fileRow.detail = `Posible cambio de SKU: el nombre se parece a “${best.name}” (SKU actual ${best.sku}). Revisalo antes de crear o editar el artículo.`;
+      best.detail = `Posible cambio de SKU: en el archivo aparece “${fileRow.fileDescription || fileRow.name}” con SKU ${fileRow.sku}. Revisá si corresponde al mismo artículo.`;
+      fileRow.possibleMatchSku = best.sku;
+      best.possibleMatchSku = fileRow.sku;
+    });
+  }
+
+  function priceImportNameSimilarity(left, right) {
+    const a = normalize(left).replace(/[^a-z0-9]+/g, ' ').trim();
+    const b = normalize(right).replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    if (Math.min(a.length, b.length) >= 7 && (a.includes(b) || b.includes(a))) return 0.88;
+    const stop = new Set(['de','del','la','las','el','los','x','por','con','sin','unidad','unidades','paquete','pack']);
+    const ta = new Set(a.split(/\s+/).filter((token) => token.length > 1 && !stop.has(token)));
+    const tb = new Set(b.split(/\s+/).filter((token) => token.length > 1 && !stop.has(token)));
+    if (!ta.size || !tb.size) return 0;
+    const intersection = [...ta].filter((token) => tb.has(token)).length;
+    const union = new Set([...ta, ...tb]).size;
+    return union ? intersection / union : 0;
+  }
+
+  function renderPriceImportResults() {
+    const comparison = S.priceImportComparison;
+    if (!comparison) return;
+    E.priceImportKpiMatched.textContent = comparison.matched.length;
+    E.priceImportKpiIncreases.textContent = comparison.increases.length;
+    E.priceImportKpiDecreases.textContent = comparison.decreases.length;
+    E.priceImportKpiUnchanged.textContent = comparison.unchanged.length;
+    E.priceImportKpiMissingFile.textContent = comparison.missingInFile.length;
+    E.priceImportKpiMissingApp.textContent = comparison.missingInApp.length;
+    E.priceImportKpiIssues.textContent = comparison.issues.length;
+
+    const selectedChanges = comparison.changes.filter((row) => S.priceImportSelected.has(row.materialId));
+    E.priceImportSummaryAlert.className = `alert ${comparison.changes.length ? 'alert-warning' : 'alert-success'}`;
+    E.priceImportSummaryAlert.innerHTML = comparison.changes.length
+      ? `<i class="bi bi-exclamation-triangle-fill me-2"></i>Se detectaron <strong>${comparison.changes.length}</strong> cambios de precio: ${comparison.increases.length} aumentos y ${comparison.decreases.length} disminuciones. Hay <strong>${selectedChanges.length}</strong> seleccionados para actualizar.`
+      : '<i class="bi bi-check-circle-fill me-2"></i>No se detectaron diferencias de precio entre el archivo y el catálogo.';
+
+    const visible = filteredPriceImportRows();
+    E.priceImportResultsBody.innerHTML = visible.map(priceImportRowHtml).join('') || '<tr><td colspan="8"><div class="empty-inline">No hay resultados para el filtro seleccionado.</div></td></tr>';
+    E.priceImportResultsCaption.textContent = `${visible.length} resultados visibles · ${comparison.sourceRows} filas analizadas en “${S.priceImportSheetName}”`;
+    updatePriceImportSelectionControls(visible);
+  }
+
+  function filteredPriceImportRows() {
+    const comparison = S.priceImportComparison;
+    if (!comparison) return [];
+    const filter = S.priceImportFilter;
+    let rows;
+    if (filter === 'changes') rows = comparison.changes;
+    else if (filter === 'increase') rows = comparison.increases;
+    else if (filter === 'decrease') rows = comparison.decreases;
+    else if (filter === 'unchanged') rows = comparison.unchanged;
+    else if (filter === 'missing-file') rows = comparison.missingInFile;
+    else if (filter === 'missing-app') rows = comparison.missingInApp;
+    else if (filter === 'issues') rows = comparison.issues;
+    else rows = comparison.allRows;
+    const query = normalize(S.priceImportSearch);
+    return rows.filter((row) => !query || normalize(`${row.sku || ''} ${row.name || ''} ${row.fileDescription || ''} ${row.detail || ''}`).includes(query));
+  }
+
+  function priceImportRowHtml(row) {
+    const canUpdate = row.kind === 'increase' || row.kind === 'decrease';
+    const checked = canUpdate && S.priceImportSelected.has(row.materialId);
+    const currentPrice = row.currentPrice == null ? '—' : formatCurrency(row.currentPrice);
+    const filePrice = row.filePrice == null ? '—' : formatCurrency(row.filePrice);
+    const variation = canUpdate
+      ? `<span class="price-change-pill is-${row.kind}"><i class="bi ${row.kind === 'increase' ? 'bi-arrow-up-right' : 'bi-arrow-down-right'}"></i>${row.difference > 0 ? '+' : ''}${eh(formatCurrency(row.difference))}${row.percent == null ? '' : ` · ${row.percent > 0 ? '+' : ''}${eh(formatPercent(row.percent))}`}</span>`
+      : (row.kind === 'unchanged' ? '<span class="price-change-pill is-unchanged">$ 0 · 0%</span>' : '—');
+    const statusClass = canUpdate ? row.kind : row.kind === 'unchanged' ? 'unchanged' : (row.kind === 'issue' ? 'issue' : 'warning');
+    const subtitle = row.fileDescription && normalize(row.fileDescription) !== normalize(row.name)
+      ? `<small>${eh(row.fileDescription)}</small>`
+      : (row.detail ? `<small>${eh(row.detail)}</small>` : '');
+    const inactive = row.active === false ? '<span class="badge text-bg-secondary ms-1">Inactivo</span>' : '';
+    return `<tr class="price-import-row is-${ea(statusClass)}">
+      <td class="price-import-check-col">${canUpdate ? `<input class="form-check-input" type="checkbox" data-price-import-select="${ea(row.materialId)}" ${checked ? 'checked' : ''} aria-label="Seleccionar ${ea(row.sku)}">` : ''}</td>
+      <td><span class="sku-chip">${eh(row.sku || 'Sin SKU')}</span>${row.rowNumber ? `<small class="price-import-row-number">Fila ${row.rowNumber}</small>` : ''}</td>
+      <td><div class="price-import-item-name">${eh(row.name || 'Sin descripción')}${inactive}</div>${subtitle}</td>
+      <td><strong>${eh(currentPrice)}</strong></td>
+      <td><strong>${eh(filePrice)}</strong></td>
+      <td>${variation}</td>
+      <td><span class="price-import-status is-${ea(statusClass)}">${eh(row.statusLabel || 'Revisar')}</span></td>
+      <td>${canUpdate ? `<button class="btn btn-sm btn-outline-primary fw-bold" type="button" data-price-import-update="${ea(row.materialId)}">Actualizar</button>` : ''}</td>
+    </tr>`;
+  }
+
+  function handlePriceImportFilterChange() {
+    S.priceImportFilter = E.priceImportResultFilter.value;
+    renderPriceImportResults();
+  }
+
+  function handlePriceImportSearch() {
+    S.priceImportSearch = E.priceImportSearch.value;
+    renderPriceImportResults();
+  }
+
+  function handlePriceImportResultChange(event) {
+    const checkbox = event.target.closest('[data-price-import-select]');
+    if (!checkbox) return;
+    const id = checkbox.dataset.priceImportSelect;
+    if (checkbox.checked) S.priceImportSelected.add(id);
+    else S.priceImportSelected.delete(id);
+    renderPriceImportResults();
+  }
+
+  async function handlePriceImportResultClick(event) {
+    const button = event.target.closest('[data-price-import-update]');
+    if (!button) return;
+    const change = S.priceImportComparison?.changes.find((row) => row.materialId === button.dataset.priceImportUpdate);
+    if (!change) return;
+    await applyPriceUpdates([change], button);
+  }
+
+  function toggleVisiblePriceImportSelections() {
+    const visibleChanges = filteredPriceImportRows().filter((row) => row.kind === 'increase' || row.kind === 'decrease');
+    const select = E.priceImportSelectAll.checked;
+    visibleChanges.forEach((row) => {
+      if (select) S.priceImportSelected.add(row.materialId);
+      else S.priceImportSelected.delete(row.materialId);
+    });
+    renderPriceImportResults();
+  }
+
+  function updatePriceImportSelectionControls(visibleRows) {
+    const visibleChanges = visibleRows.filter((row) => row.kind === 'increase' || row.kind === 'decrease');
+    const visibleSelected = visibleChanges.filter((row) => S.priceImportSelected.has(row.materialId)).length;
+    E.priceImportSelectAll.disabled = visibleChanges.length === 0;
+    E.priceImportSelectAll.checked = visibleChanges.length > 0 && visibleSelected === visibleChanges.length;
+    E.priceImportSelectAll.indeterminate = visibleSelected > 0 && visibleSelected < visibleChanges.length;
+    const totalSelected = S.priceImportComparison.changes.filter((row) => S.priceImportSelected.has(row.materialId)).length;
+    E.priceImportApplyButton.disabled = totalSelected === 0;
+    E.priceImportApplyButton.innerHTML = `<i class="bi bi-check2-all me-2"></i>Actualizar seleccionados (${totalSelected})`;
+  }
+
+  async function applySelectedPriceUpdates() {
+    const selected = S.priceImportComparison?.changes.filter((row) => S.priceImportSelected.has(row.materialId)) || [];
+    if (!selected.length) {
+      toast('Seleccioná al menos un cambio de precio.', 'error');
+      return;
+    }
+    const increases = selected.filter((row) => row.kind === 'increase').length;
+    const decreases = selected.filter((row) => row.kind === 'decrease').length;
+    const confirmed = window.confirm(`Se actualizarán ${selected.length} precios (${increases} aumentos y ${decreases} disminuciones). Los pedidos ya creados conservarán sus precios históricos. ¿Continuar?`);
+    if (!confirmed) return;
+    await applyPriceUpdates(selected, E.priceImportApplyButton);
+  }
+
+  async function applyPriceUpdates(changes, button) {
+    if (!canManageMasterData()) {
+      toast('Solo el administrador puede actualizar precios.', 'error');
+      return;
+    }
+    buttonBusy(button, true, changes.length === 1 ? 'Actualizando...' : 'Actualizando precios...');
+    hidePriceImportError();
+    try {
+      const updates = changes.map((change) => ({
+        material_id: change.materialId,
+        sku: change.sku,
+        expected_old_price: change.currentPrice,
+        new_price: change.filePrice
+      }));
+      const { data, error } = await S.sb.rpc('admin_bulk_update_material_prices', {
+        p_updates: updates,
+        p_source_file: S.priceImportFileName || null,
+        p_source_sheet: S.priceImportSheetName || null
+      });
+      if (error) throw error;
+      const result = typeof data === 'string' ? JSON.parse(data) : (data || {});
+      await refreshAdmin(false);
+      const mapping = S.priceImportComparison?.mapping;
+      if (mapping) {
+        S.priceImportComparison = buildPriceImportComparison(mapping);
+        S.priceImportSelected = new Set(S.priceImportComparison.changes.map((row) => row.materialId));
+        renderPriceImportResults();
+      }
+      toast(`${number(result.updated_count) || changes.length} precio${changes.length === 1 ? '' : 's'} actualizado${changes.length === 1 ? '' : 's'}.`, 'success');
+    } catch (error) {
+      console.error(error);
+      const message = String(error?.message || '');
+      showPriceImportError(message.includes('admin_bulk_update_material_prices') || message.includes('schema cache')
+        ? 'Falta instalar la actualización de base de datos. Ejecutá actualizar-importacion-precios-excel.sql en Supabase.'
+        : (message || 'No se pudieron actualizar los precios. Volvé a analizar el archivo e intentá nuevamente.'));
+    } finally {
+      buttonBusy(button, false);
+      if (S.priceImportComparison) renderPriceImportResults();
+    }
+  }
+
+  function optionalColumnIndex(value) {
+    if (value === '' || value == null) return -1;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : -1;
+  }
+
+  function spreadsheetSku(value) {
+    let sku = String(value ?? '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\u00a0/g, ' ').trim();
+    if (/^\d+\.0$/.test(sku)) sku = sku.slice(0, -2);
+    return sku.slice(0, 120);
+  }
+
+  function skuKey(value) {
+    return spreadsheetSku(value).toLocaleUpperCase('es-AR');
+  }
+
+  function parseSpreadsheetPrice(value) {
+    if (typeof value === 'number') return { valid: Number.isFinite(value) && value >= 0, value: roundMoney(value) };
+    let text = String(value ?? '').replace(/\u00a0/g, ' ').trim();
+    if (!text) return { valid: false, value: null };
+    const negative = /^\s*\(.*\)\s*$/.test(text) || /^\s*-/.test(text);
+    text = text.replace(/[^0-9,.-]/g, '').replace(/-/g, '');
+    if (!text || !/[0-9]/.test(text)) return { valid: false, value: null };
+    const lastComma = text.lastIndexOf(',');
+    const lastDot = text.lastIndexOf('.');
+    let normalized = text;
+    if (lastComma >= 0 && lastDot >= 0) {
+      const decimal = lastComma > lastDot ? ',' : '.';
+      const thousands = decimal === ',' ? /\./g : /,/g;
+      normalized = text.replace(thousands, '').replace(decimal, '.');
+    } else if (lastComma >= 0 || lastDot >= 0) {
+      const separator = lastComma >= 0 ? ',' : '.';
+      const pieces = text.split(separator);
+      const decimals = pieces[pieces.length - 1].length;
+      if (pieces.length === 2 && decimals > 0 && decimals <= 2) normalized = `${pieces[0]}.${pieces[1]}`;
+      else if (pieces.length > 2 && decimals > 0 && decimals <= 2) normalized = `${pieces.slice(0, -1).join('')}.${pieces[pieces.length - 1]}`;
+      else normalized = pieces.join('');
+    }
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed) || negative || parsed < 0 || parsed > 999999999.99) return { valid: false, value: null };
+    return { valid: true, value: roundMoney(parsed) };
+  }
+
+  function columnLetter(index) {
+    let value = Math.max(0, Math.round(number(index))) + 1;
+    let label = '';
+    while (value > 0) {
+      value -= 1;
+      label = String.fromCharCode(65 + (value % 26)) + label;
+      value = Math.floor(value / 26);
+    }
+    return label;
+  }
+
+  function formatFileSize(bytes) {
+    const size = number(bytes);
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toLocaleString('es-AR', { maximumFractionDigits: 1 })} KB`;
+    return `${(size / 1024 / 1024).toLocaleString('es-AR', { maximumFractionDigits: 1 })} MB`;
+  }
+
+  function showPriceImportError(message) {
+    E.priceImportError.textContent = message;
+    E.priceImportError.classList.remove('d-none');
+    E.priceImportError.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function hidePriceImportError() {
+    E.priceImportError.classList.add('d-none');
+    E.priceImportError.textContent = '';
   }
 
   function renderMaterials() {
@@ -2160,6 +2855,306 @@
     }
   }
 
+
+  async function loadConsumptionReport(force = false) {
+    if (!isFullAdmin() || S.mode !== 'admin') return;
+
+    const month = E.consumptionMonth.value || monthInputValue(new Date());
+    E.consumptionMonth.value = month;
+    const serviceId = E.consumptionServiceFilter.value || null;
+    const key = `${month}|${serviceId || 'all'}`;
+
+    if (!force && S.consumptionLoadedKey === key) {
+      renderConsumption();
+      return;
+    }
+    if (S.consumptionLoading) return;
+
+    S.consumptionLoading = true;
+    E.consumptionError.classList.add('d-none');
+    E.consumptionError.textContent = '';
+    buttonBusy(E.refreshConsumptionButton, true, 'Actualizando...');
+    renderConsumptionLoading();
+
+    try {
+      const parameters = { p_month: `${month}-01`, p_service_id: serviceId };
+      const [servicesResult, productsResult] = await Promise.all([
+        S.sb.rpc('admin_consumption_service_summary', parameters),
+        S.sb.rpc('admin_consumption_report', parameters)
+      ]);
+      if (servicesResult.error) throw servicesResult.error;
+      if (productsResult.error) throw productsResult.error;
+
+      S.consumptionServiceRows = servicesResult.data || [];
+      S.consumptionRows = productsResult.data || [];
+      S.consumptionLoadedKey = key;
+    } catch (error) {
+      console.error(error);
+      S.consumptionServiceRows = [];
+      S.consumptionRows = [];
+      S.consumptionLoadedKey = '';
+      E.consumptionError.textContent = consumptionErrorMessage(error);
+      E.consumptionError.classList.remove('d-none');
+    } finally {
+      S.consumptionLoading = false;
+      buttonBusy(E.refreshConsumptionButton, false);
+      renderConsumption();
+    }
+  }
+
+  function renderConsumptionLoading() {
+    E.consumptionServiceTableBody.innerHTML = '<tr class="consumption-loading-row"><td colspan="9"><span class="spinner-border spinner-border-sm me-2"></span>Calculando consumo por servicio...</td></tr>';
+    E.consumptionProductsTableBody.innerHTML = '<tr class="consumption-loading-row"><td colspan="9"><span class="spinner-border spinner-border-sm me-2"></span>Consolidando productos e histórico...</td></tr>';
+  }
+
+  function renderConsumption() {
+    if (!E.adminConsumption || S.tab !== 'consumption') return;
+    if (S.consumptionLoading) return;
+
+    const month = E.consumptionMonth.value || monthInputValue(new Date());
+    const selectedServiceId = E.consumptionServiceFilter.value || '';
+    const monthText = monthLabel(month);
+    const productRows = filteredConsumptionRows();
+    const visibleServiceRows = S.consumptionServiceRows.filter((row) => {
+      if (selectedServiceId) return row.service_id === selectedServiceId;
+      return number(row.historical_orders) > 0 || number(row.month_orders) > 0;
+    });
+
+    const activeServices = visibleServiceRows.filter((row) => number(row.month_orders) > 0);
+    const currentProducts = S.consumptionRows.filter((row) => number(row.month_quantity) > 0);
+    const deliveredOrders = activeServices.reduce((sum, row) => sum + number(row.month_orders), 0);
+    const monthAmount = activeServices.reduce((sum, row) => sum + number(row.month_amount), 0);
+
+    E.consumptionKpiServices.textContent = String(activeServices.length);
+    E.consumptionKpiProducts.textContent = String(currentProducts.length);
+    E.consumptionKpiOrders.textContent = formatQty(deliveredOrders);
+    E.consumptionKpiAmount.textContent = formatCurrency(monthAmount);
+    E.consumptionKpiServicesFoot.textContent = `Consumo confirmado en ${monthText}`;
+    E.consumptionServiceCount.textContent = `${visibleServiceRows.length} ${visibleServiceRows.length === 1 ? 'servicio' : 'servicios'}`;
+    E.consumptionProductCount.textContent = `${productRows.length} ${productRows.length === 1 ? 'registro' : 'registros'}`;
+    E.consumptionResultsCaption.textContent = `Cantidades de ${monthText}, promedio de los tres meses anteriores e histórico acumulado.`;
+
+    E.consumptionServiceTableBody.innerHTML = visibleServiceRows.map((row) => {
+      const signal = consumptionSignal(row.month_amount, row.avg_previous_3_amount, row.previous_3_months_with_activity);
+      const variation = consumptionVariation(row.month_amount, row.avg_previous_3_amount, row.previous_3_months_with_activity);
+      const meter = consumptionMeter(row.month_amount, row.avg_previous_3_amount, signal);
+      return `<tr>
+        <td><div class="consumption-service-name">${eh(row.service_name)}</div><span class="consumption-subvalue">${row.last_consumption_at ? `Último consumo: ${eh(dtf.format(new Date(row.last_consumption_at)))}` : 'Sin entregas registradas'}</span></td>
+        <td><span class="consumption-value">${formatQty(row.month_orders)}</span></td>
+        <td><span class="consumption-value">${formatQty(row.month_products)}</span></td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span>${meter}</td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.previous_month_amount))}</span></td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.avg_previous_3_amount))}</span><span class="consumption-subvalue">Incluye meses sin consumo</span></td>
+        <td>${consumptionVariationBadge(variation)}</td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.historical_amount))}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos entregados</span></td>
+        <td>${consumptionSignalBadge(signal)}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="9"><div class="consumption-empty">No hay pedidos entregados para construir un resumen de consumo.</div></td></tr>';
+
+    E.consumptionProductsTableBody.innerHTML = productRows.map((row) => {
+      const signal = consumptionSignal(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
+      const variation = consumptionVariation(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
+      const meter = consumptionMeter(row.month_quantity, row.avg_previous_3_quantity, signal);
+      const sku = row.item_sku ? `SKU ${row.item_sku} · ` : '';
+      return `<tr>
+        <td class="consumption-product-cell"><strong>${eh(row.item_name)}</strong><small>${eh(row.service_name)} · ${eh(sku)}${eh(row.unit || 'unidad')}</small></td>
+        <td><span class="consumption-value">${formatQty(row.month_quantity)} ${eh(row.unit || 'unidad')}</span><span class="consumption-subvalue">${formatQty(row.month_orders)} pedidos</span>${meter}</td>
+        <td><span class="consumption-value">${formatQty(row.previous_month_quantity)} ${eh(row.unit || 'unidad')}</span></td>
+        <td><span class="consumption-value">${formatQty(row.avg_previous_3_quantity)} ${eh(row.unit || 'unidad')}</span><span class="consumption-subvalue">Promedio calendario</span></td>
+        <td>${consumptionVariationBadge(variation)}</td>
+        <td><span class="consumption-value">${formatQty(row.historical_quantity)} ${eh(row.unit || 'unidad')}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos · ${eh(formatCurrency(row.historical_amount))}</span></td>
+        <td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span></td>
+        <td>${consumptionSignalBadge(signal)}</td>
+        <td><button class="btn btn-outline-primary btn-sm consumption-history-button" type="button" data-consumption-service="${ea(row.service_id)}" data-consumption-history="${ea(row.material_key)}"><i class="bi bi-bar-chart-line me-1"></i>Histórico</button></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="9"><div class="consumption-empty">No hay consumos que coincidan con los filtros. Los pedidos deben estar marcados como Entregados.</div></td></tr>';
+  }
+
+  function filteredConsumptionRows() {
+    const query = normalize(E.consumptionSearch?.value);
+    return S.consumptionRows.filter((row) => {
+      if (!query) return true;
+      return normalize(`${row.item_name} ${row.item_sku || ''} ${row.service_name} ${row.unit || ''}`).includes(query);
+    });
+  }
+
+  function consumptionSignal(currentValue, baselineValue, activeMonths) {
+    const current = number(currentValue);
+    const baseline = number(baselineValue);
+    const months = number(activeMonths);
+    if (months <= 0 || baseline <= 0) return current > 0 ? 'new' : 'none';
+    const ratio = current / baseline;
+    if (ratio > 1.2) return 'high';
+    if (ratio < 0.8) return 'low';
+    return 'normal';
+  }
+
+  function consumptionVariation(currentValue, baselineValue, activeMonths) {
+    const baseline = number(baselineValue);
+    if (number(activeMonths) <= 0 || baseline <= 0) return null;
+    return ((number(currentValue) - baseline) / baseline) * 100;
+  }
+
+  function consumptionVariationBadge(variation) {
+    if (variation == null || !Number.isFinite(variation)) return '<span class="consumption-variation is-stable">Sin referencia</span>';
+    const rounded = Math.round(variation * 10) / 10;
+    const cls = rounded > 5 ? 'is-up' : (rounded < -5 ? 'is-down' : 'is-stable');
+    const icon = rounded > 5 ? 'bi-arrow-up-right' : (rounded < -5 ? 'bi-arrow-down-right' : 'bi-dash');
+    const prefix = rounded > 0 ? '+' : '';
+    return `<span class="consumption-variation ${cls}"><i class="bi ${icon}"></i>${eh(`${prefix}${rounded.toLocaleString('es-AR', { maximumFractionDigits: 1 })}%`)}</span>`;
+  }
+
+  function consumptionSignalBadge(signal) {
+    const config = {
+      high: ['Alto', 'bi-exclamation-triangle-fill'],
+      low: ['Bajo', 'bi-arrow-down-circle-fill'],
+      normal: ['Habitual', 'bi-check-circle-fill'],
+      new: ['Nuevo', 'bi-stars'],
+      none: ['Sin datos', 'bi-dash-circle']
+    }[signal] || ['Sin datos', 'bi-dash-circle'];
+    return `<span class="consumption-signal ${ea(signal)}"><i class="bi ${config[1]}"></i>${eh(config[0])}</span>`;
+  }
+
+  function consumptionMeter(currentValue, baselineValue, signal) {
+    const current = number(currentValue);
+    const baseline = number(baselineValue);
+    const ratio = baseline > 0 ? current / baseline : (current > 0 ? 1 : 0);
+    const width = Math.max(0, Math.min(100, ratio * 62.5));
+    const cls = signal === 'high' ? 'is-high' : (signal === 'low' ? 'is-low' : '');
+    return `<div class="consumption-meter ${cls}" title="${ea(baseline > 0 ? `Consumo frente al promedio de tres meses: ${formatPercent(ratio * 100)}` : 'Sin promedio histórico suficiente')}"><span style="width:${width.toFixed(2)}%"></span></div>`;
+  }
+
+  async function openConsumptionHistory(serviceId, materialKey) {
+    if (!isFullAdmin()) return;
+    const row = S.consumptionRows.find((item) => item.service_id === serviceId && item.material_key === materialKey);
+    if (!row) return;
+
+    S.consumptionHistoryContext = row;
+    E.consumptionHistoryTitle.textContent = row.item_name;
+    E.consumptionHistorySubtitle.textContent = `${row.service_name} · ${row.item_sku ? `SKU ${row.item_sku} · ` : ''}${row.unit || 'unidad'} · 12 meses hasta ${monthLabel(E.consumptionMonth.value)}`;
+    E.consumptionHistoryLoading.classList.remove('d-none');
+    E.consumptionHistoryContent.classList.add('d-none');
+    E.consumptionHistoryError.classList.add('d-none');
+    E.consumptionHistoryError.textContent = '';
+    M.consumptionHistory.show();
+
+    try {
+      const { data, error } = await S.sb.rpc('admin_consumption_history', {
+        p_service_id: serviceId,
+        p_material_key: materialKey,
+        p_until_month: `${E.consumptionMonth.value || monthInputValue(new Date())}-01`,
+        p_months: 12
+      });
+      if (error) throw error;
+      renderConsumptionHistory(data || [], row);
+    } catch (error) {
+      console.error(error);
+      E.consumptionHistoryLoading.classList.add('d-none');
+      E.consumptionHistoryError.textContent = consumptionErrorMessage(error);
+      E.consumptionHistoryError.classList.remove('d-none');
+    }
+  }
+
+  function renderConsumptionHistory(rows, context) {
+    const totalQty = rows.reduce((sum, row) => sum + number(row.quantity), 0);
+    const totalAmount = rows.reduce((sum, row) => sum + number(row.amount), 0);
+    const maxQty = Math.max(0, ...rows.map((row) => number(row.quantity)));
+    const average = rows.length ? totalQty / rows.length : 0;
+
+    E.consumptionHistoryTotal.textContent = `${formatQty(totalQty)} ${context.unit || 'unidad'}`;
+    E.consumptionHistoryAverage.textContent = `${formatQty(average)} ${context.unit || 'unidad'}`;
+    E.consumptionHistoryMax.textContent = `${formatQty(maxQty)} ${context.unit || 'unidad'}`;
+    E.consumptionHistoryAmount.textContent = formatCurrency(totalAmount);
+    E.consumptionHistoryBars.innerHTML = rows.map((row) => {
+      const qty = number(row.quantity);
+      const width = maxQty > 0 ? Math.max(qty > 0 ? 3 : 0, qty / maxQty * 100) : 0;
+      return `<div class="consumption-history-row">
+        <div class="consumption-history-month">${eh(monthLabelFromDate(row.consumption_month))}</div>
+        <div class="consumption-history-track"><span style="width:${width.toFixed(2)}%"></span></div>
+        <div class="consumption-history-qty">${formatQty(qty)} ${eh(context.unit || 'unidad')}</div>
+        <div class="consumption-history-amount">${formatQty(row.orders)} pedidos · ${eh(formatCurrency(row.amount))}</div>
+      </div>`;
+    }).join('') || '<div class="consumption-empty">No hay información histórica.</div>';
+    E.consumptionHistoryLoading.classList.add('d-none');
+    E.consumptionHistoryContent.classList.remove('d-none');
+  }
+
+  function exportConsumptionCsv() {
+    const rows = filteredConsumptionRows();
+    if (!rows.length) {
+      toast('No hay datos de consumo para exportar.', 'error');
+      return;
+    }
+    const month = E.consumptionMonth.value || monthInputValue(new Date());
+    const headers = ['Mes','Servicio','Producto','SKU','Unidad','Cantidad mes','Valor mes','Pedidos mes','Cantidad mes anterior','Promedio 3 meses','Variación vs promedio','Cantidad histórica','Valor histórico','Pedidos históricos','Señal'];
+    const lines = [headers, ...rows.map((row) => {
+      const signal = consumptionSignal(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
+      const variation = consumptionVariation(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
+      return [
+        month,
+        row.service_name,
+        row.item_name,
+        row.item_sku || '',
+        row.unit || 'unidad',
+        csvNumber(row.month_quantity),
+        csvNumber(row.month_amount),
+        csvNumber(row.month_orders),
+        csvNumber(row.previous_month_quantity),
+        csvNumber(row.avg_previous_3_quantity),
+        variation == null ? '' : csvNumber(Math.round(variation * 100) / 100),
+        csvNumber(row.historical_quantity),
+        csvNumber(row.historical_amount),
+        csvNumber(row.historical_orders),
+        ({ high: 'Alto', low: 'Bajo', normal: 'Habitual', new: 'Nuevo', none: 'Sin datos' })[signal]
+      ];
+    })].map((row) => row.map(csvCell).join(';')).join('\r\n');
+
+    const blob = new Blob([`\ufeff${lines}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `consumo-clean-it-${month}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function csvNumber(value) {
+    return number(value).toLocaleString('es-AR', { useGrouping: false, maximumFractionDigits: 2 });
+  }
+
+  function csvCell(value) {
+    const text = String(value ?? '').replace(/"/g, '""');
+    return `"${text}"`;
+  }
+
+  function consumptionErrorMessage(error) {
+    const message = String(error?.message || '');
+    if (message.includes('admin_consumption_') || message.includes('schema cache') || String(error?.code || '').includes('PGRST202')) {
+      return 'El módulo de consumos todavía no está instalado en Supabase. Ejecutá actualizar-consumos-por-servicio.sql desde SQL Editor y volvé a actualizar.';
+    }
+    return message || 'No se pudo calcular el consumo por servicio.';
+  }
+
+  function monthInputValue(date) {
+    const value = new Date(date);
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function monthLabel(value) {
+    if (!/^\d{4}-\d{2}$/.test(String(value || ''))) return 'el mes seleccionado';
+    const [year, month] = value.split('-').map(Number);
+    return new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 15));
+  }
+
+  function monthLabelFromDate(value) {
+    const text = String(value || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(text)) return '—';
+    const [year, month] = text.split('-').map(Number);
+    return new Intl.DateTimeFormat('es-AR', { month: 'short', year: 'numeric' }).format(new Date(year, month - 1, 15));
+  }
+
   function renderHistory() {
     E.historyTableBody.innerHTML = S.history.map((entry) => {
       const order = S.orders.find((item) => item.id === entry.order_id);
@@ -2240,8 +3235,86 @@
     })[status] || 'Sin información';
   }
 
+  function orderBudgetMetrics(order) {
+    const totalAmount = roundMoney(number(order?.total_amount));
+    const billing = number(order?.monthly_billing_snapshot);
+    const snapshotLimitAmount = roundMoney(number(order?.budget_limit_amount_snapshot));
+    const snapshotLimitPercent = number(order?.budget_limit_percent_snapshot);
+    const limitPercent = snapshotLimitPercent > 0
+      ? Math.min(7, Math.max(0, snapshotLimitPercent))
+      : (billing > 0 && snapshotLimitAmount > 0 ? Math.min(7, snapshotLimitAmount / billing * 100) : 0);
+    const limitAmount = snapshotLimitAmount > 0
+      ? snapshotLimitAmount
+      : roundMoney(billing * limitPercent / 100);
+    const sevenAmount = number(order?.budget_seven_percent_snapshot) > 0
+      ? roundMoney(order.budget_seven_percent_snapshot)
+      : roundMoney(billing * 0.07);
+    const status = billing <= 0 || sevenAmount <= 0
+      ? 'sin_configurar'
+      : (totalAmount > sevenAmount ? 'sobre_7' : (totalAmount > limitAmount ? 'sobre_limite' : 'dentro'));
+    const usagePercent = sevenAmount > 0 ? totalAmount / sevenAmount * 100 : 0;
+    const differenceToSeven = roundMoney(sevenAmount - totalAmount);
+    const differenceToLimit = roundMoney(limitAmount - totalAmount);
+    const limitMarkerPercent = sevenAmount > 0 ? Math.max(0, Math.min(100, limitAmount / sevenAmount * 100)) : 0;
+    return { totalAmount, billing, limitPercent, limitAmount, sevenAmount, status, usagePercent, differenceToSeven, differenceToLimit, limitMarkerPercent };
+  }
+
+  function budgetVisualClass(status) {
+    return status === 'sobre_7' ? 'danger' : (status === 'sobre_limite' ? 'warning' : (status === 'dentro' ? 'success' : 'muted'));
+  }
+
+  function budgetLimitMarker(order) {
+    const metrics = orderBudgetMetrics(order);
+    if (metrics.status === 'sin_configurar') return '';
+    return `<i class="budget-limit-marker" style="left:${metrics.limitMarkerPercent.toFixed(2)}%" aria-hidden="true"></i>`;
+  }
+
+  function orderBudgetMiniProgress(order) {
+    const metrics = orderBudgetMetrics(order);
+    if (metrics.status === 'sin_configurar') {
+      return `<div class="order-budget-mini is-muted"><div class="order-budget-mini-head"><span>Sin referencia presupuestaria</span></div><div class="order-budget-track"><span style="width:0%"></span></div></div>`;
+    }
+    const visual = budgetVisualClass(metrics.status);
+    const progress = Math.max(0, Math.min(100, metrics.usagePercent));
+    return `<div class="order-budget-mini is-${visual}" title="${ea(`Uso del 7%: ${formatPercent(metrics.usagePercent)} · Límite operativo: ${formatPercent(metrics.limitPercent)}`)}">
+      <div class="order-budget-mini-head"><span>Uso del máximo 7%</span><strong>${eh(formatPercent(metrics.usagePercent))}</strong></div>
+      <div class="order-budget-track" role="progressbar" aria-label="Uso de la referencia máxima del 7%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.max(0, Math.min(100, metrics.usagePercent)))}"><span style="width:${progress.toFixed(2)}%"></span>${budgetLimitMarker(order)}</div>
+    </div>`;
+  }
+
+  function orderBudgetOverview(order) {
+    const metrics = orderBudgetMetrics(order);
+    const visual = budgetVisualClass(metrics.status);
+    if (metrics.status === 'sin_configurar') {
+      return `<section class="order-budget-overview is-muted" aria-label="Control presupuestario">
+        <div class="order-budget-overview-head"><div><div class="order-meta-label">Control presupuestario</div><div class="order-budget-overview-total">${eh(formatCurrency(metrics.totalAmount))}</div></div><span class="order-budget-overview-pill">Sin configurar</span></div>
+        <div class="order-budget-empty"><i class="bi bi-info-circle"></i><span>Este servicio no tiene facturación mensual configurada, por lo que no puede calcularse la barra de referencia.</span></div>
+      </section>`;
+    }
+    const progress = Math.max(0, Math.min(100, metrics.usagePercent));
+    const resultText = metrics.status === 'sobre_7'
+      ? `Exceso sobre el 7%: ${formatCurrency(Math.abs(metrics.differenceToSeven))}`
+      : (metrics.status === 'sobre_limite'
+        ? `Supera el límite operativo por ${formatCurrency(Math.abs(metrics.differenceToLimit))}`
+        : `Margen hasta el límite: ${formatCurrency(Math.max(0, metrics.differenceToLimit))}`);
+    return `<section class="order-budget-overview is-${visual}" aria-label="Control presupuestario">
+      <div class="order-budget-overview-head">
+        <div><div class="order-meta-label">Total actual del pedido</div><div class="order-budget-overview-total">${eh(formatCurrency(metrics.totalAmount))}</div></div>
+        <span class="order-budget-overview-pill">${eh(budgetStatusText(metrics.status))}</span>
+      </div>
+      <div class="order-budget-overview-grid">
+        <div><span>Límite operativo</span><strong>${eh(formatCurrency(metrics.limitAmount))} (${eh(formatPercent(metrics.limitPercent))})</strong></div>
+        <div><span>Referencia máxima</span><strong>${eh(formatCurrency(metrics.sevenAmount))} (7%)</strong></div>
+        <div><span>Uso del máximo</span><strong>${eh(formatPercent(metrics.usagePercent))}</strong></div>
+        <div><span>Resultado</span><strong>${eh(resultText)}</strong></div>
+      </div>
+      <div class="order-budget-overview-track" role="progressbar" aria-label="Uso de la referencia máxima del 7%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.max(0, Math.min(100, metrics.usagePercent)))}"><span style="width:${progress.toFixed(2)}%"></span>${budgetLimitMarker(order)}</div>
+      <div class="order-budget-overview-caption">La marca vertical indica el límite operativo configurado. La barra completa representa el 7% de la facturación mensual.</div>
+    </section>`;
+  }
+
   function budgetBadge(order) {
-    const status = order.budget_status || 'sin_configurar';
+    const status = orderBudgetMetrics(order).status;
     const klass = status === 'sobre_7' ? 'budget-badge-danger' : (status === 'sobre_limite' ? 'budget-badge-warning' : (status === 'dentro' ? 'budget-badge-ok' : 'budget-badge-muted'));
     return `<div class="budget-badge ${klass}">${eh(budgetStatusText(status))}</div>`;
   }
