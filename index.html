@@ -446,7 +446,7 @@
       <div class="modal-content invoice-detail-modal-content">
         <div class="modal-header">
           <div><div class="eyebrow">Control de factura</div><h5 id="invoiceDetailTitle" class="modal-title fw-black">Factura</h5><p id="invoiceDetailSubtitle" class="text-secondary small mb-0 mt-1"></p></div>
-          <div class="d-flex align-items-center gap-2"><button id="openInvoicePdfButton" class="btn btn-outline-primary btn-sm fw-bold" type="button"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir PDF</button><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+          <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end"><button id="reprocessInvoiceOcrButton" class="btn btn-outline-secondary btn-sm fw-bold" type="button"><i class="bi bi-file-earmark-text me-1"></i>Releer con OCR</button><button id="openInvoicePdfButton" class="btn btn-outline-primary btn-sm fw-bold" type="button"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir PDF</button><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
         </div>
         <div class="modal-body">
           <div id="invoiceDetailError" class="alert alert-danger d-none"></div>
@@ -609,7 +609,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=20260806-invoice-control"></script>
+  <script src="app.js?v=20260806-invoice-ocr"></script>
 </body>
 </html>

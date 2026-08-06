@@ -76,7 +76,11 @@
     invoiceReadingEditMode: false,
     invoiceReadingDraft: [],
     invoiceReadingTotalDraft: '',
-    invoiceLoadError: null
+    invoiceLoadError: null,
+    invoiceOcrWorkerPromise: null,
+    invoiceOcrLogger: null,
+    invoiceOcrCurrentPage: 0,
+    invoiceOcrTotalPages: 0
   };
 
   const E = {};
@@ -224,6 +228,7 @@
     E.refreshInvoicesButton.addEventListener('click', refreshInvoicesData);
     E.saveInvoiceMatchButton.addEventListener('click', saveInvoiceManualMatch);
     E.openInvoicePdfButton.addEventListener('click', openSelectedInvoicePdf);
+    E.reprocessInvoiceOcrButton.addEventListener('click', reprocessSelectedInvoiceWithOcr);
     E.deleteInvoiceButton.addEventListener('click', () => deleteInvoice(S.selectedInvoiceId));
     E.toggleInvoiceReviewedButton.addEventListener('click', toggleInvoiceReviewed);
     E.toggleInvoiceReadingEditButton.addEventListener('click', startInvoiceReadingEdit);
@@ -2103,16 +2108,25 @@
         const duplicate = S.invoices.find((item) => item.file_hash && item.file_hash === fileHash);
         if (duplicate) throw new Error(`Esta factura ya fue cargada como ${duplicate.invoice_number || duplicate.file_name}.`);
 
-        const extracted = await extractPdfText(buffer.slice(0));
-        row.message = 'Analizando factura...';
+        const analyzed = await analyzeInvoicePdf(buffer.slice(0), file.name, {
+          forceOcr: false,
+          onProgress: (message) => {
+            row.status = 'reading';
+            row.message = message;
+            renderInvoiceUploadQueue();
+          }
+        });
+        const extracted = analyzed.extracted;
+        const parsed = analyzed.parsed;
+        row.message = analyzed.method === 'ocr' ? 'Comparando lectura OCR...' : 'Analizando factura...';
         renderInvoiceUploadQueue();
 
-        const parsed = parseSupplierInvoice(extracted.text, extracted.lines);
         const match = findBestInvoiceOrderMatch(parsed, extracted.text);
         const selectedOrder = match.order || null;
         const comparison = selectedOrder
           ? compareInvoiceAgainstOrder(parsed, selectedOrder)
           : emptyInvoiceComparison(extracted.text.trim() ? 'sin_match' : 'sin_lectura');
+        applyInvoiceExtractionMeta(comparison, analyzed);
         const comparisonStatus = selectedOrder ? comparison.status : (extracted.text.trim() ? 'sin_match' : 'sin_lectura');
 
         row.message = 'Guardando PDF privado...';
@@ -2191,9 +2205,53 @@
     return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
   }
 
-  async function extractPdfText(buffer) {
+  async function analyzeInvoicePdf(buffer, fileName, options = {}) {
+    const { forceOcr = false, onProgress = null } = options;
     const task = window.pdfjsLib.getDocument({ data: new Uint8Array(buffer), disableFontFace: false });
     const pdf = await task.promise;
+    try {
+      if (onProgress) onProgress('Leyendo texto incorporado al PDF...');
+      const embedded = await extractEmbeddedPdfTextFromDocument(pdf);
+      let extracted = embedded;
+      let parsed = parseSupplierInvoice(embedded.text, embedded.lines, fileName);
+      let method = 'texto_pdf';
+      let confidence = null;
+      let quality = invoiceParseQuality(parsed, embedded.text);
+
+      if (forceOcr || invoiceExtractionNeedsOcr(embedded, parsed, quality)) {
+        if (!window.Tesseract) {
+          throw new Error('El PDF no contiene texto legible y no se pudo cargar el motor OCR. Revisá la conexión a internet y recargá la aplicación.');
+        }
+        if (onProgress) onProgress('El PDF es una imagen. Preparando lectura OCR...');
+        const ocr = await extractPdfTextWithOcr(pdf, onProgress);
+        const ocrParsed = parseSupplierInvoice(ocr.text, ocr.lines, fileName);
+        const ocrQuality = invoiceParseQuality(ocrParsed, ocr.text);
+        if (forceOcr || ocrQuality >= quality || !embedded.text.trim()) {
+          extracted = ocr;
+          parsed = mergeInvoiceParses(ocrParsed, parsed);
+          method = 'ocr';
+          confidence = ocr.confidence;
+          quality = ocrQuality;
+        }
+      }
+
+      parsed.extractionMethod = method;
+      parsed.extractionConfidence = confidence;
+      parsed.parseQuality = quality;
+      return {
+        extracted,
+        parsed,
+        method,
+        confidence,
+        quality,
+        pageCount: pdf.numPages
+      };
+    } finally {
+      try { await pdf.destroy(); } catch (_) { /* no-op */ }
+    }
+  }
+
+  async function extractEmbeddedPdfTextFromDocument(pdf) {
     const allLines = [];
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
@@ -2203,7 +2261,164 @@
       if (pageNumber < pdf.numPages) allLines.push('');
     }
     const text = allLines.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{4,}/g, '\n\n').trim();
-    return { text, lines: allLines.filter((line) => String(line).trim()), pageCount: pdf.numPages };
+    return { text, lines: allLines.filter((line) => String(line).trim()), pageCount: pdf.numPages, confidence: null };
+  }
+
+  function invoiceExtractionNeedsOcr(extracted, parsed, quality) {
+    const text = String(extracted?.text || '').trim();
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    const structuredItems = items.filter((item) => item.quantity != null && (item.unit_price != null || item.line_total != null));
+    if (text.length < 120) return true;
+    if (parsed?.totalAmount == null && !structuredItems.length) return true;
+    if (!items.length && quality < 45) return true;
+    return quality < 30;
+  }
+
+  function invoiceParseQuality(parsed, text) {
+    let score = 0;
+    if (parsed?.invoiceNumber) score += 12;
+    if (parsed?.invoiceDate) score += 7;
+    if (parsed?.supplierName) score += 5;
+    if (parsed?.supplierTaxId) score += 5;
+    if (parsed?.totalAmount != null) score += 25;
+    if (parsed?.subtotal != null) score += 5;
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    items.forEach((item) => {
+      score += 3;
+      if (item.sku) score += 2;
+      if (item.quantity != null) score += 2;
+      if (item.unit_price != null) score += 2;
+      if (item.line_total != null) score += 3;
+    });
+    score += Math.min(8, String(text || '').trim().length / 250);
+    return Math.round(Math.min(100, score));
+  }
+
+  function mergeInvoiceParses(primary, fallback) {
+    const result = { ...primary };
+    ['invoiceNumber','invoiceDate','supplierTaxId','supplierName','currency','subtotal','taxAmount','totalAmount'].forEach((key) => {
+      if (result[key] == null || result[key] === '') result[key] = fallback?.[key] ?? result[key];
+    });
+    if ((!Array.isArray(result.items) || !result.items.length) && Array.isArray(fallback?.items)) result.items = fallback.items;
+    if ((!Array.isArray(result.unmatchedLines) || !result.unmatchedLines.length) && Array.isArray(fallback?.unmatchedLines)) result.unmatchedLines = fallback.unmatchedLines;
+    result.detectedSkus = (result.items || []).map((item) => normalizeSku(item.sku)).filter(Boolean);
+    return result;
+  }
+
+  async function getInvoiceOcrWorker() {
+    if (!window.Tesseract) throw new Error('No se pudo cargar el motor OCR. Revisá la conexión a internet y recargá la aplicación.');
+    if (!S.invoiceOcrWorkerPromise) {
+      S.invoiceOcrWorkerPromise = window.Tesseract.createWorker('spa+eng', 1, {
+        logger: (message) => {
+          if (typeof S.invoiceOcrLogger === 'function') S.invoiceOcrLogger(message || {});
+        }
+      }).then(async (worker) => {
+        await worker.setParameters({
+          tessedit_pageseg_mode: '6',
+          preserve_interword_spaces: '1',
+          user_defined_dpi: '220'
+        });
+        return worker;
+      }).catch((error) => {
+        S.invoiceOcrWorkerPromise = null;
+        throw error;
+      });
+    }
+    return S.invoiceOcrWorkerPromise;
+  }
+
+  async function extractPdfTextWithOcr(pdf, onProgress) {
+    S.invoiceOcrTotalPages = pdf.numPages;
+    S.invoiceOcrCurrentPage = 0;
+    S.invoiceOcrLogger = (message) => {
+      if (!onProgress) return;
+      const status = String(message.status || '').toLowerCase();
+      const progress = Number.isFinite(message.progress) ? Math.round(message.progress * 100) : null;
+      if (status.includes('recognizing')) {
+        onProgress(`OCR página ${S.invoiceOcrCurrentPage}/${S.invoiceOcrTotalPages}${progress == null ? '' : ` · ${progress}%`}`);
+      } else if (status.includes('loading language') || status.includes('initializing')) {
+        onProgress('Preparando reconocimiento de texto...');
+      }
+    };
+
+    const worker = await getInvoiceOcrWorker();
+    const pageBlocks = [];
+    let confidenceSum = 0;
+    let confidenceCount = 0;
+    try {
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        S.invoiceOcrCurrentPage = pageNumber;
+        if (onProgress) onProgress(`Renderizando página ${pageNumber}/${pdf.numPages} para OCR...`);
+        const page = await pdf.getPage(pageNumber);
+        const canvas = await renderPdfPageForOcr(page);
+        const result = await worker.recognize(canvas);
+        const pageText = normalizeOcrInvoiceText(result?.data?.text || '');
+        const pageLines = pageText.split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
+        const normalizedPage = normalize(pageText);
+        const remitoOnly = /documento\s+no\s+valido\s+como\s+factura/.test(normalizedPage) && /remito/.test(normalizedPage);
+        pageBlocks.push({ pageNumber, text: pageText, lines: pageLines, remitoOnly });
+        const pageConfidence = Number(result?.data?.confidence);
+        if (Number.isFinite(pageConfidence)) {
+          confidenceSum += pageConfidence;
+          confidenceCount += 1;
+        }
+        canvas.width = 1;
+        canvas.height = 1;
+      }
+    } finally {
+      S.invoiceOcrLogger = null;
+      S.invoiceOcrCurrentPage = 0;
+      S.invoiceOcrTotalPages = 0;
+    }
+    const hasInvoicePage = pageBlocks.some((block) => !block.remitoOnly);
+    const selectedBlocks = hasInvoicePage ? pageBlocks.filter((block) => !block.remitoOnly) : pageBlocks;
+    const allLines = [];
+    selectedBlocks.forEach((block, index) => {
+      block.lines.forEach((line) => allLines.push(line));
+      if (index < selectedBlocks.length - 1) allLines.push('');
+    });
+    const text = allLines.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{4,}/g, '\n\n').trim();
+    return {
+      text,
+      lines: allLines.filter((line) => String(line).trim()),
+      pageCount: pdf.numPages,
+      confidence: confidenceCount ? Math.round(confidenceSum / confidenceCount) : null
+    };
+  }
+
+  async function renderPdfPageForOcr(page) {
+    const base = page.getViewport({ scale: 1 });
+    const maxDimension = 3000;
+    const scale = Math.max(1.6, Math.min(2.5, maxDimension / Math.max(base.width, base.height)));
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: context, viewport, background: '#ffffff' }).promise;
+    return canvas;
+  }
+
+  function normalizeOcrInvoiceText(value) {
+    return String(value || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/[“”]/g, '"')
+      .replace(/[’`]/g, "'")
+      .replace(/\s+([,.;:])/g, '$1')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n[ \t]+/g, '\n')
+      .trim();
+  }
+
+  function applyInvoiceExtractionMeta(comparison, analyzed) {
+    if (!comparison || !analyzed) return comparison;
+    comparison.extraction_method = analyzed.method || null;
+    comparison.extraction_confidence = analyzed.confidence == null ? null : number(analyzed.confidence);
+    comparison.parse_quality = analyzed.quality == null ? null : number(analyzed.quality);
+    comparison.ocr_used = analyzed.method === 'ocr';
+    return comparison;
   }
 
   function groupPdfTextItemsIntoLines(items) {
@@ -2226,9 +2441,9 @@
       .filter(Boolean);
   }
 
-  function parseSupplierInvoice(text, lines) {
+  function parseSupplierInvoice(text, lines, fileName = '') {
     const cleanText = String(text || '').replace(/\u00a0/g, ' ');
-    const invoiceNumber = extractInvoiceNumber(cleanText);
+    const invoiceNumber = extractInvoiceNumber(cleanText, fileName);
     const invoiceDate = extractInvoiceDate(cleanText);
     const supplierTaxId = extractTaxId(cleanText);
     const supplierName = extractSupplierName(lines, supplierTaxId);
@@ -2249,16 +2464,26 @@
     };
   }
 
-  function extractInvoiceNumber(text) {
+  function extractInvoiceNumber(text, fileName = '') {
     const patterns = [
       /(?:factura|comprobante)\s*(?:electr[oó]nica)?\s*(?:n[º°o.]|nro\.?|n[uú]mero|#)?\s*[:\-]?\s*([A-Z]?\s*\d{1,5}\s*[-–]\s*\d{4,12})/i,
-      /(?:n[º°o.]|nro\.?|n[uú]mero)\s*(?:de\s+comprobante)?\s*[:\-]?\s*(\d{1,5}\s*[-–]\s*\d{4,12})/i,
+      /(?:factura\s*)?(?:n[º°o.]|nro\.?)\s*([0-9][0-9\s]{2,7})\s*[-–]\s*(\d{6,12})/i,
       /\b([ABCEMT])\s+(\d{4,5}\s*[-–]\s*\d{6,12})\b/i
     ];
     for (const pattern of patterns) {
       const match = text.match(pattern);
-      if (match) { const raw = match[2] ? `${match[1]} ${match[2]}` : match[1]; return String(raw).replace(/\s+/g, '').replace('–', '-'); }
+      if (!match) continue;
+      if (match.length >= 3 && /^\d[\d\s]+$/.test(String(match[1] || '').trim())) {
+        const point = String(match[1]).replace(/\D/g, '').padStart(4, '0').slice(-5);
+        const numberPart = String(match[2]).replace(/\D/g, '').padStart(8, '0');
+        return `${point}-${numberPart}`;
+      }
+      const raw = match[2] ? `${match[1]} ${match[2]}` : match[1];
+      return String(raw).replace(/\s+/g, '').replace('–', '-');
     }
+
+    const fileMatch = String(fileName || '').match(/(?:FAC(?:TURA)?[^0-9]*)?(\d{3,5})\s*[-_]\s*(\d{6,12})/i);
+    if (fileMatch) return `${fileMatch[1].padStart(4, '0')}-${fileMatch[2].padStart(8, '0')}`;
     return null;
   }
 
@@ -2288,7 +2513,7 @@
   }
 
   function extractTaxId(text) {
-    const match = text.match(/(?:CUIT|C\.U\.I\.T\.?|CUIL)\s*[:\-]?\s*(\d{2})\s*[- ]?\s*(\d{8})\s*[- ]?\s*(\d)/i);
+    const match = text.match(/(?:CUIT|C\.U\.I\.T\.?|CUIL)\s*(?:N[°ºO]\.?\s*)?[:\-]?\s*(\d{2})\s*[- ]?\s*(\d{8})\s*[- ]?\s*(\d)/i);
     return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
   }
 
@@ -2302,13 +2527,19 @@
       .filter((line) => !taxDigits || !line.replace(/\D/g, '').includes(taxDigits))
       .map((line, index) => ({ line, score: supplierNameScore(line, index) }))
       .sort((a, b) => b.score - a.score)[0];
-    return best?.score > 0 ? best.line : null;
+    return best?.score > 0 ? cleanSupplierName(best.line) : null;
+  }
+
+  function cleanSupplierName(value) {
+    let text = String(value || '').replace(/^[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]+/, '').replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9.)]+$/, '').trim();
+    text = text.replace(/\s+/g, ' ');
+    return text || null;
   }
 
   function supplierNameScore(line, index) {
     let score = Math.max(0, 25 - index);
     if (/[A-ZÁÉÍÓÚÑ]{3,}/.test(line)) score += 12;
-    if (/\b(SA|S\.A\.|SRL|S\.R\.L\.|SAS|S\.A\.S\.|SOCIEDAD|COOPERATIVA)\b/i.test(line)) score += 25;
+    if (/\b(SA|S\s*[.,]?\s*A\s*[.,]?|SRL|S\s*[.,]?\s*R\s*[.,]?\s*L\s*[.,]?|SAS|SOCIEDAD|COOPERATIVA)\b/i.test(line)) score += 25;
     if (/\d{4,}/.test(line)) score -= 15;
     if (/\$|%/.test(line)) score -= 20;
     return score;
@@ -2327,14 +2558,17 @@
       else if (/\bimporte\s+total\b/.test(normalizedLine)) { kind = 'total'; score += 95; }
       else if (/^\s*total\b/.test(normalizedLine) && !/subtotal/.test(normalizedLine)) { kind = 'total'; score += 85; }
       else if (/\bsubtotal\b/.test(normalizedLine)) { kind = 'subtotal'; score += 70; }
-      else if (/\biva\b|impuesto/.test(normalizedLine)) { kind = 'tax'; score += 55; }
+      else if ((/\biva\b|impuesto/.test(normalizedLine)) && !/responsable|cuit|cuil/.test(normalizedLine) && (/%|importe|monto|\biva\s+\d/.test(normalizedLine))) { kind = 'tax'; score += 55; }
       if (kind) candidates.push({ kind, value, score, line });
     });
 
     const totalCandidate = candidates.filter((item) => item.kind === 'total').sort((a, b) => b.score - a.score || b.value - a.value)[0];
     const subtotalCandidate = candidates.filter((item) => item.kind === 'subtotal').sort((a, b) => b.score - a.score)[0];
-    const taxValues = candidates.filter((item) => item.kind === 'tax').map((item) => item.value);
-    const taxAmount = taxValues.length ? roundMoney(taxValues.reduce((sum, value) => sum + value, 0)) : null;
+    const taxValues = candidates
+      .filter((item) => item.kind === 'tax' && item.value > 0)
+      .map((item) => roundMoney(item.value));
+    const uniqueTaxValues = [...new Set(taxValues.map((value) => value.toFixed(2)))].map(Number);
+    const taxAmount = uniqueTaxValues.length ? roundMoney(uniqueTaxValues.reduce((sum, value) => sum + value, 0)) : null;
 
     const total = totalCandidate?.value ?? null;
     return {
@@ -2360,23 +2594,23 @@
     (lines || []).forEach((line, index) => {
       const compactLine = normalizeSku(line);
       if (!compactLine) return;
-      const matches = [...known.entries()]
-        .filter(([sku]) => sku.length >= 4 && compactLine.includes(sku))
-        .sort((a, b) => b[0].length - a[0].length);
-      if (!matches.length) return;
-      const [normalizedSku, meta] = matches[0];
+      const matchedSku = matchKnownSkuInInvoiceLine(line, compactLine, known);
+      if (!matchedSku) return;
+      const { normalizedSku, meta, detectedToken, fuzzy, similarity } = matchedSku;
       const contextLines = [lines[index - 1], line, lines[index + 1]].filter(Boolean);
       const context = contextLines.join(' ');
-      const values = extractLocalizedNumbers(line, normalizedSku);
+      const values = extractLocalizedNumbers(line, detectedToken || normalizedSku);
       const inferred = inferInvoiceLineValues(values, meta.unitPrice);
       found.push({
         sku: meta.sku,
-        description: meta.name || extractInvoiceItemDescription(line, meta.sku, meta.name),
+        description: meta.name || extractInvoiceItemDescription(line, detectedToken || meta.sku, meta.name),
         quantity: inferred.quantity,
         unit_price: inferred.unitPrice,
         line_total: inferred.lineTotal,
         raw_line: String(line).slice(0, 500),
-        context: context.slice(0, 800)
+        context: context.slice(0, 800),
+        ocr_sku_detected: fuzzy ? detectedToken : null,
+        ocr_sku_similarity: fuzzy ? roundMoney(similarity * 100) : 100
       });
       usedLineIndexes.add(index);
     });
@@ -2384,7 +2618,7 @@
     // También detecta líneas con un SKU nuevo o desconocido para señalar artículos extra.
     (lines || []).forEach((line, index) => {
       if (usedLineIndexes.has(index)) return;
-      const generic = extractGenericInvoiceItemLine(line);
+      const generic = extractGenericInvoiceItemLine(line, known);
       if (!generic) return;
       found.push(generic);
       usedLineIndexes.add(index);
@@ -2423,7 +2657,65 @@
     return { items: deduped, unmatchedLines };
   }
 
-  function extractGenericInvoiceItemLine(line) {
+  function matchKnownSkuInInvoiceLine(line, compactLine, known) {
+    const exact = [...known.entries()]
+      .filter(([sku]) => sku.length >= 4 && compactLine.includes(sku))
+      .sort((a, b) => b[0].length - a[0].length)[0];
+    if (exact) return { normalizedSku: exact[0], meta: exact[1], detectedToken: exact[0], fuzzy: false, similarity: 1 };
+
+    const rawTokens = String(line || '').trim().split(/\s+/).slice(0, 3);
+    const candidates = rawTokens
+      .map((token) => normalizeSku(token))
+      .filter((token) => token.length >= 6 && token.length <= 36 && /[A-Z]/.test(token) && /\d/.test(token));
+    if (!candidates.length) return null;
+
+    let best = null;
+    let second = null;
+    for (const candidate of candidates) {
+      for (const [sku, meta] of known.entries()) {
+        if (sku.length < 6 || Math.abs(sku.length - candidate.length) > 2) continue;
+        const distance = levenshteinDistance(candidate, sku, 3);
+        const maxDistance = Math.max(candidate.length, sku.length) >= 13 ? 2 : 1;
+        if (distance > maxDistance) continue;
+        const similarity = 1 - distance / Math.max(candidate.length, sku.length);
+        const result = { normalizedSku: sku, meta, detectedToken: candidate, fuzzy: true, similarity, distance };
+        if (!best || similarity > best.similarity) {
+          second = best;
+          best = result;
+        } else if (!second || similarity > second.similarity) {
+          second = result;
+        }
+      }
+    }
+    if (!best || best.similarity < 0.88) return null;
+    if (second && second.normalizedSku !== best.normalizedSku && Math.abs(best.similarity - second.similarity) < 0.025) return null;
+    return best;
+  }
+
+  function levenshteinDistance(a, b, stopAfter = Infinity) {
+    const left = String(a || '');
+    const right = String(b || '');
+    if (left === right) return 0;
+    if (!left.length) return right.length;
+    if (!right.length) return left.length;
+    if (Math.abs(left.length - right.length) > stopAfter) return stopAfter + 1;
+    let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+    for (let i = 1; i <= left.length; i += 1) {
+      const current = [i];
+      let rowMin = current[0];
+      for (let j = 1; j <= right.length; j += 1) {
+        const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+        const value = Math.min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
+        current[j] = value;
+        rowMin = Math.min(rowMin, value);
+      }
+      if (rowMin > stopAfter) return stopAfter + 1;
+      previous = current;
+    }
+    return previous[right.length];
+  }
+
+  function extractGenericInvoiceItemLine(line, known = new Map()) {
     const text = String(line || '').trim();
     if (text.length < 8 || text.length > 500) return null;
     if (/\b(total|subtotal|iva|impuesto|factura|cuit|cuil|fecha|vencimiento|cae|remito|pedido|orden|importe|neto|exento|percepcion|percepción)\b/i.test(text)) return null;
@@ -2438,7 +2730,14 @@
     });
     if (!skuToken) return null;
     const sku = skuToken.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9._\/-]+$/g, '');
-    const values = extractLocalizedNumbers(text, normalizeSku(sku));
+    const compactSku = normalizeSku(sku);
+    const closeKnownSku = [...known.keys()].some((knownSku) => {
+      if (Math.abs(knownSku.length - compactSku.length) > 2) return false;
+      const distance = levenshteinDistance(compactSku, knownSku, 3);
+      return distance <= (Math.max(compactSku.length, knownSku.length) >= 13 ? 2 : 1);
+    });
+    if (closeKnownSku) return null;
+    const values = extractLocalizedNumbers(text, compactSku);
     if (values.length < 2) return null;
     const inferred = inferInvoiceLineValues(values, 0);
     if (inferred.lineTotal == null) return null;
@@ -2465,6 +2764,15 @@
 
   function inferInvoiceLineValues(values, catalogPrice) {
     const nums = values.map((item) => item.value).filter((value) => value >= 0 && Number.isFinite(value));
+    if (nums.length >= 3) {
+      const quantity = nums[0];
+      const unitPrice = nums[nums.length - 2];
+      const lineTotal = nums[nums.length - 1];
+      const relationError = Math.abs(quantity * unitPrice - lineTotal) / Math.max(1, lineTotal);
+      if (quantity > 0 && quantity <= 9999 && unitPrice >= 0 && lineTotal >= 0 && relationError <= 0.035) {
+        return { quantity, unitPrice, lineTotal };
+      }
+    }
     let best = null;
     for (let i = 0; i < nums.length; i += 1) {
       for (let j = i + 1; j < nums.length; j += 1) {
@@ -2501,7 +2809,7 @@
     let value = String(text || '');
     const compactSku = normalizeSku(skuToIgnore);
     if (compactSku) {
-      const chars = compactSku.split('').map((char) => `${escapeRegExp(char)}[\\s\\-_.]*`).join('');
+      const chars = compactSku.split('').map((char) => `${escapeRegExp(char)}[\\s\\-_.!|/\\\\]*`).join('');
       value = value.replace(new RegExp(chars, 'ig'), ' ');
     }
     const matches = value.match(/(?:\$|AR\$|U\$S)?\s*-?(?:\d{1,3}(?:\.\d{3})+,\d{1,4}|\d+,\d{1,4}|\d{1,3}(?:\.\d{3})+|\d+\.\d{1,4}|\d+)/gi) || [];
@@ -2585,11 +2893,13 @@
       reasons.push(`${skuMatches} SKU coincidente${skuMatches === 1 ? '' : 's'}`);
     }
 
-    if (parsed.totalAmount != null && number(order.total_amount) > 0) {
-      const diffPercent = Math.abs(number(parsed.totalAmount) - number(order.total_amount)) / Math.max(1, number(order.total_amount)) * 100;
-      if (diffPercent <= 0.5) { score += 30; reasons.push('Importe total prácticamente exacto'); }
-      else if (diffPercent <= 3) { score += 20; reasons.push('Importe total cercano'); }
-      else if (diffPercent <= 10) { score += 8; reasons.push('Importe total aproximado'); }
+    if ((parsed.totalAmount != null || parsed.subtotal != null) && number(order.total_amount) > 0) {
+      const comparable = selectInvoiceComparableAmount(parsed, order.total_amount);
+      const diffPercent = comparable.value == null ? 100 : Math.abs(number(comparable.value) - number(order.total_amount)) / Math.max(1, number(order.total_amount)) * 100;
+      const basisLabel = comparable.basis === 'subtotal' ? 'subtotal' : 'total';
+      if (diffPercent <= 0.5) { score += 30; reasons.push(`Importe ${basisLabel} prácticamente exacto`); }
+      else if (diffPercent <= 3) { score += 20; reasons.push(`Importe ${basisLabel} cercano`); }
+      else if (diffPercent <= 10) { score += 8; reasons.push(`Importe ${basisLabel} aproximado`); }
       else score -= Math.min(20, diffPercent / 3);
     }
 
@@ -2618,12 +2928,28 @@
     };
   }
 
+  function selectInvoiceComparableAmount(source, orderTotal) {
+    const total = source?.totalAmount != null ? nullableNumber(source.totalAmount) : nullableNumber(source?.total_amount);
+    const subtotal = nullableNumber(source?.subtotal);
+    const orderValue = nullableNumber(orderTotal);
+    const candidates = [
+      { basis: 'total', value: total },
+      { basis: 'subtotal', value: subtotal }
+    ].filter((item) => item.value != null);
+    if (!candidates.length) return { basis: null, value: null };
+    if (orderValue == null) return candidates[0];
+    return candidates.sort((a, b) => Math.abs(a.value - orderValue) - Math.abs(b.value - orderValue))[0];
+  }
+
   function emptyInvoiceComparison(status = 'pendiente') {
     return {
       status,
       total_ok: false,
       order_total: null,
       invoice_total: null,
+      invoice_document_total: null,
+      invoice_subtotal: null,
+      invoice_comparison_basis: null,
       total_difference: null,
       matched_count: 0,
       ok_count: 0,
@@ -2640,7 +2966,10 @@
     const invoiceItems = Array.isArray(parsedOrInvoice?.items)
       ? parsedOrInvoice.items
       : (Array.isArray(parsedOrInvoice?.parsed_items) ? parsedOrInvoice.parsed_items : []);
-    const invoiceTotal = parsedOrInvoice?.totalAmount != null ? parsedOrInvoice.totalAmount : parsedOrInvoice?.total_amount;
+    const comparableAmount = selectInvoiceComparableAmount(parsedOrInvoice, order.total_amount);
+    const invoiceTotal = comparableAmount.value;
+    const invoiceFiscalTotal = parsedOrInvoice?.totalAmount != null ? parsedOrInvoice.totalAmount : parsedOrInvoice?.total_amount;
+    const invoiceSubtotal = parsedOrInvoice?.subtotal != null ? parsedOrInvoice.subtotal : null;
     const orderItems = itemsForOrder(order.id);
     const used = new Set();
     const hasStructuredItems = invoiceItems.length > 0;
@@ -2682,11 +3011,16 @@
     if (missingCount || extraCount || differenceCount || (invoiceTotal != null && !totalOk)) status = 'diferencias';
     else if (!hasStructuredItems || unreadableCount || invoiceTotal == null) status = 'parcial';
 
+    const extractionMeta = invoiceExtractionMetaFrom(parsedOrInvoice);
     return {
+      ...extractionMeta,
       status,
       total_ok: totalOk,
       order_total: number(order.total_amount),
       invoice_total: invoiceTotal == null ? null : number(invoiceTotal),
+      invoice_document_total: invoiceFiscalTotal == null ? null : number(invoiceFiscalTotal),
+      invoice_subtotal: invoiceSubtotal == null ? null : number(invoiceSubtotal),
+      invoice_comparison_basis: comparableAmount.basis,
       total_difference: totalDifference,
       matched_count: rows.filter((row) => !['missing', 'extra'].includes(row.result)).length,
       ok_count: okCount,
@@ -2696,6 +3030,20 @@
       unreadable_count: unreadableCount,
       rows,
       generated_at: new Date().toISOString()
+    };
+  }
+
+  function invoiceExtractionMetaFrom(source) {
+    const summary = source?.comparison_summary && typeof source.comparison_summary === 'object' ? source.comparison_summary : {};
+    const method = source?.extractionMethod || summary.extraction_method || null;
+    const confidence = source?.extractionConfidence ?? summary.extraction_confidence ?? null;
+    const quality = source?.parseQuality ?? summary.parse_quality ?? null;
+    return {
+      extraction_method: method,
+      extraction_confidence: confidence == null ? null : number(confidence),
+      parse_quality: quality == null ? null : number(quality),
+      ocr_used: method === 'ocr' || Boolean(summary.ocr_used),
+      reading_corrected_manually: Boolean(summary.reading_corrected_manually)
     };
   }
 
@@ -2832,7 +3180,7 @@
     const service = order ? serviceById(order.service_id) : null;
     const summary = normalizeInvoiceComparisonSummary(invoice.comparison_summary, invoice.comparison_status);
     E.invoiceDetailTitle.textContent = invoice.invoice_number ? `Factura ${invoice.invoice_number}` : invoice.file_name;
-    E.invoiceDetailSubtitle.textContent = `${invoice.file_name} · ${invoiceMethodLabel(invoice.match_method)}`;
+    E.invoiceDetailSubtitle.textContent = `${invoice.file_name} · ${invoiceMethodLabel(invoice.match_method)} · ${invoiceExtractionLabel(summary)}`;
     E.invoiceRawText.textContent = invoice.extracted_text || 'No se pudo extraer texto del PDF.';
     E.invoiceMatchConfidence.textContent = invoice.match_method === 'manual' ? 'Manual' : `${Math.round(number(invoice.match_score))}%`;
     E.invoiceMatchConfidence.className = `invoice-confidence-pill is-${invoiceStatusClass(invoice.comparison_status)}`;
@@ -2845,6 +3193,7 @@
       ['Subtotal', invoice.subtotal == null ? 'No detectado' : formatCurrency(invoice.subtotal)],
       ['Impuestos', invoice.tax_amount == null ? 'No detectados' : formatCurrency(invoice.tax_amount)],
       ['PDF', `${invoice.pdf_page_count || 0} páginas · ${formatFileSize(invoice.file_size)}`],
+      ['Lectura', invoiceExtractionLabel(summary, true)],
       ['Cargada', dtf.format(new Date(invoice.created_at))]
     ];
     E.invoiceDetailMeta.innerHTML = meta.map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
@@ -2859,6 +3208,18 @@
     E.toggleInvoiceReviewedButton.classList.toggle('btn-outline-success', !invoice.reviewed);
     E.toggleInvoiceReviewedButton.classList.toggle('btn-outline-secondary', invoice.reviewed);
     E.invoiceDetailError.classList.add('d-none');
+  }
+
+  function invoiceExtractionLabel(summary, detailed = false) {
+    const method = summary?.extraction_method;
+    if (method === 'ocr') {
+      const confidence = summary?.extraction_confidence == null ? '' : ` · confianza ${Math.round(number(summary.extraction_confidence))}%`;
+      const corrected = summary?.reading_corrected_manually ? ' · corregida manualmente' : '';
+      return detailed ? `OCR automático${confidence}${corrected}` : 'Lectura OCR';
+    }
+    if (summary?.reading_corrected_manually) return 'Lectura corregida manualmente';
+    if (method === 'texto_pdf') return detailed ? 'Texto incorporado en el PDF' : 'Texto PDF';
+    return 'Método no registrado';
   }
 
   function formatFileSize(bytes) {
@@ -2896,13 +3257,18 @@
       E.invoiceAnalysisSummary.innerHTML = `<div class="invoice-summary-card is-${invoiceStatusClass(status)}"><div><span class="eyebrow">Resultado</span><h6>${eh(INVOICE_STATUS_LABELS[status] || status)}</h6><p>No se pudo vincular esta factura con un pedido de manera confiable. Seleccioná uno para comparar.</p></div></div>`;
       return;
     }
+    const comparisonBasis = summary.invoice_comparison_basis === 'subtotal' ? 'subtotal' : 'total';
+    const basisLabel = comparisonBasis === 'subtotal' ? 'subtotal de la factura' : 'total de la factura';
     const totalText = summary.invoice_total == null
-      ? 'No se pudo leer el total de la factura.'
-      : (summary.total_ok ? 'El importe total coincide.' : `Diferencia total: ${formatSignedCurrency(summary.total_difference)}.`);
+      ? 'No se pudo leer un importe comparable de la factura.'
+      : (summary.total_ok ? `El ${basisLabel} coincide.` : `Diferencia contra el ${basisLabel}: ${formatSignedCurrency(summary.total_difference)}.`);
+    const fiscalNote = comparisonBasis === 'subtotal' && summary.invoice_document_total != null
+      ? `<small>Total fiscal con impuestos: ${eh(formatCurrency(summary.invoice_document_total))}</small>`
+      : '';
     E.invoiceAnalysisSummary.innerHTML = `<div class="invoice-summary-card is-${invoiceStatusClass(status)}">
       <div><span class="eyebrow">Resultado</span><h6>${eh(INVOICE_STATUS_LABELS[status] || status)}</h6><p>${eh(totalText)} Pedido ${eh(order.order_code)} · ${eh(service?.name || 'Servicio')}.</p></div>
       <div class="invoice-summary-metrics"><span><strong>${summary.ok_count || 0}</strong> correctos</span><span><strong>${summary.difference_count || 0}</strong> diferencias</span><span><strong>${summary.missing_count || 0}</strong> faltantes</span><span><strong>${summary.extra_count || 0}</strong> extras</span></div>
-      <div class="invoice-total-compare"><div><span>Pedido</span><strong>${eh(formatCurrency(order.total_amount))}</strong></div><i class="bi bi-arrow-left-right"></i><div><span>Factura</span><strong>${summary.invoice_total == null ? 'No leído' : eh(formatCurrency(summary.invoice_total))}</strong></div></div>
+      <div class="invoice-total-compare"><div><span>Pedido</span><strong>${eh(formatCurrency(order.total_amount))}</strong></div><i class="bi bi-arrow-left-right"></i><div><span>${comparisonBasis === 'subtotal' ? 'Subtotal factura' : 'Total factura'}</span><strong>${summary.invoice_total == null ? 'No leído' : eh(formatCurrency(summary.invoice_total))}</strong>${fiscalNote}</div></div>
     </div>`;
   }
 
@@ -2977,6 +3343,7 @@
       } else {
         status = invoice.extracted_text?.trim() ? 'sin_match' : 'sin_lectura';
         comparison = emptyInvoiceComparison(status);
+        Object.assign(comparison, invoiceExtractionMetaFrom(invoice));
       }
       const update = {
         matched_order_id: orderId,
@@ -3014,6 +3381,72 @@
       showInvoiceDetailError(invoiceModuleErrorMessage(error));
     } finally {
       buttonBusy(E.openInvoicePdfButton, false);
+    }
+  }
+
+  async function reprocessSelectedInvoiceWithOcr() {
+    const invoice = invoiceById(S.selectedInvoiceId);
+    if (!invoice || !isFullAdmin()) return;
+    E.invoiceDetailError.classList.add('d-none');
+    buttonBusy(E.reprocessInvoiceOcrButton, true, 'Preparando OCR...');
+    try {
+      const { data: pdfBlob, error: downloadError } = await S.sb.storage.from(INVOICE_BUCKET).download(invoice.storage_path);
+      if (downloadError) throw downloadError;
+      const buffer = await pdfBlob.arrayBuffer();
+      const analyzed = await analyzeInvoicePdf(buffer, invoice.file_name, {
+        forceOcr: true,
+        onProgress: (message) => {
+          E.reprocessInvoiceOcrButton.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${eh(message)}`;
+        }
+      });
+      const parsed = analyzed.parsed;
+      let selectedOrder = null;
+      let match;
+      if (invoice.match_method === 'manual' && invoice.matched_order_id) {
+        selectedOrder = S.orders.find((item) => item.id === invoice.matched_order_id) || null;
+        match = { score: 100, candidates: Array.isArray(invoice.match_candidates) ? invoice.match_candidates : [] };
+      } else {
+        match = findBestInvoiceOrderMatch(parsed, analyzed.extracted.text);
+        selectedOrder = match.order || null;
+      }
+      const statusWithoutOrder = analyzed.extracted.text.trim() ? 'sin_match' : 'sin_lectura';
+      const comparison = selectedOrder
+        ? compareInvoiceAgainstOrder(parsed, selectedOrder)
+        : emptyInvoiceComparison(statusWithoutOrder);
+      applyInvoiceExtractionMeta(comparison, analyzed);
+      const comparisonStatus = selectedOrder ? comparison.status : statusWithoutOrder;
+      const update = {
+        pdf_page_count: analyzed.extracted.pageCount,
+        extracted_text: analyzed.extracted.text.slice(0, 250000),
+        invoice_number: parsed.invoiceNumber || invoice.invoice_number || null,
+        invoice_date: parsed.invoiceDate || invoice.invoice_date || null,
+        supplier_name: parsed.supplierName || invoice.supplier_name || null,
+        supplier_tax_id: parsed.supplierTaxId || invoice.supplier_tax_id || null,
+        currency: parsed.currency || invoice.currency || 'ARS',
+        subtotal: parsed.subtotal,
+        tax_amount: parsed.taxAmount,
+        total_amount: parsed.totalAmount,
+        parsed_items: parsed.items,
+        unmatched_lines: parsed.unmatchedLines,
+        matched_order_id: selectedOrder?.id || null,
+        match_score: invoice.match_method === 'manual' && selectedOrder ? 100 : number(match.score),
+        match_method: invoice.match_method === 'manual' && selectedOrder ? 'manual' : (selectedOrder ? 'automatico' : 'sin_match'),
+        match_candidates: match.candidates || [],
+        comparison_status: comparisonStatus,
+        comparison_summary: comparison,
+        reviewed: false
+      };
+      const { data, error } = await S.sb.from('supplier_invoices').update(update).eq('id', invoice.id).select('*').single();
+      if (error) throw error;
+      replaceInvoiceState(data);
+      renderInvoiceDetail(data);
+      renderInvoices();
+      toast(`PDF releído con OCR. Se detectaron ${(parsed.items || []).length} artículos.`, 'success');
+    } catch (error) {
+      console.error(error);
+      showInvoiceDetailError(invoiceModuleErrorMessage(error));
+    } finally {
+      buttonBusy(E.reprocessInvoiceOcrButton, false);
     }
   }
 
@@ -3136,7 +3569,9 @@
     try {
       const correctedTotal = nullableNumber(S.invoiceReadingTotalDraft);
       const order = S.orders.find((item) => item.id === invoice.matched_order_id) || null;
-      const comparison = order ? compareInvoiceAgainstOrder({ parsed_items: parsedItems, total_amount: correctedTotal }, order) : emptyInvoiceComparison(invoice.extracted_text?.trim() ? 'sin_match' : 'sin_lectura');
+      const comparisonSource = { parsed_items: parsedItems, total_amount: correctedTotal, comparison_summary: invoice.comparison_summary };
+      const comparison = order ? compareInvoiceAgainstOrder(comparisonSource, order) : emptyInvoiceComparison(invoice.extracted_text?.trim() ? 'sin_match' : 'sin_lectura');
+      Object.assign(comparison, invoiceExtractionMetaFrom(invoice), { reading_corrected_manually: true });
       const status = comparison.status;
       const { data, error } = await S.sb.from('supplier_invoices').update({
         parsed_items: parsedItems,
