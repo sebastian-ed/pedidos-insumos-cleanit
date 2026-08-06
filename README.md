@@ -26,7 +26,7 @@ Web app responsive para que los supervisores autorizados soliciten insumos de ma
 - Copia del pedido para WhatsApp o portapapeles.
 - Gestión de insumos, imágenes, servicios y usuarios.
 - Habilitación u ocultamiento de insumos por servicio, con catálogo completo por defecto.
-- Historial de cambios de estado.
+- Historial unificado de pedidos y cambios de precios.
 - Actualización en vivo mediante Supabase Realtime.
 
 ## Instalación en un proyecto nuevo de Supabase
@@ -191,7 +191,7 @@ Esta versión elimina la carga anónima de pedidos.
 - `operator` se muestra en la interfaz como **Supervisor**.
 - Los supervisores ingresan con correo y contraseña y acceden al formulario de pedidos.
 - Administradores y proveedores ingresan desde la misma pantalla y son dirigidos automáticamente a sus paneles.
-- El nombre del responsable queda asociado a su perfil y no puede editarse desde el formulario.
+- El supervisor escribe el operario responsable del servicio; la cuenta autenticada queda registrada por separado como creadora del pedido.
 - Las funciones antiguas de carga anónima quedan bloqueadas en Supabase.
 
 Para una instalación existente, ejecutar en último lugar:
@@ -228,3 +228,36 @@ actualizar-consumos-por-servicio.sql
 ```
 
 Las definiciones, criterios e instrucciones están en `LEEME-CONSUMOS-POR-SERVICIO.md`.
+
+## Actualización: listas de precios desde Excel
+
+En **Administración → Insumos** se agregó la opción **Actualizar desde Excel**. Permite adjuntar XLSX, XLS, XLSB o CSV, detectar las columnas de SKU y precio, comparar con el catálogo y actualizar cambios de forma individual o masiva.
+
+La comparación identifica aumentos, disminuciones, precios sin cambios, SKU faltantes en cualquiera de los dos lados, insumos sin SKU, filas inválidas y duplicados. Para una base existente, ejecutar:
+
+```text
+actualizar-importacion-precios-excel.sql
+```
+
+Las instrucciones completas están en `LEEME-IMPORTACION-PRECIOS-EXCEL.md`.
+
+## Actualización: historial de cambios de precios
+
+La sección **Historial** ahora muestra, además de los movimientos de pedidos, cada variación del catálogo de precios con producto, SKU, precio anterior, precio nuevo, diferencia, porcentaje, fecha, usuario y origen del cambio.
+
+La auditoría contempla tanto las actualizaciones masivas desde Excel como las ediciones manuales del precio de un insumo. Para una base existente, ejecutar:
+
+```text
+actualizar-historial-cambios-precios.sql
+```
+
+Las instrucciones completas están en `LEEME-HISTORIAL-CAMBIOS-PRECIOS.md`.
+
+
+## Control de facturas de proveedor
+
+El administrador puede adjuntar una o varias facturas PDF desde la pestaña **Facturas**. La aplicación extrae número, fecha, proveedor, CUIT, importe total, SKU, cantidades y precios; propone el pedido más probable y compara artículos e importes. También señala SKU desconocidos, faltantes, extras y diferencias de cantidad o precio.
+
+El pedido sugerido puede reemplazarse manualmente y la lectura de las líneas puede corregirse desde el detalle. Los PDF se guardan en un bucket privado de Supabase. Para habilitar el módulo en una base existente, ejecutar una vez `actualizar-control-facturas-proveedor.sql`.
+
+Los PDF escaneados sin texto seleccionable requieren corrección manual. La comparación valida pedido contra factura; la recepción física debe controlarse mediante remito o confirmación de entrega.

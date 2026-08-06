@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260730-consumption">
+  <link rel="stylesheet" href="styles.css?v=20260806-invoice-control">
 </head>
 <body>
   <div id="loadingScreen" class="loading-screen">
@@ -225,6 +225,7 @@
         <nav class="admin-nav" aria-label="Administración">
           <button class="admin-nav-item active" data-admin-tab="dashboard"><i class="bi bi-grid-1x2"></i><span>Panel general</span></button>
           <button class="admin-nav-item" data-admin-tab="orders"><i class="bi bi-clipboard-check"></i><span>Pedidos</span></button>
+          <button class="admin-nav-item" data-admin-tab="invoices"><i class="bi bi-receipt"></i><span>Facturas</span></button>
           <button class="admin-nav-item" data-admin-tab="consumption"><i class="bi bi-graph-up-arrow"></i><span>Consumos</span></button>
           <button class="admin-nav-item" data-admin-tab="materials"><i class="bi bi-droplet"></i><span>Insumos</span></button>
           <button class="admin-nav-item" data-admin-tab="services"><i class="bi bi-buildings"></i><span>Servicios</span></button>
@@ -261,6 +262,33 @@
           <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Pedido</th><th>Servicio</th><th>Operario responsable</th><th>Contenido</th><th>Prioridad</th><th>Estado</th><th></th></tr></thead><tbody id="ordersTableBody"></tbody></table></div></div>
         </section>
 
+        <section id="adminInvoices" class="admin-panel d-none">
+          <div class="panel-heading"><div><span class="eyebrow">Control de proveedores</span><h1>Facturas</h1><p>Adjuntá los PDF y compará automáticamente lo facturado contra cada pedido.</p></div><div class="d-flex flex-wrap gap-2"><button id="refreshInvoicesButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-arrow-clockwise me-2"></i>Actualizar</button><button id="selectInvoiceFilesButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-file-earmark-pdf me-2"></i>Cargar facturas</button><input id="invoicePdfInput" class="d-none" type="file" accept="application/pdf,.pdf" multiple></div></div>
+          <div class="alert alert-info invoice-scope-note"><i class="bi bi-shield-check me-2"></i>La app valida <strong>pedido vs. factura</strong>: SKU, cantidades, precios e importe total. Los PDF quedan privados. Un PDF escaneado sin texto se marca para revisión manual.</div>
+          <div id="invoiceDropZone" class="invoice-drop-zone mb-4" tabindex="0" role="button" aria-label="Adjuntar facturas PDF">
+            <div class="invoice-drop-icon"><i class="bi bi-cloud-arrow-up"></i></div>
+            <div><strong>Arrastrá uno o varios PDF</strong><span>o hacé clic para seleccionarlos. Máximo 20 MB por archivo.</span></div>
+          </div>
+          <div id="invoiceUploadQueue" class="invoice-upload-queue d-none mb-4"></div>
+          <div id="invoiceModuleError" class="alert alert-danger d-none"></div>
+          <div class="row g-3 mb-4">
+            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Facturas cargadas</div><div id="invoiceKpiTotal" class="kpi-value">0</div><div class="kpi-foot">PDF registrados</div></div></div>
+            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Coinciden</div><div id="invoiceKpiOk" class="kpi-value">0</div><div class="kpi-foot">Sin diferencias detectadas</div></div></div>
+            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card warning"><div class="kpi-label">Con diferencias</div><div id="invoiceKpiDifferences" class="kpi-value">0</div><div class="kpi-foot">Requieren revisión</div></div></div>
+            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card danger"><div class="kpi-label">Sin vincular</div><div id="invoiceKpiUnmatched" class="kpi-value">0</div><div class="kpi-foot">Sin pedido confiable</div></div></div>
+          </div>
+          <div class="section-card mb-4">
+            <div class="row g-3 align-items-end">
+              <div class="col-lg-7"><label for="invoiceSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="invoiceSearch" class="form-control" type="search" placeholder="Factura, archivo, pedido, servicio, proveedor o CUIT"></div></div>
+              <div class="col-lg-5"><label for="invoiceStatusFilter" class="form-label">Resultado</label><select id="invoiceStatusFilter" class="form-select"><option value="">Todos</option><option value="coincide">Coincide</option><option value="diferencias">Con diferencias</option><option value="parcial">Comparación parcial</option><option value="sin_match">Sin pedido vinculado</option><option value="sin_lectura">Sin lectura de texto</option><option value="pendiente">Pendiente</option></select></div>
+            </div>
+          </div>
+          <div class="section-card p-0 overflow-hidden">
+            <div class="invoice-table-heading"><div><h2 class="section-title mb-1">Control documental</h2><p class="text-secondary mb-0">El porcentaje indica la confianza del emparejamiento automático.</p></div><span id="invoiceResultsCaption" class="badge text-bg-light">0 facturas</span></div>
+            <div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Factura</th><th>Proveedor / fecha</th><th>Importe</th><th>Pedido vinculado</th><th>Confianza</th><th>Resultado</th><th>Revisión</th><th></th></tr></thead><tbody id="invoiceTableBody"></tbody></table></div>
+          </div>
+        </section>
+
         <section id="adminConsumption" class="admin-panel d-none">
           <div class="panel-heading"><div><span class="eyebrow">Inteligencia operativa</span><h1>Consumo por servicio</h1><p>Compará el consumo mensual de cada insumo y detectá desvíos respecto de los últimos meses.</p></div><div class="d-flex flex-wrap gap-2"><button id="exportConsumptionButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Exportar CSV</button><button id="refreshConsumptionButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-arrow-clockwise me-2"></i>Actualizar</button></div></div>
           <div class="alert alert-info consumption-definition"><i class="bi bi-info-circle-fill me-2"></i><strong>Consumo confirmado:</strong> se contabilizan únicamente pedidos con estado <strong>Entregado</strong>, usando la fecha en que fueron cerrados. Los pedidos pendientes, en preparación, enviados o cancelados no alteran el informe.</div>
@@ -289,7 +317,7 @@
         </section>
 
         <section id="adminMaterials" class="admin-panel d-none">
-          <div class="panel-heading"><div><span class="eyebrow">Catálogo maestro</span><h1>Insumos</h1><p>Gestioná SKU, precios, imágenes, unidades y cantidades sugeridas.</p></div><button id="addMaterialButton" class="btn btn-primary fw-bold"><i class="bi bi-plus-lg me-2"></i>Nuevo insumo</button></div>
+          <div class="panel-heading"><div><span class="eyebrow">Catálogo maestro</span><h1>Insumos</h1><p>Gestioná SKU, precios, imágenes, unidades y cantidades sugeridas.</p></div><div class="d-flex flex-wrap gap-2"><button id="importPricesButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Actualizar desde Excel</button><button id="addMaterialButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-plus-lg me-2"></i>Nuevo insumo</button></div></div>
           <div class="section-card mb-4"><div class="row g-3"><div class="col-lg-8"><label for="materialsSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="materialsSearch" class="form-control" type="search" placeholder="Nombre, categoría o detalle"></div></div><div class="col-lg-4"><label for="materialsStatusFilter" class="form-label">Estado</label><select id="materialsStatusFilter" class="form-select"><option value="all">Todos</option><option value="active">Activos</option><option value="inactive">Inactivos</option></select></div></div></div>
           <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Insumo</th><th>SKU</th><th>Categoría</th><th>Unidad</th><th>Precio</th><th>Sugerido</th><th>Estado</th><th></th></tr></thead><tbody id="materialsTableBody"></tbody></table></div></div>
         </section>
@@ -307,8 +335,27 @@
         </section>
 
         <section id="adminHistory" class="admin-panel d-none">
-          <div class="panel-heading"><div><span class="eyebrow">Trazabilidad</span><h1>Historial</h1><p>Cambios de estado con fecha, pedido y responsable.</p></div></div>
-          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Fecha</th><th>Pedido</th><th>Servicio</th><th>Cambio</th><th>Usuario</th><th>Detalle</th></tr></thead><tbody id="historyTableBody"></tbody></table></div></div>
+          <div class="panel-heading"><div><span class="eyebrow">Trazabilidad integral</span><h1>Historial</h1><p>Consultá cambios de pedidos y variaciones de precios, con fecha, responsable y valores anteriores y nuevos.</p></div></div>
+          <div class="filters-card mb-3">
+            <div class="row g-3 align-items-end">
+              <div class="col-12 col-md-4">
+                <label class="form-label fw-bold" for="historyTypeFilter">Tipo de movimiento</label>
+                <select id="historyTypeFilter" class="form-select">
+                  <option value="all">Todos los movimientos</option>
+                  <option value="order">Cambios de pedidos</option>
+                  <option value="price">Cambios de precios</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-8">
+                <label class="form-label fw-bold" for="historySearch">Buscar</label>
+                <div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="historySearch" class="form-control" type="search" placeholder="Pedido, servicio, producto, SKU, archivo o usuario"></div>
+              </div>
+            </div>
+          </div>
+          <div class="section-card p-0 overflow-hidden">
+            <div class="history-caption" id="historyResultsCaption">0 movimientos visibles</div>
+            <div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Fecha</th><th>Tipo</th><th>Referencia</th><th>Contexto</th><th>Cambio</th><th>Usuario</th><th>Detalle</th></tr></thead><tbody id="historyTableBody"></tbody></table></div>
+          </div>
         </section>
       </main>
     </section>
@@ -319,6 +366,7 @@
     <div class="offcanvas-body"><nav class="admin-nav">
       <button class="admin-nav-item active" data-admin-tab="dashboard" data-bs-dismiss="offcanvas"><i class="bi bi-grid-1x2"></i><span>Panel general</span></button>
       <button class="admin-nav-item" data-admin-tab="orders" data-bs-dismiss="offcanvas"><i class="bi bi-clipboard-check"></i><span>Pedidos</span></button>
+      <button class="admin-nav-item" data-admin-tab="invoices" data-bs-dismiss="offcanvas"><i class="bi bi-receipt"></i><span>Facturas</span></button>
       <button class="admin-nav-item" data-admin-tab="consumption" data-bs-dismiss="offcanvas"><i class="bi bi-graph-up-arrow"></i><span>Consumos</span></button>
       <button class="admin-nav-item" data-admin-tab="materials" data-bs-dismiss="offcanvas"><i class="bi bi-droplet"></i><span>Insumos</span></button>
       <button class="admin-nav-item" data-admin-tab="services" data-bs-dismiss="offcanvas"><i class="bi bi-buildings"></i><span>Servicios</span></button>
@@ -393,9 +441,142 @@
     </div>
   </div>
 
+  <div class="modal fade" id="invoiceDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content invoice-detail-modal-content">
+        <div class="modal-header">
+          <div><div class="eyebrow">Control de factura</div><h5 id="invoiceDetailTitle" class="modal-title fw-black">Factura</h5><p id="invoiceDetailSubtitle" class="text-secondary small mb-0 mt-1"></p></div>
+          <div class="d-flex align-items-center gap-2"><button id="openInvoicePdfButton" class="btn btn-outline-primary btn-sm fw-bold" type="button"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir PDF</button><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+        </div>
+        <div class="modal-body">
+          <div id="invoiceDetailError" class="alert alert-danger d-none"></div>
+          <div id="invoiceDetailMeta" class="order-meta-grid mb-3"></div>
+          <section class="invoice-match-card mb-3">
+            <div class="invoice-match-heading"><div><span class="eyebrow">Pedido relacionado</span><h6 class="fw-black mb-1">Vinculación y análisis</h6><p class="text-secondary small mb-0">Podés reemplazar la sugerencia automática si el proveedor no imprimió el número correcto.</p></div><span id="invoiceMatchConfidence" class="invoice-confidence-pill">0%</span></div>
+            <div class="row g-3 align-items-end mt-1">
+              <div class="col-lg-9"><label for="invoiceOrderSelect" class="form-label">Pedido</label><select id="invoiceOrderSelect" class="form-select"><option value="">Sin pedido vinculado</option></select></div>
+              <div class="col-lg-3"><button id="saveInvoiceMatchButton" class="btn btn-primary w-100 fw-bold" type="button"><i class="bi bi-link-45deg me-2"></i>Vincular y comparar</button></div>
+            </div>
+            <div id="invoiceCandidateHints" class="invoice-candidate-hints mt-3"></div>
+          </section>
+          <div id="invoiceAnalysisSummary" class="invoice-analysis-summary mb-3"></div>
+          <section class="section-card p-0 overflow-hidden mb-3">
+            <div class="invoice-table-heading"><div><h6 class="fw-black mb-1">Comparación de artículos</h6><p class="text-secondary small mb-0">Se cruza cada SKU del pedido con lo leído en la factura.</p></div><button id="toggleInvoiceReadingEditButton" class="btn btn-outline-secondary btn-sm fw-bold" type="button"><i class="bi bi-pencil-square me-1"></i>Corregir lectura</button></div>
+            <div class="table-responsive"><table class="table admin-table align-middle invoice-comparison-table mb-0"><thead><tr><th>Artículo pedido</th><th>Pedido</th><th>Factura</th><th>Precio</th><th>Importe</th><th>Resultado</th></tr></thead><tbody id="invoiceComparisonBody"></tbody></table></div>
+          </section>
+          <section id="invoiceReadingEditPanel" class="section-card invoice-reading-editor d-none mb-3">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-3"><div><h6 class="fw-black mb-1">Lectura extraída del PDF</h6><p class="text-secondary small mb-0">Corregí solamente cuando el formato del proveedor haya sido interpretado de manera incorrecta.</p></div><button id="addInvoiceReadingItemButton" class="btn btn-outline-primary btn-sm fw-bold" type="button"><i class="bi bi-plus-lg me-1"></i>Agregar línea</button></div>
+            <div class="row g-3 mb-3"><div class="col-md-5 col-xl-3"><label for="invoiceReadingTotal" class="form-label">Total facturado leído</label><input id="invoiceReadingTotal" class="form-control" type="number" min="0" step="0.01" placeholder="Importe total"><div class="form-text">Corregilo si el PDF ubicó mal el total.</div></div></div>
+            <div id="invoiceReadingItems" class="invoice-reading-items"></div>
+            <div class="d-flex justify-content-end gap-2 mt-3"><button id="cancelInvoiceReadingEditButton" class="btn btn-light" type="button">Cancelar</button><button id="saveInvoiceReadingButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-check2-circle me-2"></i>Guardar y volver a comparar</button></div>
+          </section>
+          <details class="invoice-raw-text"><summary>Ver texto extraído del PDF</summary><pre id="invoiceRawText"></pre></details>
+        </div>
+        <div class="modal-footer">
+          <button id="deleteInvoiceButton" class="btn btn-outline-danger me-auto" type="button"><i class="bi bi-trash3 me-2"></i>Eliminar factura</button>
+          <button id="toggleInvoiceReviewedButton" class="btn btn-outline-success fw-bold" type="button"><i class="bi bi-check2-square me-2"></i>Marcar revisada</button>
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="serviceMaterialsModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Catálogo por servicio</div><h5 id="serviceMaterialsModalTitle" class="modal-title fw-black">Insumos habilitados</h5><p id="serviceMaterialsModalSubtitle" class="text-secondary small mb-0 mt-1"></p></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="alert alert-info py-2"><i class="bi bi-info-circle me-2"></i>Todos los insumos están visibles por defecto. Desactivá únicamente los que este servicio no debe pedir.</div><div class="row g-3 align-items-end mb-3"><div class="col-lg-6"><label for="serviceMaterialsSearch" class="form-label">Buscar insumo</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="serviceMaterialsSearch" class="form-control" type="search" placeholder="Nombre, categoría o detalle"></div></div><div class="col-sm-6 col-lg-3"><label for="serviceMaterialsFilter" class="form-label">Mostrar</label><select id="serviceMaterialsFilter" class="form-select"><option value="all">Todos</option><option value="visible">Visibles</option><option value="hidden">Ocultos</option></select></div><div class="col-sm-6 col-lg-3"><div class="d-flex gap-2"><button id="showAllServiceMaterialsButton" class="btn btn-outline-primary flex-fill" type="button">Habilitar todos</button><button id="hideAllServiceMaterialsButton" class="btn btn-outline-secondary flex-fill" type="button">Ocultar todos</button></div></div></div><div class="service-material-summary mb-3"><span id="serviceMaterialsVisibleCount" class="badge text-bg-primary">0 visibles</span><span id="serviceMaterialsHiddenCount" class="badge text-bg-secondary">0 ocultos</span></div><div id="serviceMaterialsList" class="service-material-list"></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveServiceMaterialsButton" type="button" class="btn btn-primary fw-bold">Guardar configuración</button></div></div></div></div>
 
   <div class="modal fade" id="serviceModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Servicio</div><h5 id="serviceModalTitle" class="modal-title fw-black">Nuevo servicio</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="serviceForm"><input id="serviceId" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="serviceName" class="form-label">Nombre</label><input id="serviceName" class="form-control" maxlength="150" required><div class="form-text">Es el texto que verá el operario en el selector.</div></div><div class="col-md-5"><label for="serviceAddress" class="form-label">Dirección</label><input id="serviceAddress" class="form-control" maxlength="200"></div><div class="col-md-6"><label for="serviceZone" class="form-label">Zona</label><input id="serviceZone" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceSupervisor" class="form-label">Supervisor</label><input id="serviceSupervisor" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceBilling" class="form-label">Facturación mensual del servicio</label><input id="serviceBilling" class="form-control" type="number" min="0" max="999999999.99" step="0.01" value="0"><div class="form-text">Base utilizada para calcular los topes del pedido.</div></div><div class="col-md-6"><label for="serviceBudgetPercent" class="form-label">Límite operativo (%)</label><input id="serviceBudgetPercent" class="form-control" type="number" min="5" max="7" step="0.1" value="5"><div class="form-text">Debe estar entre 5% y 7%. El pedido podrá enviarse aunque lo supere.</div></div><div class="col-12"><div class="budget-preview"><div><span>Referencia 5%</span><strong id="serviceFiveValue">$ 0</strong></div><div class="is-limit"><span>Límite configurado</span><strong id="serviceLimitValue">$ 0</strong></div><div><span>Referencia 7%</span><strong id="serviceSevenValue">$ 0</strong></div></div></div><div class="col-12"><label for="serviceDescription" class="form-label">Descripción o frecuencia</label><textarea id="serviceDescription" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><label for="serviceNotes" class="form-label">Observaciones internas</label><textarea id="serviceNotes" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><div class="form-check form-switch"><input id="serviceActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="serviceActive">Servicio activo</label></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveServiceButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
+
+
+
+  <div class="modal fade" id="priceImportModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content price-import-modal-content">
+        <div class="modal-header">
+          <div>
+            <div class="eyebrow">Catálogo maestro</div>
+            <h5 class="modal-title fw-black">Actualizar precios desde Excel</h5>
+            <p class="text-secondary small mb-0 mt-1">La aplicación compara los SKU del archivo con los SKU del catálogo y solo actualiza los precios que selecciones.</p>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <div id="priceImportLibraryError" class="alert alert-danger d-none" role="alert"></div>
+          <div id="priceImportError" class="alert alert-danger d-none" role="alert"></div>
+
+          <section class="price-import-upload">
+            <div class="price-import-upload-icon"><i class="bi bi-file-earmark-excel"></i></div>
+            <div class="price-import-upload-copy">
+              <label for="priceImportFile" class="form-label mb-1">Lista de precios</label>
+              <p class="text-secondary small mb-2">Formatos admitidos: XLSX, XLS, XLSB y CSV. El archivo se procesa en el navegador; a Supabase solo se envían los precios aprobados.</p>
+              <input id="priceImportFile" class="form-control" type="file" accept=".xlsx,.xls,.xlsb,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv">
+            </div>
+          </section>
+
+          <section id="priceImportMapping" class="d-none mt-4">
+            <div class="price-import-section-heading">
+              <div><span class="price-import-step">1</span><div><h6 class="fw-black mb-1">Revisá cómo se leerá el archivo</h6><p class="text-secondary small mb-0">La detección es automática, pero podés corregir la hoja, la fila de encabezados o las columnas.</p></div></div>
+              <span id="priceImportFileSummary" class="badge text-bg-light border"></span>
+            </div>
+            <div class="section-card price-import-mapping-card">
+              <div class="row g-3 align-items-end">
+                <div class="col-md-6 col-xl-3"><label for="priceImportSheet" class="form-label">Hoja</label><select id="priceImportSheet" class="form-select"></select></div>
+                <div class="col-md-6 col-xl-2"><label for="priceImportHeaderRow" class="form-label">Fila de encabezados</label><input id="priceImportHeaderRow" class="form-control" type="number" min="1" max="500" step="1" value="1"></div>
+                <div class="col-md-6 col-xl-2"><label for="priceImportSkuColumn" class="form-label">Columna SKU</label><select id="priceImportSkuColumn" class="form-select"></select></div>
+                <div class="col-md-6 col-xl-2"><label for="priceImportPriceColumn" class="form-label">Columna precio</label><select id="priceImportPriceColumn" class="form-select"></select></div>
+                <div class="col-md-6 col-xl-3"><label for="priceImportDescriptionColumn" class="form-label">Descripción <span class="text-secondary fw-normal">(opcional)</span></label><select id="priceImportDescriptionColumn" class="form-select"></select></div>
+              </div>
+              <div id="priceImportMappingWarning" class="alert alert-warning py-2 mt-3 mb-0 d-none"></div>
+            </div>
+            <div class="price-import-preview-wrap mt-3">
+              <div class="d-flex justify-content-between align-items-center gap-3 mb-2"><strong>Vista previa</strong><span id="priceImportPreviewCaption" class="text-secondary small"></span></div>
+              <div class="table-responsive"><table class="table table-sm price-import-preview-table mb-0"><thead id="priceImportPreviewHead"></thead><tbody id="priceImportPreviewBody"></tbody></table></div>
+            </div>
+          </section>
+
+          <section id="priceImportResults" class="d-none mt-4">
+            <div class="price-import-section-heading">
+              <div><span class="price-import-step">2</span><div><h6 class="fw-black mb-1">Resultado de la comparación</h6><p class="text-secondary small mb-0">Los cambios de precio quedan seleccionados por defecto. Los SKU faltantes o ambiguos nunca se actualizan automáticamente.</p></div></div>
+            </div>
+
+            <div class="row g-3 mb-4">
+              <div class="col-6 col-lg-3 col-xxl"><div class="price-import-kpi"><span>Coincidencias</span><strong id="priceImportKpiMatched">0</strong></div></div>
+              <div class="col-6 col-lg-3 col-xxl"><div class="price-import-kpi is-increase"><span>Aumentos</span><strong id="priceImportKpiIncreases">0</strong></div></div>
+              <div class="col-6 col-lg-3 col-xxl"><div class="price-import-kpi is-decrease"><span>Disminuciones</span><strong id="priceImportKpiDecreases">0</strong></div></div>
+              <div class="col-6 col-lg-3 col-xxl"><div class="price-import-kpi"><span>Sin cambios</span><strong id="priceImportKpiUnchanged">0</strong></div></div>
+              <div class="col-6 col-lg-3 col-xxl"><div class="price-import-kpi is-warning"><span>Faltan en Excel</span><strong id="priceImportKpiMissingFile">0</strong></div></div>
+              <div class="col-6 col-lg-3 col-xxl"><div class="price-import-kpi is-warning"><span>No existen en app</span><strong id="priceImportKpiMissingApp">0</strong></div></div>
+              <div class="col-6 col-lg-3 col-xxl"><div class="price-import-kpi is-danger"><span>Revisar</span><strong id="priceImportKpiIssues">0</strong></div></div>
+            </div>
+
+            <div id="priceImportSummaryAlert" class="alert alert-info"></div>
+
+            <div class="section-card price-import-results-toolbar mb-3">
+              <div class="row g-3 align-items-end">
+                <div class="col-md-4"><label for="priceImportResultFilter" class="form-label">Mostrar</label><select id="priceImportResultFilter" class="form-select"><option value="changes">Solo cambios de precio</option><option value="increase">Solo aumentos</option><option value="decrease">Solo disminuciones</option><option value="unchanged">Sin cambios</option><option value="missing-file">SKU de la app no encontrados</option><option value="missing-app">SKU del archivo no encontrados</option><option value="issues">Duplicados y filas a revisar</option><option value="all">Todos los resultados</option></select></div>
+                <div class="col-md-5"><label for="priceImportSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="priceImportSearch" class="form-control" type="search" placeholder="SKU, insumo o descripción del archivo"></div></div>
+                <div class="col-md-3"><div class="form-check price-import-select-all"><input id="priceImportSelectAll" class="form-check-input" type="checkbox"><label class="form-check-label fw-bold" for="priceImportSelectAll">Seleccionar cambios visibles</label></div></div>
+              </div>
+            </div>
+
+            <div class="section-card p-0 overflow-hidden">
+              <div class="table-responsive price-import-results-table-wrap">
+                <table class="table admin-table align-middle price-import-results-table mb-0">
+                  <thead><tr><th class="price-import-check-col"></th><th>SKU</th><th>Insumo / referencia</th><th>Precio actual</th><th>Precio del archivo</th><th>Variación</th><th>Estado</th><th></th></tr></thead>
+                  <tbody id="priceImportResultsBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div id="priceImportResultsCaption" class="text-secondary small mt-2"></div>
+          </section>
+        </div>
+        <div class="modal-footer price-import-footer">
+          <button id="priceImportResetButton" class="btn btn-light me-auto d-none" type="button"><i class="bi bi-arrow-counterclockwise me-2"></i>Cargar otro archivo</button>
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+          <button id="priceImportAnalyzeButton" class="btn btn-primary fw-bold d-none" type="button"><i class="bi bi-search me-2"></i>Analizar precios</button>
+          <button id="priceImportApplyButton" class="btn btn-primary fw-bold d-none" type="button"><i class="bi bi-check2-all me-2"></i>Actualizar seleccionados</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="modal fade" id="materialModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Catálogo</div><h5 id="materialModalTitle" class="modal-title fw-black">Nuevo insumo</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="materialForm"><input id="materialId" type="hidden"><input id="materialCurrentImage" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="materialName" class="form-label">Nombre</label><input id="materialName" class="form-control" maxlength="150" required></div><div class="col-md-5"><label for="materialSku" class="form-label">SKU</label><input id="materialSku" class="form-control" maxlength="80" placeholder="Código interno o del proveedor"></div><div class="col-md-5"><label for="materialCategory" class="form-label">Categoría</label><input id="materialCategory" class="form-control" maxlength="100" required></div><div class="col-md-7"><label for="materialDetail" class="form-label">Detalle / marca</label><input id="materialDetail" class="form-control" maxlength="200"></div><div class="col-md-4"><label for="materialUnit" class="form-label">Unidad de pedido</label><input id="materialUnit" class="form-control" maxlength="80" value="unidad" required></div><div class="col-md-4"><label for="materialUnitPrice" class="form-label">Precio unitario</label><input id="materialUnitPrice" class="form-control" type="number" min="0" max="999999999.99" step="0.01" value="0" required></div><div class="col-md-4"><label for="materialSuggestedQuantity" class="form-label">Cantidad sugerida</label><input id="materialSuggestedQuantity" class="form-control" type="number" min="0.01" max="999" step="0.01" value="1" required></div><div class="col-md-4"><label for="materialSortOrder" class="form-label">Orden</label><input id="materialSortOrder" class="form-control" type="number" min="0" step="1" value="100" required></div><div class="col-md-4 d-flex align-items-end"><div class="form-check form-switch mb-2"><input id="materialActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="materialActive">Insumo activo</label></div></div><div class="col-md-7"><label for="materialImageFile" class="form-label">Foto del insumo</label><input id="materialImageFile" class="form-control" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><div class="form-text">Podés conservar la imagen actual o cargar una nueva.</div></div><div class="col-md-5"><div class="material-image-preview-wrap"><img id="materialImagePreview" class="material-image-preview" src="assets/materials/default.svg" alt="Vista previa"></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveMaterialButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
 
@@ -426,7 +607,9 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=20260730-consumption"></script>
+  <script src="app.js?v=20260806-invoice-control"></script>
 </body>
 </html>

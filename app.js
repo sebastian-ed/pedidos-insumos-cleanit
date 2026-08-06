@@ -37,6 +37,7 @@
     orderItems: [],
     profiles: [],
     history: [],
+    priceHistory: [],
     serviceMaterialExclusions: [],
     selectedServiceMaterialsId: null,
     serviceMaterialsDraftHidden: new Set(),
@@ -60,7 +61,22 @@
     consumptionServiceRows: [],
     consumptionLoadedKey: '',
     consumptionLoading: false,
-    consumptionHistoryContext: null
+    consumptionHistoryContext: null,
+    priceImportWorkbook: null,
+    priceImportRows: [],
+    priceImportFileName: '',
+    priceImportSheetName: '',
+    priceImportComparison: null,
+    priceImportSelected: new Set(),
+    priceImportFilter: 'changes',
+    priceImportSearch: '',
+    invoices: [],
+    selectedInvoiceId: null,
+    invoiceUploadRows: [],
+    invoiceReadingEditMode: false,
+    invoiceReadingDraft: [],
+    invoiceReadingTotalDraft: '',
+    invoiceLoadError: null
   };
 
   const E = {};
@@ -72,7 +88,7 @@
   function canOperateOrders() { return ['admin', 'supplier'].includes(S.profile?.role); }
   function canManageMasterData() { return isFullAdmin(); }
   function canManageUsers() { return isFullAdmin(); }
-  function allowedTabs() { return isFullAdmin() ? ['dashboard','orders','consumption','materials','services','users','history'] : ['dashboard','orders','history']; }
+  function allowedTabs() { return isFullAdmin() ? ['dashboard','orders','invoices','consumption','materials','services','users','history'] : ['dashboard','orders','history']; }
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -86,15 +102,20 @@
     M.extraMaterial = new bootstrap.Modal(E.extraMaterialModal);
     M.orderSuccess = new bootstrap.Modal(E.orderSuccessModal);
     M.orderDetail = new bootstrap.Modal(E.orderDetailModal);
+    M.invoiceDetail = new bootstrap.Modal(E.invoiceDetailModal);
     M.service = new bootstrap.Modal(E.serviceModal);
     M.serviceMaterials = new bootstrap.Modal(E.serviceMaterialsModal);
     M.material = new bootstrap.Modal(E.materialModal);
+    M.priceImport = new bootstrap.Modal(E.priceImportModal);
     M.user = new bootstrap.Modal(E.userModal);
     M.consumptionHistory = new bootstrap.Modal(E.consumptionHistoryModal);
     M.toast = new bootstrap.Toast(E.appToast, { delay: 3200 });
     if (E.consumptionMonth) E.consumptionMonth.value = monthInputValue(new Date());
 
     bindEvents();
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    }
 
     document.title = cfg.APP_NAME || 'Pedidos Clean It';
     E.appTitle.textContent = document.title;
@@ -183,6 +204,36 @@
     E.ordersServiceFilter.addEventListener('change', renderOrders);
     E.ordersStatusFilter.addEventListener('change', renderOrders);
     E.ordersPriorityFilter.addEventListener('change', renderOrders);
+    E.selectInvoiceFilesButton.addEventListener('click', () => E.invoicePdfInput.click());
+    E.invoiceDropZone.addEventListener('click', () => E.invoicePdfInput.click());
+    E.invoiceDropZone.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); E.invoicePdfInput.click(); }
+    });
+    ['dragenter','dragover'].forEach((name) => E.invoiceDropZone.addEventListener(name, (event) => {
+      event.preventDefault();
+      E.invoiceDropZone.classList.add('is-dragging');
+    }));
+    ['dragleave','drop'].forEach((name) => E.invoiceDropZone.addEventListener(name, (event) => {
+      event.preventDefault();
+      E.invoiceDropZone.classList.remove('is-dragging');
+    }));
+    E.invoiceDropZone.addEventListener('drop', (event) => processInvoiceFiles(event.dataTransfer?.files || []));
+    E.invoicePdfInput.addEventListener('change', () => processInvoiceFiles(E.invoicePdfInput.files || []));
+    E.invoiceSearch.addEventListener('input', renderInvoices);
+    E.invoiceStatusFilter.addEventListener('change', renderInvoices);
+    E.refreshInvoicesButton.addEventListener('click', refreshInvoicesData);
+    E.saveInvoiceMatchButton.addEventListener('click', saveInvoiceManualMatch);
+    E.openInvoicePdfButton.addEventListener('click', openSelectedInvoicePdf);
+    E.deleteInvoiceButton.addEventListener('click', () => deleteInvoice(S.selectedInvoiceId));
+    E.toggleInvoiceReviewedButton.addEventListener('click', toggleInvoiceReviewed);
+    E.toggleInvoiceReadingEditButton.addEventListener('click', startInvoiceReadingEdit);
+    E.cancelInvoiceReadingEditButton.addEventListener('click', cancelInvoiceReadingEdit);
+    E.addInvoiceReadingItemButton.addEventListener('click', addInvoiceReadingItem);
+    E.saveInvoiceReadingButton.addEventListener('click', saveInvoiceReading);
+    E.invoiceReadingItems.addEventListener('input', handleInvoiceReadingInput);
+    E.invoiceReadingTotal.addEventListener('input', () => { S.invoiceReadingTotalDraft = E.invoiceReadingTotal.value; });
+    E.invoiceReadingItems.addEventListener('click', handleInvoiceReadingClick);
+    E.invoiceDetailModal.addEventListener('hidden.bs.modal', resetInvoiceDetailState);
     E.consumptionMonth.addEventListener('change', () => loadConsumptionReport(true));
     E.consumptionServiceFilter.addEventListener('change', () => loadConsumptionReport(true));
     E.consumptionSearch.addEventListener('input', renderConsumption);
@@ -191,8 +242,26 @@
     E.materialsSearch.addEventListener('input', renderMaterials);
     E.materialsStatusFilter.addEventListener('change', renderMaterials);
     E.adminServiceSearch.addEventListener('input', renderServices);
+    E.historyTypeFilter.addEventListener('change', renderHistory);
+    E.historySearch.addEventListener('input', renderHistory);
 
     E.addMaterialButton.addEventListener('click', () => openMaterial());
+    E.importPricesButton.addEventListener('click', openPriceImport);
+    E.priceImportFile.addEventListener('change', handlePriceImportFile);
+    E.priceImportSheet.addEventListener('change', handlePriceImportSheetChange);
+    E.priceImportHeaderRow.addEventListener('input', handlePriceImportHeaderChange);
+    E.priceImportSkuColumn.addEventListener('change', renderPriceImportPreview);
+    E.priceImportPriceColumn.addEventListener('change', renderPriceImportPreview);
+    E.priceImportDescriptionColumn.addEventListener('change', renderPriceImportPreview);
+    E.priceImportAnalyzeButton.addEventListener('click', analyzePriceImport);
+    E.priceImportResetButton.addEventListener('click', resetPriceImport);
+    E.priceImportResultFilter.addEventListener('change', handlePriceImportFilterChange);
+    E.priceImportSearch.addEventListener('input', handlePriceImportSearch);
+    E.priceImportSelectAll.addEventListener('change', toggleVisiblePriceImportSelections);
+    E.priceImportResultsBody.addEventListener('change', handlePriceImportResultChange);
+    E.priceImportResultsBody.addEventListener('click', handlePriceImportResultClick);
+    E.priceImportApplyButton.addEventListener('click', applySelectedPriceUpdates);
+    E.priceImportModal.addEventListener('hidden.bs.modal', () => hidePriceImportError());
     E.materialForm.addEventListener('submit', saveMaterial);
     E.materialImageFile.addEventListener('change', previewMaterialImage);
     E.addServiceButton.addEventListener('click', () => openService());
@@ -788,6 +857,18 @@
       return;
     }
 
+    const openInvoiceButton = event.target.closest('[data-invoice-open]');
+    if (openInvoiceButton) {
+      openInvoice(openInvoiceButton.dataset.invoiceOpen);
+      return;
+    }
+
+    const deleteInvoiceButton = event.target.closest('[data-invoice-delete]');
+    if (deleteInvoiceButton) {
+      deleteInvoice(deleteInvoiceButton.dataset.invoiceDelete);
+      return;
+    }
+
     const editMaterialButton = event.target.closest('[data-edit-material]');
     if (editMaterialButton) {
       openMaterial(editMaterialButton.dataset.editMaterial);
@@ -1107,6 +1188,14 @@
     S.orderItems = [];
     S.profiles = [];
     S.history = [];
+    S.priceHistory = [];
+    S.invoices = [];
+    S.selectedInvoiceId = null;
+    S.invoiceUploadRows = [];
+    S.invoiceReadingEditMode = false;
+    S.invoiceReadingDraft = [];
+    S.invoiceReadingTotalDraft = '';
+    S.invoiceLoadError = null;
     S.services = [];
     S.materials = [];
     S.serviceMaterialExclusions = [];
@@ -1115,6 +1204,7 @@
     S.consumptionLoadedKey = '';
     S.consumptionLoading = false;
     S.consumptionHistoryContext = null;
+    clearPriceImportState();
     S.publicServiceId = null;
     S.orderReporterName = '';
     S.draft.clear();
@@ -1155,8 +1245,14 @@
       else button.classList.toggle('active', tab === S.tab);
     });
 
+    if (E.historyTypeFilter) {
+      const priceOption = E.historyTypeFilter.querySelector('option[value="price"]');
+      if (priceOption) priceOption.disabled = !isFullAdmin();
+      if (!isFullAdmin() && E.historyTypeFilter.value === 'price') E.historyTypeFilter.value = 'all';
+    }
+
     const masterButtons = [
-      E.addMaterialButton, E.addServiceButton, E.saveMaterialButton, E.saveServiceButton,
+      E.addMaterialButton, E.importPricesButton, E.addServiceButton, E.saveMaterialButton, E.saveServiceButton,
       E.saveServiceMaterialsButton, E.showAllServiceMaterialsButton, E.hideAllServiceMaterialsButton
     ];
     masterButtons.forEach((button) => { if (button) button.disabled = !canManageMasterData(); });
@@ -1169,18 +1265,28 @@
     if (feedback) buttonBusy(E.refreshAdminButton, true, 'Actualizando...');
 
     try {
-      const [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult] = await Promise.all([
+      const priceHistoryRequest = isFullAdmin()
+        ? S.sb.from('material_price_history').select('*').order('changed_at', { ascending: false }).limit(1000)
+        : Promise.resolve({ data: [], error: null });
+      const invoicesRequest = isFullAdmin()
+        ? S.sb.from('supplier_invoices').select('*').order('created_at', { ascending: false }).limit(1000)
+        : Promise.resolve({ data: [], error: null });
+
+      const [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult, priceHistoryResult, invoicesResult] = await Promise.all([
         S.sb.from('services').select('*').order('name'),
         S.sb.from('materials').select('*').order('category').order('sort_order').order('name'),
         S.sb.from('service_material_exclusions').select('service_id,material_id'),
         S.sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
         S.sb.from('order_items').select('*').order('sort_order').order('created_at'),
         S.sb.from('profiles').select('*').order('full_name'),
-        S.sb.from('order_status_history').select('*').order('changed_at', { ascending: false }).limit(500)
+        S.sb.from('order_status_history').select('*').order('changed_at', { ascending: false }).limit(500),
+        priceHistoryRequest,
+        invoicesRequest
       ]);
 
-      [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult]
+      [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult, priceHistoryResult]
         .forEach((result) => { if (result.error) throw result.error; });
+      S.invoiceLoadError = invoicesResult.error || null;
 
       S.services = servicesResult.data || [];
       S.materials = materialsResult.data || [];
@@ -1189,6 +1295,8 @@
       S.orderItems = itemsResult.data || [];
       S.profiles = profilesResult.data || [];
       S.history = historyResult.data || [];
+      S.priceHistory = priceHistoryResult.data || [];
+      S.invoices = invoicesResult.error ? [] : (invoicesResult.data || []);
       S.consumptionLoadedKey = '';
 
       populateAdminFilters();
@@ -1212,8 +1320,13 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'materials' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, scheduleAdminRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'service_material_exclusions' }, scheduleAdminRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, scheduleAdminRefresh)
-      .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, scheduleAdminRefresh);
+    if (isFullAdmin()) {
+      S.channel
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'material_price_history' }, scheduleAdminRefresh)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'supplier_invoices' }, scheduleAdminRefresh);
+    }
+    S.channel.subscribe();
   }
 
   function teardownRealtime() {
@@ -1264,6 +1377,7 @@
     const panels = {
       dashboard: E.adminDashboard,
       orders: E.adminOrders,
+      invoices: E.adminInvoices,
       consumption: E.adminConsumption,
       materials: E.adminMaterials,
       services: E.adminServices,
@@ -1274,6 +1388,7 @@
 
     if (S.tab === 'dashboard') renderDashboard();
     if (S.tab === 'orders') renderOrders();
+    if (S.tab === 'invoices') renderInvoices();
     if (S.tab === 'consumption') loadConsumptionReport(false);
     if (S.tab === 'materials') renderMaterials();
     if (S.tab === 'services') renderServices();
@@ -1821,6 +1936,1891 @@
     }
     if (order.notes) lines.push('', `Observación: ${order.notes}`);
     return lines.join('\n');
+  }
+
+
+  // ---------------------------------------------------------------------------
+  // Control de facturas de proveedor
+  // ---------------------------------------------------------------------------
+
+  const INVOICE_BUCKET = 'supplier-invoices';
+  const INVOICE_MAX_FILE_SIZE = 20 * 1024 * 1024;
+  const INVOICE_MATCH_THRESHOLD = 50;
+  const INVOICE_MONEY_TOLERANCE_PERCENT = 0.5;
+
+  const INVOICE_STATUS_LABELS = {
+    pendiente: 'Pendiente',
+    coincide: 'Coincide',
+    diferencias: 'Con diferencias',
+    parcial: 'Comparación parcial',
+    sin_match: 'Sin pedido vinculado',
+    sin_lectura: 'Sin lectura de texto'
+  };
+
+  function invoiceById(id) {
+    return S.invoices.find((item) => item.id === id) || null;
+  }
+
+  function invoiceStatusClass(status) {
+    return ({
+      coincide: 'success',
+      diferencias: 'danger',
+      parcial: 'warning',
+      sin_match: 'secondary',
+      sin_lectura: 'dark',
+      pendiente: 'info'
+    })[status] || 'secondary';
+  }
+
+  function invoiceMethodLabel(method) {
+    return method === 'manual' ? 'Vinculación manual' : (method === 'automatico' ? 'Vinculación automática' : 'Sin vincular');
+  }
+
+  async function refreshInvoicesData() {
+    buttonBusy(E.refreshInvoicesButton, true, 'Actualizando...');
+    try {
+      await refreshAdmin(false);
+      renderInvoices();
+      toast('Facturas actualizadas.', 'success');
+    } finally {
+      buttonBusy(E.refreshInvoicesButton, false);
+    }
+  }
+
+  function effectiveInvoiceStatus(invoice) {
+    const order = S.orders.find((item) => item.id === invoice.matched_order_id);
+    return order ? compareInvoiceAgainstOrder(invoice, order).status : invoice.comparison_status;
+  }
+
+  function renderInvoices() {
+    if (!isFullAdmin() || !E.invoiceTableBody) return;
+    if (S.invoiceLoadError) showInvoiceModuleError(invoiceModuleErrorMessage(S.invoiceLoadError));
+    else hideInvoiceModuleError();
+    const query = normalize(E.invoiceSearch?.value || '');
+    const status = E.invoiceStatusFilter?.value || '';
+    const statusById = new Map(S.invoices.map((invoice) => [invoice.id, effectiveInvoiceStatus(invoice)]));
+    const filtered = S.invoices.filter((invoice) => {
+      const order = S.orders.find((item) => item.id === invoice.matched_order_id);
+      const service = order ? serviceById(order.service_id) : null;
+      const haystack = normalize(`${invoice.invoice_number || ''} ${invoice.file_name || ''} ${invoice.supplier_name || ''} ${invoice.supplier_tax_id || ''} ${order?.order_code || ''} ${service?.name || ''}`);
+      return (!query || haystack.includes(query)) && (!status || statusById.get(invoice.id) === status);
+    });
+
+    const total = S.invoices.length;
+    const ok = S.invoices.filter((item) => statusById.get(item.id) === 'coincide').length;
+    const differences = S.invoices.filter((item) => ['diferencias', 'parcial'].includes(statusById.get(item.id))).length;
+    const unmatched = S.invoices.filter((item) => ['sin_match', 'sin_lectura', 'pendiente'].includes(statusById.get(item.id))).length;
+    E.invoiceKpiTotal.textContent = String(total);
+    E.invoiceKpiOk.textContent = String(ok);
+    E.invoiceKpiDifferences.textContent = String(differences);
+    E.invoiceKpiUnmatched.textContent = String(unmatched);
+    E.invoiceResultsCaption.textContent = `${filtered.length} ${filtered.length === 1 ? 'factura' : 'facturas'}`;
+
+    E.invoiceTableBody.innerHTML = filtered.map((invoice) => {
+      const order = S.orders.find((item) => item.id === invoice.matched_order_id);
+      const service = order ? serviceById(order.service_id) : null;
+      const score = Math.max(0, Math.min(100, number(invoice.match_score)));
+      const effectiveStatus = statusById.get(invoice.id) || invoice.comparison_status;
+      const invoiceTitle = invoice.invoice_number ? `Factura ${invoice.invoice_number}` : invoice.file_name;
+      const supplier = invoice.supplier_name || 'Proveedor no identificado';
+      const invoiceDate = invoice.invoice_date ? new Intl.DateTimeFormat('es-AR').format(new Date(`${invoice.invoice_date}T12:00:00`)) : 'Fecha no detectada';
+      const amount = invoice.total_amount == null ? 'Importe no detectado' : formatCurrency(invoice.total_amount);
+      return `<tr class="invoice-row ${invoice.reviewed ? 'is-reviewed' : ''}">
+        <td><div class="order-code">${eh(invoiceTitle)}</div><div class="order-date">${eh(invoice.file_name)}</div></td>
+        <td><div class="order-service">${eh(supplier)}</div><div class="table-subtitle">${eh(invoiceDate)}${invoice.supplier_tax_id ? ` · CUIT ${eh(invoice.supplier_tax_id)}` : ''}</div></td>
+        <td><strong>${eh(amount)}</strong><div class="table-subtitle">${number(invoice.pdf_page_count)} ${number(invoice.pdf_page_count) === 1 ? 'página' : 'páginas'}</div></td>
+        <td>${order ? `<div class="order-code">${eh(order.order_code)}</div><div class="table-subtitle">${eh(service?.name || 'Servicio eliminado')}</div>` : '<span class="text-secondary">Sin vincular</span>'}</td>
+        <td><div class="invoice-confidence"><strong>${Math.round(score)}%</strong><div class="invoice-confidence-track"><span style="width:${score}%"></span></div><small>${eh(invoiceMethodLabel(invoice.match_method))}</small></div></td>
+        <td><span class="badge text-bg-${invoiceStatusClass(effectiveStatus)}">${eh(INVOICE_STATUS_LABELS[effectiveStatus] || effectiveStatus)}</span></td>
+        <td>${invoice.reviewed ? '<span class="invoice-reviewed"><i class="bi bi-check2-circle"></i> Revisada</span>' : '<span class="text-secondary">Pendiente</span>'}</td>
+        <td><div class="action-group"><button class="btn btn-outline-primary" type="button" title="Ver control" data-invoice-open="${ea(invoice.id)}"><i class="bi bi-eye"></i></button><button class="btn btn-outline-danger" type="button" title="Eliminar factura" data-invoice-delete="${ea(invoice.id)}"><i class="bi bi-trash3"></i></button></div></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="8"><div class="empty-inline">No hay facturas que coincidan con los filtros.</div></td></tr>';
+  }
+
+  function showInvoiceModuleError(message) {
+    if (!E.invoiceModuleError) return;
+    E.invoiceModuleError.textContent = message;
+    E.invoiceModuleError.classList.remove('d-none');
+  }
+
+  function hideInvoiceModuleError() {
+    if (!E.invoiceModuleError) return;
+    E.invoiceModuleError.textContent = '';
+    E.invoiceModuleError.classList.add('d-none');
+  }
+
+  function invoiceModuleErrorMessage(error) {
+    const message = String(error?.message || '');
+    if (message.includes('supplier_invoices') || message.includes('supplier-invoices') || message.includes('schema cache') || String(error?.code || '').includes('PGRST')) {
+      return 'El módulo de facturas todavía no está instalado en Supabase. Ejecutá actualizar-control-facturas-proveedor.sql y volvé a intentar.';
+    }
+    return message || 'No se pudo procesar la factura.';
+  }
+
+  async function processInvoiceFiles(fileList) {
+    if (!isFullAdmin()) {
+      toast('Solo el administrador puede cargar facturas.', 'error');
+      return;
+    }
+    hideInvoiceModuleError();
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+
+    const invalid = files.find((file) => !String(file.name || '').toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf');
+    if (invalid) {
+      showInvoiceModuleError(`El archivo ${invalid.name} no es un PDF válido.`);
+      return;
+    }
+    const oversized = files.find((file) => file.size > INVOICE_MAX_FILE_SIZE);
+    if (oversized) {
+      showInvoiceModuleError(`El archivo ${oversized.name} supera el máximo de 20 MB.`);
+      return;
+    }
+    if (!window.pdfjsLib) {
+      showInvoiceModuleError('No se pudo cargar el lector de PDF. Revisá la conexión a internet y recargá la aplicación.');
+      return;
+    }
+
+    S.invoiceUploadRows = files.map((file, index) => ({
+      id: `${Date.now()}-${index}`,
+      name: file.name,
+      status: 'queued',
+      message: 'En espera'
+    }));
+    renderInvoiceUploadQueue();
+
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const row = S.invoiceUploadRows[index];
+      try {
+        row.status = 'reading';
+        row.message = 'Leyendo PDF...';
+        renderInvoiceUploadQueue();
+
+        const buffer = await file.arrayBuffer();
+        const fileHash = await sha256Hex(buffer);
+        const duplicate = S.invoices.find((item) => item.file_hash && item.file_hash === fileHash);
+        if (duplicate) throw new Error(`Esta factura ya fue cargada como ${duplicate.invoice_number || duplicate.file_name}.`);
+
+        const extracted = await extractPdfText(buffer.slice(0));
+        row.message = 'Analizando factura...';
+        renderInvoiceUploadQueue();
+
+        const parsed = parseSupplierInvoice(extracted.text, extracted.lines);
+        const match = findBestInvoiceOrderMatch(parsed, extracted.text);
+        const selectedOrder = match.order || null;
+        const comparison = selectedOrder
+          ? compareInvoiceAgainstOrder(parsed, selectedOrder)
+          : emptyInvoiceComparison(extracted.text.trim() ? 'sin_match' : 'sin_lectura');
+        const comparisonStatus = selectedOrder ? comparison.status : (extracted.text.trim() ? 'sin_match' : 'sin_lectura');
+
+        row.message = 'Guardando PDF privado...';
+        renderInvoiceUploadQueue();
+        const objectId = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const storagePath = `${new Date().getFullYear()}/${objectId}-${sanitizeStorageFileName(file.name)}`;
+        const { error: uploadError } = await S.sb.storage.from(INVOICE_BUCKET).upload(storagePath, file, {
+          contentType: 'application/pdf',
+          upsert: false,
+          cacheControl: '3600'
+        });
+        if (uploadError) throw uploadError;
+
+        const payload = {
+          file_name: file.name,
+          storage_path: storagePath,
+          file_size: file.size,
+          file_hash: fileHash,
+          pdf_page_count: extracted.pageCount,
+          extracted_text: extracted.text.slice(0, 250000),
+          invoice_number: parsed.invoiceNumber || null,
+          invoice_date: parsed.invoiceDate || null,
+          supplier_name: parsed.supplierName || null,
+          supplier_tax_id: parsed.supplierTaxId || null,
+          currency: parsed.currency || 'ARS',
+          subtotal: parsed.subtotal,
+          tax_amount: parsed.taxAmount,
+          total_amount: parsed.totalAmount,
+          parsed_items: parsed.items,
+          unmatched_lines: parsed.unmatchedLines,
+          matched_order_id: selectedOrder?.id || null,
+          match_score: match.score,
+          match_method: selectedOrder ? 'automatico' : 'sin_match',
+          match_candidates: match.candidates,
+          comparison_status: comparisonStatus,
+          comparison_summary: comparison,
+          created_by: S.profile.id
+        };
+
+        const { data: inserted, error: insertError } = await S.sb.from('supplier_invoices').insert(payload).select('*').single();
+        if (insertError) {
+          await S.sb.storage.from(INVOICE_BUCKET).remove([storagePath]);
+          throw insertError;
+        }
+        S.invoices.unshift(inserted);
+        row.status = 'done';
+        row.message = selectedOrder
+          ? `${selectedOrder.order_code} · ${INVOICE_STATUS_LABELS[comparisonStatus]}`
+          : INVOICE_STATUS_LABELS[comparisonStatus];
+      } catch (error) {
+        console.error(error);
+        row.status = 'error';
+        row.message = invoiceModuleErrorMessage(error);
+      }
+      renderInvoiceUploadQueue();
+    }
+
+    E.invoicePdfInput.value = '';
+    renderInvoices();
+    const successful = S.invoiceUploadRows.filter((item) => item.status === 'done').length;
+    if (successful) toast(`${successful} ${successful === 1 ? 'factura procesada' : 'facturas procesadas'}.`, 'success');
+  }
+
+  function renderInvoiceUploadQueue() {
+    if (!E.invoiceUploadQueue) return;
+    E.invoiceUploadQueue.classList.toggle('d-none', !S.invoiceUploadRows.length);
+    E.invoiceUploadQueue.innerHTML = S.invoiceUploadRows.map((row) => {
+      const icon = row.status === 'done' ? 'bi-check2-circle' : (row.status === 'error' ? 'bi-exclamation-triangle' : (row.status === 'reading' ? 'bi-arrow-repeat invoice-spin' : 'bi-clock'));
+      return `<div class="invoice-upload-row is-${ea(row.status)}"><i class="bi ${icon}"></i><div><strong>${eh(row.name)}</strong><span>${eh(row.message)}</span></div></div>`;
+    }).join('');
+  }
+
+  async function sha256Hex(buffer) {
+    if (!window.crypto?.subtle) return null;
+    const digest = await window.crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function extractPdfText(buffer) {
+    const task = window.pdfjsLib.getDocument({ data: new Uint8Array(buffer), disableFontFace: false });
+    const pdf = await task.promise;
+    const allLines = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent({ normalizeWhitespace: true });
+      const pageLines = groupPdfTextItemsIntoLines(content.items || []);
+      pageLines.forEach((line) => allLines.push(line));
+      if (pageNumber < pdf.numPages) allLines.push('');
+    }
+    const text = allLines.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{4,}/g, '\n\n').trim();
+    return { text, lines: allLines.filter((line) => String(line).trim()), pageCount: pdf.numPages };
+  }
+
+  function groupPdfTextItemsIntoLines(items) {
+    const rows = [];
+    items.forEach((item) => {
+      const text = String(item.str || '').trim();
+      if (!text) return;
+      const x = number(item.transform?.[4]);
+      const y = number(item.transform?.[5]);
+      let row = rows.find((candidate) => Math.abs(candidate.y - y) <= 2.5);
+      if (!row) {
+        row = { y, parts: [] };
+        rows.push(row);
+      }
+      row.parts.push({ x, text });
+    });
+    return rows
+      .sort((a, b) => b.y - a.y)
+      .map((row) => row.parts.sort((a, b) => a.x - b.x).map((part) => part.text).join(' ').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  function parseSupplierInvoice(text, lines) {
+    const cleanText = String(text || '').replace(/\u00a0/g, ' ');
+    const invoiceNumber = extractInvoiceNumber(cleanText);
+    const invoiceDate = extractInvoiceDate(cleanText);
+    const supplierTaxId = extractTaxId(cleanText);
+    const supplierName = extractSupplierName(lines, supplierTaxId);
+    const totals = extractInvoiceTotals(cleanText, lines);
+    const itemResult = extractInvoiceItems(lines, cleanText);
+    return {
+      invoiceNumber,
+      invoiceDate,
+      supplierTaxId,
+      supplierName,
+      currency: /\bUSD\b|U\$S|D[ÓO]LAR/i.test(cleanText) ? 'USD' : 'ARS',
+      subtotal: totals.subtotal,
+      taxAmount: totals.taxAmount,
+      totalAmount: totals.total,
+      items: itemResult.items,
+      unmatchedLines: itemResult.unmatchedLines,
+      detectedSkus: itemResult.items.map((item) => normalizeSku(item.sku)).filter(Boolean)
+    };
+  }
+
+  function extractInvoiceNumber(text) {
+    const patterns = [
+      /(?:factura|comprobante)\s*(?:electr[oó]nica)?\s*(?:n[º°o.]|nro\.?|n[uú]mero|#)?\s*[:\-]?\s*([A-Z]?\s*\d{1,5}\s*[-–]\s*\d{4,12})/i,
+      /(?:n[º°o.]|nro\.?|n[uú]mero)\s*(?:de\s+comprobante)?\s*[:\-]?\s*(\d{1,5}\s*[-–]\s*\d{4,12})/i,
+      /\b([ABCEMT])\s+(\d{4,5}\s*[-–]\s*\d{6,12})\b/i
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) { const raw = match[2] ? `${match[1]} ${match[2]}` : match[1]; return String(raw).replace(/\s+/g, '').replace('–', '-'); }
+    }
+    return null;
+  }
+
+  function extractInvoiceDate(text) {
+    const patterns = [
+      /(?:fecha\s+de\s+emisi[oó]n|fecha\s+emisi[oó]n|fecha)\s*[:\-]?\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i,
+      /(?:fecha\s+de\s+emisi[oó]n|fecha\s+emisi[oó]n|fecha)\s*[:\-]?\s*(\d{4}-\d{2}-\d{2})/i,
+      /\b(\d{1,2}[\/]\d{1,2}[\/]\d{4})\b/
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (!match) continue;
+      const iso = parseInvoiceDateToIso(match[1]);
+      if (iso) return iso;
+    }
+    return null;
+  }
+
+  function parseInvoiceDateToIso(value) {
+    const parts = String(value || '').trim().split(/[\/\-.]/).map(Number);
+    if (parts.length !== 3) return null;
+    let [day, month, year] = parts;
+    if (parts[0] > 1900) [year, month, day] = parts;
+    if (year < 100) year += year >= 70 ? 1900 : 2000;
+    if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  function extractTaxId(text) {
+    const match = text.match(/(?:CUIT|C\.U\.I\.T\.?|CUIL)\s*[:\-]?\s*(\d{2})\s*[- ]?\s*(\d{8})\s*[- ]?\s*(\d)/i);
+    return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+  }
+
+  function extractSupplierName(lines, taxId) {
+    const candidates = (lines || []).slice(0, 24).map((line) => String(line || '').trim()).filter(Boolean);
+    const blocked = /factura|original|duplicado|triplicado|cuit|ingresos brutos|inicio de actividades|fecha|cliente|señor|domicilio|iva|responsable|condici[oó]n de venta|punto de venta/i;
+    const taxDigits = String(taxId || '').replace(/\D/g, '');
+    const best = candidates
+      .filter((line) => line.length >= 4 && line.length <= 100)
+      .filter((line) => !blocked.test(line))
+      .filter((line) => !taxDigits || !line.replace(/\D/g, '').includes(taxDigits))
+      .map((line, index) => ({ line, score: supplierNameScore(line, index) }))
+      .sort((a, b) => b.score - a.score)[0];
+    return best?.score > 0 ? best.line : null;
+  }
+
+  function supplierNameScore(line, index) {
+    let score = Math.max(0, 25 - index);
+    if (/[A-ZÁÉÍÓÚÑ]{3,}/.test(line)) score += 12;
+    if (/\b(SA|S\.A\.|SRL|S\.R\.L\.|SAS|S\.A\.S\.|SOCIEDAD|COOPERATIVA)\b/i.test(line)) score += 25;
+    if (/\d{4,}/.test(line)) score -= 15;
+    if (/\$|%/.test(line)) score -= 20;
+    return score;
+  }
+
+  function extractInvoiceTotals(text, lines) {
+    const candidates = [];
+    (lines || []).forEach((line, index) => {
+      const normalizedLine = normalize(line);
+      const numbers = extractLocalizedNumbers(line).filter((item) => item.value >= 0);
+      if (!numbers.length) return;
+      const value = numbers[numbers.length - 1].value;
+      let kind = null;
+      let score = index / Math.max(1, lines.length) * 10;
+      if (/\btotal\s+(?:a\s+pagar|final|factura|comprobante)\b/.test(normalizedLine)) { kind = 'total'; score += 100; }
+      else if (/\bimporte\s+total\b/.test(normalizedLine)) { kind = 'total'; score += 95; }
+      else if (/^\s*total\b/.test(normalizedLine) && !/subtotal/.test(normalizedLine)) { kind = 'total'; score += 85; }
+      else if (/\bsubtotal\b/.test(normalizedLine)) { kind = 'subtotal'; score += 70; }
+      else if (/\biva\b|impuesto/.test(normalizedLine)) { kind = 'tax'; score += 55; }
+      if (kind) candidates.push({ kind, value, score, line });
+    });
+
+    const totalCandidate = candidates.filter((item) => item.kind === 'total').sort((a, b) => b.score - a.score || b.value - a.value)[0];
+    const subtotalCandidate = candidates.filter((item) => item.kind === 'subtotal').sort((a, b) => b.score - a.score)[0];
+    const taxValues = candidates.filter((item) => item.kind === 'tax').map((item) => item.value);
+    const taxAmount = taxValues.length ? roundMoney(taxValues.reduce((sum, value) => sum + value, 0)) : null;
+
+    const total = totalCandidate?.value ?? null;
+    return {
+      subtotal: subtotalCandidate?.value ?? null,
+      taxAmount,
+      total
+    };
+  }
+
+  function extractInvoiceItems(lines, fullText) {
+    const known = new Map();
+    S.materials.forEach((material) => {
+      const sku = normalizeSku(material.sku);
+      if (sku) known.set(sku, { sku: material.sku, name: material.name, unitPrice: number(material.unit_price) });
+    });
+    S.orderItems.forEach((item) => {
+      const sku = normalizeSku(item.item_sku);
+      if (sku && !known.has(sku)) known.set(sku, { sku: item.item_sku, name: item.item_name, unitPrice: number(item.unit_price) });
+    });
+
+    const found = [];
+    const usedLineIndexes = new Set();
+    (lines || []).forEach((line, index) => {
+      const compactLine = normalizeSku(line);
+      if (!compactLine) return;
+      const matches = [...known.entries()]
+        .filter(([sku]) => sku.length >= 4 && compactLine.includes(sku))
+        .sort((a, b) => b[0].length - a[0].length);
+      if (!matches.length) return;
+      const [normalizedSku, meta] = matches[0];
+      const contextLines = [lines[index - 1], line, lines[index + 1]].filter(Boolean);
+      const context = contextLines.join(' ');
+      const values = extractLocalizedNumbers(line, normalizedSku);
+      const inferred = inferInvoiceLineValues(values, meta.unitPrice);
+      found.push({
+        sku: meta.sku,
+        description: meta.name || extractInvoiceItemDescription(line, meta.sku, meta.name),
+        quantity: inferred.quantity,
+        unit_price: inferred.unitPrice,
+        line_total: inferred.lineTotal,
+        raw_line: String(line).slice(0, 500),
+        context: context.slice(0, 800)
+      });
+      usedLineIndexes.add(index);
+    });
+
+    // También detecta líneas con un SKU nuevo o desconocido para señalar artículos extra.
+    (lines || []).forEach((line, index) => {
+      if (usedLineIndexes.has(index)) return;
+      const generic = extractGenericInvoiceItemLine(line);
+      if (!generic) return;
+      found.push(generic);
+      usedLineIndexes.add(index);
+    });
+
+    const deduped = [];
+    const bySku = new Map();
+    found.forEach((item) => {
+      const key = normalizeSku(item.sku);
+      if (!bySku.has(key)) {
+        bySku.set(key, item);
+        deduped.push(item);
+      } else {
+        const existing = bySku.get(key);
+        if ((item.quantity != null ? 1 : 0) + (item.line_total != null ? 1 : 0) > (existing.quantity != null ? 1 : 0) + (existing.line_total != null ? 1 : 0)) {
+          Object.assign(existing, item);
+        }
+      }
+    });
+
+    // Cuando el PDF parte un SKU con espacios o guiones, buscarlo también sobre todo el texto compactado.
+    const compactText = normalizeSku(fullText);
+    known.forEach((meta, sku) => {
+      if (deduped.some((item) => normalizeSku(item.sku) === sku)) return;
+      if (sku.length >= 6 && compactText.includes(sku)) {
+        deduped.push({ sku: meta.sku, description: meta.name, quantity: null, unit_price: null, line_total: null, raw_line: 'SKU detectado en el PDF sin línea estructurada' });
+      }
+    });
+
+    const unmatchedLines = (lines || [])
+      .map((line, index) => ({ line, index }))
+      .filter((item) => !usedLineIndexes.has(item.index))
+      .filter((item) => /\$|\d+[.,]\d{2}/.test(item.line) && item.line.length < 500)
+      .slice(0, 100)
+      .map((item) => item.line);
+    return { items: deduped, unmatchedLines };
+  }
+
+  function extractGenericInvoiceItemLine(line) {
+    const text = String(line || '').trim();
+    if (text.length < 8 || text.length > 500) return null;
+    if (/\b(total|subtotal|iva|impuesto|factura|cuit|cuil|fecha|vencimiento|cae|remito|pedido|orden|importe|neto|exento|percepcion|percepción)\b/i.test(text)) return null;
+    const tokens = text.split(/\s+/).slice(0, 7);
+    const skuToken = tokens.find((token, index) => {
+      if (index > 1) return false;
+      const cleaned = token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9._\/-]+$/g, '');
+      const compact = normalizeSku(cleaned);
+      const alphaNumericSku = compact.length >= 4 && compact.length <= 30 && /[A-Z]/.test(compact) && /\d/.test(compact);
+      const numericSku = /^\d{6,18}$/.test(compact) && /[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(text.replace(cleaned, ''));
+      return alphaNumericSku || numericSku;
+    });
+    if (!skuToken) return null;
+    const sku = skuToken.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9._\/-]+$/g, '');
+    const values = extractLocalizedNumbers(text, normalizeSku(sku));
+    if (values.length < 2) return null;
+    const inferred = inferInvoiceLineValues(values, 0);
+    if (inferred.lineTotal == null) return null;
+    const description = extractInvoiceItemDescription(text, sku, sku);
+    return {
+      sku,
+      description: description || sku,
+      quantity: inferred.quantity,
+      unit_price: inferred.unitPrice,
+      line_total: inferred.lineTotal,
+      raw_line: text.slice(0, 500),
+      context: text.slice(0, 800),
+      unknown_sku: true
+    };
+  }
+
+  function extractInvoiceItemDescription(line, sku, fallback) {
+    let value = String(line || '');
+    const skuPattern = String(sku || '').split('').map((char) => /[a-z0-9]/i.test(char) ? `${char}[\\s\\-_.]*` : '').join('');
+    if (skuPattern) value = value.replace(new RegExp(skuPattern, 'i'), ' ');
+    value = value.replace(/(?:\$\s*)?[-+]?\d[\d.,]*/g, ' ').replace(/\s+/g, ' ').trim();
+    return value.length >= 3 ? value.slice(0, 180) : fallback;
+  }
+
+  function inferInvoiceLineValues(values, catalogPrice) {
+    const nums = values.map((item) => item.value).filter((value) => value >= 0 && Number.isFinite(value));
+    let best = null;
+    for (let i = 0; i < nums.length; i += 1) {
+      for (let j = i + 1; j < nums.length; j += 1) {
+        for (let k = j + 1; k < nums.length; k += 1) {
+          const quantity = nums[i];
+          const unitPrice = nums[j];
+          const lineTotal = nums[k];
+          if (quantity <= 0 || quantity > 9999 || unitPrice < 0 || lineTotal < 0) continue;
+          const relationError = Math.abs(quantity * unitPrice - lineTotal) / Math.max(1, lineTotal);
+          let score = relationError * 100;
+          if (catalogPrice > 0) score += Math.abs(unitPrice - catalogPrice) / catalogPrice * 12;
+          if (!best || score < best.score) best = { quantity, unitPrice, lineTotal, score };
+        }
+      }
+    }
+    if (best && best.score <= 15) return { quantity: best.quantity, unitPrice: best.unitPrice, lineTotal: best.lineTotal };
+
+    if (nums.length >= 2) {
+      const lineTotal = nums[nums.length - 1];
+      const quantityCandidates = nums.slice(0, -1).filter((value) => value > 0 && value <= 9999);
+      let quantity = quantityCandidates[0] ?? null;
+      if (catalogPrice > 0 && lineTotal > 0) {
+        const inferredQty = lineTotal / catalogPrice;
+        const nearest = quantityCandidates.sort((a, b) => Math.abs(a - inferredQty) - Math.abs(b - inferredQty))[0];
+        if (nearest != null) quantity = nearest;
+      }
+      const unitPrice = quantity ? roundMoney(lineTotal / quantity) : (nums.length >= 3 ? nums[nums.length - 2] : null);
+      return { quantity, unitPrice, lineTotal };
+    }
+    return { quantity: null, unitPrice: null, lineTotal: nums.length ? nums[0] : null };
+  }
+
+  function extractLocalizedNumbers(text, skuToIgnore = '') {
+    let value = String(text || '');
+    const compactSku = normalizeSku(skuToIgnore);
+    if (compactSku) {
+      const chars = compactSku.split('').map((char) => `${escapeRegExp(char)}[\\s\\-_.]*`).join('');
+      value = value.replace(new RegExp(chars, 'ig'), ' ');
+    }
+    const matches = value.match(/(?:\$|AR\$|U\$S)?\s*-?(?:\d{1,3}(?:\.\d{3})+,\d{1,4}|\d+,\d{1,4}|\d{1,3}(?:\.\d{3})+|\d+\.\d{1,4}|\d+)/gi) || [];
+    return matches.map((raw) => ({ raw, value: parseLocalizedNumber(raw) })).filter((item) => Number.isFinite(item.value));
+  }
+
+  function parseLocalizedNumber(raw) {
+    let value = String(raw || '').replace(/[^0-9,.-]/g, '').trim();
+    if (!value) return NaN;
+    const lastComma = value.lastIndexOf(',');
+    const lastDot = value.lastIndexOf('.');
+    if (lastComma >= 0 && lastDot >= 0) {
+      if (lastComma > lastDot) value = value.replace(/\./g, '').replace(',', '.');
+      else value = value.replace(/,/g, '');
+    } else if (lastComma >= 0) {
+      const decimals = value.length - lastComma - 1;
+      value = decimals >= 1 && decimals <= 4 ? value.replace(/\./g, '').replace(',', '.') : value.replace(/,/g, '');
+    } else if (lastDot >= 0) {
+      const decimals = value.length - lastDot - 1;
+      const dotCount = (value.match(/\./g) || []).length;
+      if (dotCount > 1 || decimals === 3) value = value.replace(/\./g, '');
+    }
+    return Number(value);
+  }
+
+  function normalizeSku(value) {
+    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function sanitizeStorageFileName(value) {
+    const cleaned = String(value || 'factura.pdf').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/-+/g, '-');
+    return cleaned.slice(-140) || 'factura.pdf';
+  }
+
+  function findBestInvoiceOrderMatch(parsed, rawText) {
+    const candidates = S.orders
+      .filter((order) => order.status !== 'cancelado')
+      .map((order) => scoreInvoiceOrderCandidate(parsed, rawText, order))
+      .sort((a, b) => b.score - a.score || new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 5);
+    const best = candidates[0];
+    const second = candidates[1];
+    const hasPrintedReference = Boolean(best?.reasons?.some((reason) => reason.includes('pedido')));
+    const hasClearLead = !second || best.score - second.score >= 8;
+    const reliable = best && best.score >= INVOICE_MATCH_THRESHOLD && (hasPrintedReference || hasClearLead);
+    return {
+      order: reliable ? S.orders.find((item) => item.id === best.order_id) || null : null,
+      score: reliable ? best.score : (best?.score || 0),
+      candidates
+    };
+  }
+
+  function scoreInvoiceOrderCandidate(parsed, rawText, order) {
+    const service = serviceById(order.service_id);
+    const orderItems = itemsForOrder(order.id);
+    const rawNormalized = normalize(rawText);
+    const rawCompact = normalizeSku(rawText);
+    const orderCodeCompact = normalizeSku(order.order_code);
+    const orderDigits = String(order.order_code || '').replace(/\D/g, '').replace(/^0+/, '');
+    let score = 0;
+    const reasons = [];
+
+    if (orderCodeCompact && rawCompact.includes(orderCodeCompact)) {
+      score += 80;
+      reasons.push('Número de pedido exacto');
+    } else if (orderDigits.length >= 3 && new RegExp(`(?:pedido|orden|oc|referencia)[^\\d]{0,15}0*${escapeRegExp(orderDigits)}\\b`, 'i').test(rawText)) {
+      score += 45;
+      reasons.push('Referencia numérica del pedido');
+    }
+
+    const invoiceSkus = new Set((parsed.items || []).map((item) => normalizeSku(item.sku)).filter(Boolean));
+    const orderSkus = new Set(orderItems.map((item) => normalizeSku(item.item_sku)).filter(Boolean));
+    const skuMatches = [...orderSkus].filter((sku) => invoiceSkus.has(sku)).length;
+    const skuCoverage = orderSkus.size ? skuMatches / orderSkus.size : 0;
+    if (skuMatches) {
+      score += Math.min(55, 20 + skuCoverage * 35);
+      reasons.push(`${skuMatches} SKU coincidente${skuMatches === 1 ? '' : 's'}`);
+    }
+
+    if (parsed.totalAmount != null && number(order.total_amount) > 0) {
+      const diffPercent = Math.abs(number(parsed.totalAmount) - number(order.total_amount)) / Math.max(1, number(order.total_amount)) * 100;
+      if (diffPercent <= 0.5) { score += 30; reasons.push('Importe total prácticamente exacto'); }
+      else if (diffPercent <= 3) { score += 20; reasons.push('Importe total cercano'); }
+      else if (diffPercent <= 10) { score += 8; reasons.push('Importe total aproximado'); }
+      else score -= Math.min(20, diffPercent / 3);
+    }
+
+    if (parsed.invoiceDate && order.created_at) {
+      const invoiceDate = new Date(`${parsed.invoiceDate}T12:00:00`);
+      const days = Math.abs(invoiceDate - new Date(order.created_at)) / 86400000;
+      if (days <= 7) { score += 10; reasons.push('Fecha cercana'); }
+      else if (days <= 30) score += 5;
+      else if (days > 180) score -= 10;
+    }
+
+    const serviceName = normalize(service?.name || '');
+    const serviceAddress = normalize(service?.address || '');
+    if (serviceName.length >= 4 && rawNormalized.includes(serviceName)) { score += 12; reasons.push('Servicio mencionado'); }
+    if (serviceAddress.length >= 6 && rawNormalized.includes(serviceAddress)) { score += 6; reasons.push('Dirección coincidente'); }
+
+    score = Math.max(0, Math.min(100, roundMoney(score)));
+    return {
+      order_id: order.id,
+      order_code: order.order_code,
+      service_name: service?.name || 'Servicio eliminado',
+      total_amount: number(order.total_amount),
+      created_at: order.created_at,
+      score,
+      reasons
+    };
+  }
+
+  function emptyInvoiceComparison(status = 'pendiente') {
+    return {
+      status,
+      total_ok: false,
+      order_total: null,
+      invoice_total: null,
+      total_difference: null,
+      matched_count: 0,
+      ok_count: 0,
+      difference_count: 0,
+      missing_count: 0,
+      extra_count: 0,
+      unreadable_count: 0,
+      rows: [],
+      generated_at: new Date().toISOString()
+    };
+  }
+
+  function compareInvoiceAgainstOrder(parsedOrInvoice, order) {
+    const invoiceItems = Array.isArray(parsedOrInvoice?.items)
+      ? parsedOrInvoice.items
+      : (Array.isArray(parsedOrInvoice?.parsed_items) ? parsedOrInvoice.parsed_items : []);
+    const invoiceTotal = parsedOrInvoice?.totalAmount != null ? parsedOrInvoice.totalAmount : parsedOrInvoice?.total_amount;
+    const orderItems = itemsForOrder(order.id);
+    const used = new Set();
+    const hasStructuredItems = invoiceItems.length > 0;
+    const rows = orderItems.map((orderItem) => {
+      if (!hasStructuredItems) return unreadableInvoiceLine(orderItem);
+      const invoiceIndex = findInvoiceItemForOrderItem(orderItem, invoiceItems, used);
+      const invoiceItem = invoiceIndex >= 0 ? invoiceItems[invoiceIndex] : null;
+      if (invoiceIndex >= 0) used.add(invoiceIndex);
+      return compareInvoiceLine(orderItem, invoiceItem);
+    });
+
+    invoiceItems.forEach((item, index) => {
+      if (used.has(index)) return;
+      rows.push({
+        key: `extra-${index}`,
+        result: 'extra',
+        order_item_id: null,
+        item_name: item.description || item.sku || 'Artículo no identificado',
+        sku: item.sku || '',
+        order_quantity: null,
+        invoice_quantity: nullableNumber(item.quantity),
+        order_unit_price: null,
+        invoice_unit_price: nullableNumber(item.unit_price),
+        order_line_total: null,
+        invoice_line_total: nullableNumber(item.line_total),
+        issues: ['Artículo facturado que no figura en el pedido']
+      });
+    });
+
+    const totalTolerance = moneyTolerance(order.total_amount);
+    const totalDifference = invoiceTotal == null ? null : roundMoney(number(invoiceTotal) - number(order.total_amount));
+    const totalOk = totalDifference != null && Math.abs(totalDifference) <= totalTolerance;
+    const missingCount = rows.filter((row) => row.result === 'missing').length;
+    const extraCount = rows.filter((row) => row.result === 'extra').length;
+    const differenceCount = rows.filter((row) => row.result === 'difference').length;
+    const unreadableCount = rows.filter((row) => row.result === 'partial').length;
+    const okCount = rows.filter((row) => row.result === 'ok').length;
+    let status = 'coincide';
+    if (missingCount || extraCount || differenceCount || (invoiceTotal != null && !totalOk)) status = 'diferencias';
+    else if (!hasStructuredItems || unreadableCount || invoiceTotal == null) status = 'parcial';
+
+    return {
+      status,
+      total_ok: totalOk,
+      order_total: number(order.total_amount),
+      invoice_total: invoiceTotal == null ? null : number(invoiceTotal),
+      total_difference: totalDifference,
+      matched_count: rows.filter((row) => !['missing', 'extra'].includes(row.result)).length,
+      ok_count: okCount,
+      difference_count: differenceCount,
+      missing_count: missingCount,
+      extra_count: extraCount,
+      unreadable_count: unreadableCount,
+      rows,
+      generated_at: new Date().toISOString()
+    };
+  }
+
+  function findInvoiceItemForOrderItem(orderItem, invoiceItems, used) {
+    const sku = normalizeSku(orderItem.item_sku);
+    if (sku) {
+      const exact = invoiceItems.findIndex((item, index) => !used.has(index) && normalizeSku(item.sku) === sku);
+      if (exact >= 0) return exact;
+    }
+    const orderName = normalize(orderItem.item_name);
+    let bestIndex = -1;
+    let bestScore = 0;
+    invoiceItems.forEach((item, index) => {
+      if (used.has(index)) return;
+      // Si ambos lados tienen SKU y no coinciden, no se fuerza un match por una descripción genérica.
+      if (sku && normalizeSku(item.sku)) return;
+      const score = textSimilarity(orderName, normalize(item.description || ''));
+      if (score > bestScore) { bestScore = score; bestIndex = index; }
+    });
+    return bestScore >= 0.62 ? bestIndex : -1;
+  }
+
+  function textSimilarity(a, b) {
+    const stop = new Set(['producto','articulo','artículo','insumo','unidad','unidades','pack','caja','bolsa','litro','litros']);
+    const tokenize = (value) => String(value || '').split(/\s+/).filter((token) => token.length >= 3 && !stop.has(token));
+    const tokensA = new Set(tokenize(a));
+    const tokensB = new Set(tokenize(b));
+    if (!tokensA.size || !tokensB.size) return 0;
+    const intersection = [...tokensA].filter((token) => tokensB.has(token)).length;
+    return intersection / Math.max(tokensA.size, tokensB.size);
+  }
+
+  function unreadableInvoiceLine(orderItem) {
+    return {
+      key: orderItem.id,
+      result: 'partial',
+      order_item_id: orderItem.id,
+      item_name: orderItem.item_name,
+      sku: orderItem.item_sku || '',
+      order_quantity: number(orderItem.quantity),
+      invoice_quantity: null,
+      order_unit_price: number(orderItem.unit_price),
+      invoice_unit_price: null,
+      order_line_total: number(orderItem.line_total),
+      invoice_line_total: null,
+      issues: [],
+      notes: ['No se pudo estructurar esta línea desde el PDF']
+    };
+  }
+
+  function compareInvoiceLine(orderItem, invoiceItem) {
+    if (!invoiceItem) {
+      return {
+        key: orderItem.id,
+        result: 'missing',
+        order_item_id: orderItem.id,
+        item_name: orderItem.item_name,
+        sku: orderItem.item_sku || '',
+        order_quantity: number(orderItem.quantity),
+        invoice_quantity: null,
+        order_unit_price: number(orderItem.unit_price),
+        invoice_unit_price: null,
+        order_line_total: number(orderItem.line_total),
+        invoice_line_total: null,
+        issues: ['Artículo pedido no encontrado en la factura'],
+        notes: []
+      };
+    }
+    const issues = [];
+    const notes = [];
+    const invoiceQty = nullableNumber(invoiceItem.quantity);
+    const invoiceUnit = nullableNumber(invoiceItem.unit_price);
+    const invoiceLine = nullableNumber(invoiceItem.line_total);
+    const orderQty = number(orderItem.quantity);
+    const finalUnit = number(orderItem.unit_price);
+    const listUnit = orderItem.list_unit_price == null ? finalUnit : number(orderItem.list_unit_price);
+    const finalLine = number(orderItem.line_total);
+    const grossLine = roundMoney(orderQty * listUnit);
+    const hasDiscount = number(orderItem.discount_percent) > 0 && Math.abs(listUnit - finalUnit) > moneyTolerance(finalUnit);
+
+    if (invoiceQty != null && Math.abs(invoiceQty - orderQty) > 0.01) issues.push('Cantidad diferente');
+    if (invoiceUnit != null) {
+      const matchesFinal = Math.abs(invoiceUnit - finalUnit) <= moneyTolerance(finalUnit);
+      const matchesList = hasDiscount && Math.abs(invoiceUnit - listUnit) <= moneyTolerance(listUnit);
+      if (!matchesFinal && !matchesList) issues.push('Precio unitario diferente');
+      else if (matchesList && !matchesFinal) notes.push('La factura muestra precio de lista; el descuento debe reflejarse en el total');
+    }
+    if (invoiceLine != null) {
+      const matchesFinal = Math.abs(invoiceLine - finalLine) <= moneyTolerance(finalLine);
+      const matchesGross = hasDiscount && Math.abs(invoiceLine - grossLine) <= moneyTolerance(grossLine);
+      if (!matchesFinal && !matchesGross) issues.push('Importe de línea diferente');
+      else if (matchesGross && !matchesFinal && !notes.length) notes.push('La línea está expresada antes del descuento');
+    }
+    const unreadable = invoiceQty == null || invoiceUnit == null || invoiceLine == null;
+    return {
+      key: orderItem.id,
+      result: issues.length ? 'difference' : (unreadable ? 'partial' : 'ok'),
+      order_item_id: orderItem.id,
+      item_name: orderItem.item_name,
+      sku: orderItem.item_sku || invoiceItem.sku || '',
+      order_quantity: orderQty,
+      invoice_quantity: invoiceQty,
+      order_unit_price: finalUnit,
+      invoice_unit_price: invoiceUnit,
+      order_line_total: finalLine,
+      invoice_line_total: invoiceLine,
+      issues,
+      notes
+    };
+  }
+
+  function nullableNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function moneyTolerance(reference) {
+    return Math.max(1, Math.abs(number(reference)) * INVOICE_MONEY_TOLERANCE_PERCENT / 100);
+  }
+
+  async function openInvoice(invoiceId) {
+    const invoice = invoiceById(invoiceId);
+    if (!invoice) return;
+    S.selectedInvoiceId = invoiceId;
+    resetInvoiceDetailState();
+    renderInvoiceDetail(invoice);
+    M.invoiceDetail.show();
+    if (invoice.matched_order_id) await syncSelectedInvoiceComparison(invoice);
+  }
+
+  function renderInvoiceDetail(invoice) {
+    const order = S.orders.find((item) => item.id === invoice.matched_order_id) || null;
+    const service = order ? serviceById(order.service_id) : null;
+    const summary = normalizeInvoiceComparisonSummary(invoice.comparison_summary, invoice.comparison_status);
+    E.invoiceDetailTitle.textContent = invoice.invoice_number ? `Factura ${invoice.invoice_number}` : invoice.file_name;
+    E.invoiceDetailSubtitle.textContent = `${invoice.file_name} · ${invoiceMethodLabel(invoice.match_method)}`;
+    E.invoiceRawText.textContent = invoice.extracted_text || 'No se pudo extraer texto del PDF.';
+    E.invoiceMatchConfidence.textContent = invoice.match_method === 'manual' ? 'Manual' : `${Math.round(number(invoice.match_score))}%`;
+    E.invoiceMatchConfidence.className = `invoice-confidence-pill is-${invoiceStatusClass(invoice.comparison_status)}`;
+
+    const meta = [
+      ['Proveedor', invoice.supplier_name || 'No identificado'],
+      ['CUIT', invoice.supplier_tax_id || 'No detectado'],
+      ['Fecha factura', invoice.invoice_date ? new Intl.DateTimeFormat('es-AR').format(new Date(`${invoice.invoice_date}T12:00:00`)) : 'No detectada'],
+      ['Total facturado', invoice.total_amount == null ? 'No detectado' : formatCurrency(invoice.total_amount)],
+      ['Subtotal', invoice.subtotal == null ? 'No detectado' : formatCurrency(invoice.subtotal)],
+      ['Impuestos', invoice.tax_amount == null ? 'No detectados' : formatCurrency(invoice.tax_amount)],
+      ['PDF', `${invoice.pdf_page_count || 0} páginas · ${formatFileSize(invoice.file_size)}`],
+      ['Cargada', dtf.format(new Date(invoice.created_at))]
+    ];
+    E.invoiceDetailMeta.innerHTML = meta.map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
+
+    populateInvoiceOrderSelect(invoice.matched_order_id);
+    renderInvoiceCandidateHints(invoice);
+    renderInvoiceAnalysisSummary(invoice, summary, order, service);
+    renderInvoiceComparison(summary);
+    E.toggleInvoiceReviewedButton.innerHTML = invoice.reviewed
+      ? '<i class="bi bi-arrow-counterclockwise me-2"></i>Marcar pendiente'
+      : '<i class="bi bi-check2-square me-2"></i>Marcar revisada';
+    E.toggleInvoiceReviewedButton.classList.toggle('btn-outline-success', !invoice.reviewed);
+    E.toggleInvoiceReviewedButton.classList.toggle('btn-outline-secondary', invoice.reviewed);
+    E.invoiceDetailError.classList.add('d-none');
+  }
+
+  function formatFileSize(bytes) {
+    const value = number(bytes);
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toLocaleString('es-AR', { maximumFractionDigits: 1 })} KB`;
+    return `${(value / (1024 * 1024)).toLocaleString('es-AR', { maximumFractionDigits: 1 })} MB`;
+  }
+
+  function populateInvoiceOrderSelect(selectedId = '') {
+    const options = [...S.orders]
+      .filter((order) => order.status !== 'cancelado' || order.id === selectedId)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .map((order) => {
+        const service = serviceById(order.service_id);
+        return `<option value="${ea(order.id)}" ${order.id === selectedId ? 'selected' : ''}>${eh(order.order_code)} · ${eh(service?.name || 'Servicio')} · ${eh(formatCurrency(order.total_amount))} · ${eh(new Intl.DateTimeFormat('es-AR').format(new Date(order.created_at)))}</option>`;
+      }).join('');
+    E.invoiceOrderSelect.innerHTML = `<option value="">Sin pedido vinculado</option>${options}`;
+    E.invoiceOrderSelect.value = selectedId || '';
+  }
+
+  function renderInvoiceCandidateHints(invoice) {
+    const candidates = Array.isArray(invoice.match_candidates) ? invoice.match_candidates : [];
+    E.invoiceCandidateHints.innerHTML = candidates.length
+      ? `<div class="invoice-candidate-label">Sugerencias del análisis</div><div class="invoice-candidate-list">${candidates.map((candidate) => `<button class="invoice-candidate" type="button" data-invoice-candidate="${ea(candidate.order_id)}"><strong>${eh(candidate.order_code || 'Pedido')}</strong><span>${eh(candidate.service_name || '')} · ${eh(formatCurrency(candidate.total_amount))}</span><em>${Math.round(number(candidate.score))}%${candidate.reasons?.length ? ` · ${eh(candidate.reasons.join(', '))}` : ''}</em></button>`).join('')}</div>`
+      : '<div class="text-secondary small">No hubo candidatos confiables. Seleccioná el pedido manualmente.</div>';
+    E.invoiceCandidateHints.querySelectorAll('[data-invoice-candidate]').forEach((button) => {
+      button.addEventListener('click', () => { E.invoiceOrderSelect.value = button.dataset.invoiceCandidate; });
+    });
+  }
+
+  function renderInvoiceAnalysisSummary(invoice, summary, order, service) {
+    const status = summary.status || invoice.comparison_status || 'pendiente';
+    if (!order) {
+      E.invoiceAnalysisSummary.innerHTML = `<div class="invoice-summary-card is-${invoiceStatusClass(status)}"><div><span class="eyebrow">Resultado</span><h6>${eh(INVOICE_STATUS_LABELS[status] || status)}</h6><p>No se pudo vincular esta factura con un pedido de manera confiable. Seleccioná uno para comparar.</p></div></div>`;
+      return;
+    }
+    const totalText = summary.invoice_total == null
+      ? 'No se pudo leer el total de la factura.'
+      : (summary.total_ok ? 'El importe total coincide.' : `Diferencia total: ${formatSignedCurrency(summary.total_difference)}.`);
+    E.invoiceAnalysisSummary.innerHTML = `<div class="invoice-summary-card is-${invoiceStatusClass(status)}">
+      <div><span class="eyebrow">Resultado</span><h6>${eh(INVOICE_STATUS_LABELS[status] || status)}</h6><p>${eh(totalText)} Pedido ${eh(order.order_code)} · ${eh(service?.name || 'Servicio')}.</p></div>
+      <div class="invoice-summary-metrics"><span><strong>${summary.ok_count || 0}</strong> correctos</span><span><strong>${summary.difference_count || 0}</strong> diferencias</span><span><strong>${summary.missing_count || 0}</strong> faltantes</span><span><strong>${summary.extra_count || 0}</strong> extras</span></div>
+      <div class="invoice-total-compare"><div><span>Pedido</span><strong>${eh(formatCurrency(order.total_amount))}</strong></div><i class="bi bi-arrow-left-right"></i><div><span>Factura</span><strong>${summary.invoice_total == null ? 'No leído' : eh(formatCurrency(summary.invoice_total))}</strong></div></div>
+    </div>`;
+  }
+
+  function formatSignedCurrency(value) {
+    if (value == null) return 'No calculada';
+    return `${number(value) > 0 ? '+' : ''}${formatCurrency(value)}`;
+  }
+
+  function normalizeInvoiceComparisonSummary(value, fallbackStatus) {
+    const parsed = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return { ...emptyInvoiceComparison(fallbackStatus || 'pendiente'), ...parsed, rows: Array.isArray(parsed.rows) ? parsed.rows : [] };
+  }
+
+  function renderInvoiceComparison(summary) {
+    const rows = Array.isArray(summary.rows) ? summary.rows : [];
+    E.invoiceComparisonBody.innerHTML = rows.map((row) => {
+      const result = row.result || 'partial';
+      const resultLabel = ({ ok: 'Coincide', difference: 'Diferencia', missing: 'No facturado', extra: 'No pedido', partial: 'Lectura parcial' })[result] || result;
+      const resultClass = ({ ok: 'success', difference: 'danger', missing: 'warning', extra: 'warning', partial: 'secondary' })[result] || 'secondary';
+      return `<tr class="invoice-comparison-row is-${ea(result)}">
+        <td><strong>${eh(row.item_name || 'Artículo')}</strong><div class="table-subtitle">${row.sku ? `SKU ${eh(row.sku)}` : 'Sin SKU'}</div>${row.issues?.length ? `<div class="invoice-issues">${row.issues.map((issue) => `<span>${eh(issue)}</span>`).join('')}</div>` : ''}${row.notes?.length ? `<div class="invoice-notes">${row.notes.map((note) => `<span>${eh(note)}</span>`).join('')}</div>` : ''}</td>
+        <td>${invoiceValuePair('Cantidad', row.order_quantity, 'qty')}</td>
+        <td>${invoiceValuePair('Cantidad', row.invoice_quantity, 'qty')}</td>
+        <td>${invoicePricePair(row.order_unit_price, row.invoice_unit_price)}</td>
+        <td>${invoicePricePair(row.order_line_total, row.invoice_line_total)}</td>
+        <td><span class="badge text-bg-${resultClass}">${eh(resultLabel)}</span></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="6"><div class="empty-inline">No hay artículos estructurados para comparar. Revisá el texto extraído o corregí la lectura.</div></td></tr>';
+  }
+
+  function invoiceValuePair(label, value, kind) {
+    if (value == null) return '<span class="text-secondary">No leído</span>';
+    return `<strong>${kind === 'qty' ? eh(formatQty(value)) : eh(value)}</strong><div class="table-subtitle">${eh(label)}</div>`;
+  }
+
+  function invoicePricePair(orderValue, invoiceValue) {
+    return `<div class="invoice-price-pair"><span>Ped.: ${orderValue == null ? '—' : eh(formatCurrency(orderValue))}</span><strong>Fact.: ${invoiceValue == null ? 'No leído' : eh(formatCurrency(invoiceValue))}</strong></div>`;
+  }
+
+  async function syncSelectedInvoiceComparison(invoice) {
+    const order = S.orders.find((item) => item.id === invoice.matched_order_id);
+    if (!order) return;
+    const comparison = compareInvoiceAgainstOrder(invoice, order);
+    const stored = normalizeInvoiceComparisonSummary(invoice.comparison_summary, invoice.comparison_status);
+    const changed = invoice.comparison_status !== comparison.status || JSON.stringify(stored.rows) !== JSON.stringify(comparison.rows) || stored.invoice_total !== comparison.invoice_total || stored.order_total !== comparison.order_total;
+    if (!changed) return;
+    invoice.comparison_status = comparison.status;
+    invoice.comparison_summary = comparison;
+    renderInvoiceDetail(invoice);
+    try {
+      const { error } = await S.sb.from('supplier_invoices').update({ comparison_status: comparison.status, comparison_summary: comparison }).eq('id', invoice.id);
+      if (error) throw error;
+      renderInvoices();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async function saveInvoiceManualMatch() {
+    const invoice = invoiceById(S.selectedInvoiceId);
+    if (!invoice) return;
+    const orderId = E.invoiceOrderSelect.value || null;
+    buttonBusy(E.saveInvoiceMatchButton, true, 'Comparando...');
+    try {
+      let comparison;
+      let status;
+      if (orderId) {
+        const order = S.orders.find((item) => item.id === orderId);
+        if (!order) throw new Error('El pedido seleccionado ya no existe.');
+        comparison = compareInvoiceAgainstOrder(invoice, order);
+        status = comparison.status;
+      } else {
+        status = invoice.extracted_text?.trim() ? 'sin_match' : 'sin_lectura';
+        comparison = emptyInvoiceComparison(status);
+      }
+      const update = {
+        matched_order_id: orderId,
+        match_method: orderId ? 'manual' : 'sin_match',
+        match_score: orderId ? 100 : 0,
+        comparison_status: status,
+        comparison_summary: comparison,
+        reviewed: false
+      };
+      const { data, error } = await S.sb.from('supplier_invoices').update(update).eq('id', invoice.id).select('*').single();
+      if (error) throw error;
+      replaceInvoiceState(data);
+      renderInvoiceDetail(data);
+      renderInvoices();
+      toast(orderId ? 'Factura vinculada y comparada.' : 'Vinculación eliminada.', 'success');
+    } catch (error) {
+      console.error(error);
+      showInvoiceDetailError(invoiceModuleErrorMessage(error));
+    } finally {
+      buttonBusy(E.saveInvoiceMatchButton, false);
+    }
+  }
+
+  async function openSelectedInvoicePdf() {
+    const invoice = invoiceById(S.selectedInvoiceId);
+    if (!invoice) return;
+    buttonBusy(E.openInvoicePdfButton, true, 'Abriendo...');
+    try {
+      const { data, error } = await S.sb.storage.from(INVOICE_BUCKET).createSignedUrl(invoice.storage_path, 120);
+      if (error) throw error;
+      const opened = window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+      if (!opened) window.location.href = data.signedUrl;
+    } catch (error) {
+      console.error(error);
+      showInvoiceDetailError(invoiceModuleErrorMessage(error));
+    } finally {
+      buttonBusy(E.openInvoicePdfButton, false);
+    }
+  }
+
+  async function deleteInvoice(invoiceId) {
+    if (!isFullAdmin()) return;
+    const invoice = invoiceById(invoiceId);
+    if (!invoice || !confirm(`¿Eliminar la factura ${invoice.invoice_number || invoice.file_name}? También se eliminará el PDF privado.`)) return;
+    try {
+      const { error } = await S.sb.from('supplier_invoices').delete().eq('id', invoice.id);
+      if (error) throw error;
+      const { error: storageError } = await S.sb.storage.from(INVOICE_BUCKET).remove([invoice.storage_path]);
+      if (storageError) console.warn('No se pudo eliminar el archivo físico de la factura:', storageError);
+      S.invoices = S.invoices.filter((item) => item.id !== invoice.id);
+      if (S.selectedInvoiceId === invoice.id) M.invoiceDetail.hide();
+      renderInvoices();
+      toast(storageError ? 'Factura eliminada. El archivo privado deberá limpiarse desde Storage.' : 'Factura eliminada.', storageError ? 'info' : 'success');
+    } catch (error) {
+      console.error(error);
+      const message = invoiceModuleErrorMessage(error);
+      if (S.selectedInvoiceId === invoice.id) showInvoiceDetailError(message);
+      else showInvoiceModuleError(message);
+    }
+  }
+
+  async function toggleInvoiceReviewed() {
+    const invoice = invoiceById(S.selectedInvoiceId);
+    if (!invoice) return;
+    E.toggleInvoiceReviewedButton.disabled = true;
+    try {
+      const next = !invoice.reviewed;
+      const payload = { reviewed: next, reviewed_by: next ? S.profile.id : null, reviewed_at: next ? new Date().toISOString() : null };
+      const { data, error } = await S.sb.from('supplier_invoices').update(payload).eq('id', invoice.id).select('*').single();
+      if (error) throw error;
+      replaceInvoiceState(data);
+      renderInvoiceDetail(data);
+      renderInvoices();
+      toast(next ? 'Factura marcada como revisada.' : 'Factura marcada como pendiente.', 'success');
+    } catch (error) {
+      console.error(error);
+      showInvoiceDetailError(invoiceModuleErrorMessage(error));
+    } finally {
+      E.toggleInvoiceReviewedButton.disabled = false;
+    }
+  }
+
+  function startInvoiceReadingEdit() {
+    const invoice = invoiceById(S.selectedInvoiceId);
+    if (!invoice) return;
+    S.invoiceReadingEditMode = true;
+    S.invoiceReadingTotalDraft = invoice.total_amount ?? '';
+    E.invoiceReadingTotal.value = S.invoiceReadingTotalDraft;
+    S.invoiceReadingDraft = (Array.isArray(invoice.parsed_items) ? invoice.parsed_items : []).map((item, index) => ({
+      key: `${index}-${Date.now()}`,
+      sku: item.sku || '',
+      description: item.description || '',
+      quantity: item.quantity ?? '',
+      unit_price: item.unit_price ?? '',
+      line_total: item.line_total ?? ''
+    }));
+    E.invoiceReadingEditPanel.classList.remove('d-none');
+    E.toggleInvoiceReadingEditButton.classList.add('d-none');
+    renderInvoiceReadingEditor();
+  }
+
+  function cancelInvoiceReadingEdit() {
+    S.invoiceReadingEditMode = false;
+    S.invoiceReadingDraft = [];
+    S.invoiceReadingTotalDraft = '';
+    E.invoiceReadingTotal.value = '';
+    E.invoiceReadingEditPanel.classList.add('d-none');
+    E.toggleInvoiceReadingEditButton.classList.remove('d-none');
+  }
+
+  function addInvoiceReadingItem() {
+    S.invoiceReadingDraft.push({ key: `${Date.now()}-${Math.random()}`, sku: '', description: '', quantity: '', unit_price: '', line_total: '' });
+    renderInvoiceReadingEditor();
+  }
+
+  function renderInvoiceReadingEditor() {
+    E.invoiceReadingItems.innerHTML = S.invoiceReadingDraft.map((item) => `<div class="invoice-reading-item" data-invoice-reading-key="${ea(item.key)}">
+      <div><label class="form-label">SKU</label><input class="form-control" data-invoice-reading-field="sku" value="${ea(item.sku)}" placeholder="SKU"></div>
+      <div class="invoice-reading-description"><label class="form-label">Descripción</label><input class="form-control" data-invoice-reading-field="description" value="${ea(item.description)}" placeholder="Artículo"></div>
+      <div><label class="form-label">Cantidad</label><input class="form-control" type="number" step="0.01" min="0" data-invoice-reading-field="quantity" value="${ea(item.quantity)}"></div>
+      <div><label class="form-label">Precio unitario</label><input class="form-control" type="number" step="0.01" min="0" data-invoice-reading-field="unit_price" value="${ea(item.unit_price)}"></div>
+      <div><label class="form-label">Importe</label><input class="form-control" type="number" step="0.01" min="0" data-invoice-reading-field="line_total" value="${ea(item.line_total)}"></div>
+      <button class="btn btn-outline-danger invoice-reading-remove" type="button" data-invoice-reading-remove="${ea(item.key)}" title="Quitar línea"><i class="bi bi-trash3"></i></button>
+    </div>`).join('') || '<div class="empty-inline">No hay líneas. Agregá manualmente los artículos facturados.</div>';
+  }
+
+  function handleInvoiceReadingInput(event) {
+    const input = event.target.closest('[data-invoice-reading-field]');
+    if (!input) return;
+    const row = input.closest('[data-invoice-reading-key]');
+    const item = S.invoiceReadingDraft.find((entry) => String(entry.key) === String(row?.dataset.invoiceReadingKey));
+    if (!item) return;
+    item[input.dataset.invoiceReadingField] = input.value;
+  }
+
+  function handleInvoiceReadingClick(event) {
+    const remove = event.target.closest('[data-invoice-reading-remove]');
+    if (!remove) return;
+    S.invoiceReadingDraft = S.invoiceReadingDraft.filter((item) => String(item.key) !== String(remove.dataset.invoiceReadingRemove));
+    renderInvoiceReadingEditor();
+  }
+
+  async function saveInvoiceReading() {
+    const invoice = invoiceById(S.selectedInvoiceId);
+    if (!invoice) return;
+    const parsedItems = S.invoiceReadingDraft
+      .map((item) => ({
+        sku: String(item.sku || '').trim() || null,
+        description: String(item.description || '').trim() || String(item.sku || '').trim() || 'Artículo',
+        quantity: nullableNumber(item.quantity),
+        unit_price: nullableNumber(item.unit_price),
+        line_total: nullableNumber(item.line_total),
+        raw_line: 'Lectura corregida manualmente'
+      }))
+      .filter((item) => item.sku || item.description || item.quantity != null || item.line_total != null);
+    buttonBusy(E.saveInvoiceReadingButton, true, 'Guardando...');
+    try {
+      const correctedTotal = nullableNumber(S.invoiceReadingTotalDraft);
+      const order = S.orders.find((item) => item.id === invoice.matched_order_id) || null;
+      const comparison = order ? compareInvoiceAgainstOrder({ parsed_items: parsedItems, total_amount: correctedTotal }, order) : emptyInvoiceComparison(invoice.extracted_text?.trim() ? 'sin_match' : 'sin_lectura');
+      const status = comparison.status;
+      const { data, error } = await S.sb.from('supplier_invoices').update({
+        parsed_items: parsedItems,
+        total_amount: correctedTotal,
+        comparison_status: status,
+        comparison_summary: comparison,
+        reviewed: false
+      }).eq('id', invoice.id).select('*').single();
+      if (error) throw error;
+      replaceInvoiceState(data);
+      cancelInvoiceReadingEdit();
+      renderInvoiceDetail(data);
+      renderInvoices();
+      toast('Lectura corregida y comparación actualizada.', 'success');
+    } catch (error) {
+      console.error(error);
+      showInvoiceDetailError(invoiceModuleErrorMessage(error));
+    } finally {
+      buttonBusy(E.saveInvoiceReadingButton, false);
+    }
+  }
+
+  function replaceInvoiceState(invoice) {
+    const index = S.invoices.findIndex((item) => item.id === invoice.id);
+    if (index >= 0) S.invoices[index] = invoice;
+    else S.invoices.unshift(invoice);
+    return invoice;
+  }
+
+  function showInvoiceDetailError(message) {
+    E.invoiceDetailError.textContent = message;
+    E.invoiceDetailError.classList.remove('d-none');
+  }
+
+  function resetInvoiceDetailState() {
+    S.invoiceReadingEditMode = false;
+    S.invoiceReadingDraft = [];
+    S.invoiceReadingTotalDraft = '';
+    if (E.invoiceReadingTotal) E.invoiceReadingTotal.value = '';
+    if (E.invoiceReadingEditPanel) E.invoiceReadingEditPanel.classList.add('d-none');
+    if (E.toggleInvoiceReadingEditButton) E.toggleInvoiceReadingEditButton.classList.remove('d-none');
+    if (E.invoiceDetailError) {
+      E.invoiceDetailError.textContent = '';
+      E.invoiceDetailError.classList.add('d-none');
+    }
+  }
+
+  function openPriceImport() {
+    if (!canManageMasterData()) {
+      toast('Solo el administrador puede actualizar precios.', 'error');
+      return;
+    }
+    hidePriceImportError();
+    if (!window.XLSX) {
+      E.priceImportLibraryError.textContent = 'No se pudo cargar el lector de Excel. Revisá la conexión a internet y volvé a abrir la aplicación.';
+      E.priceImportLibraryError.classList.remove('d-none');
+    } else {
+      E.priceImportLibraryError.classList.add('d-none');
+    }
+    if (!S.priceImportWorkbook) resetPriceImport(false);
+    M.priceImport.show();
+  }
+
+  function clearPriceImportState() {
+    S.priceImportWorkbook = null;
+    S.priceImportRows = [];
+    S.priceImportFileName = '';
+    S.priceImportSheetName = '';
+    S.priceImportComparison = null;
+    S.priceImportSelected = new Set();
+    S.priceImportFilter = 'changes';
+    S.priceImportSearch = '';
+  }
+
+  function resetPriceImport(clearFile = true) {
+    clearPriceImportState();
+    if (clearFile && E.priceImportFile) E.priceImportFile.value = '';
+    E.priceImportMapping.classList.add('d-none');
+    E.priceImportResults.classList.add('d-none');
+    E.priceImportAnalyzeButton.classList.add('d-none');
+    E.priceImportApplyButton.classList.add('d-none');
+    E.priceImportResetButton.classList.add('d-none');
+    E.priceImportResultFilter.value = 'changes';
+    E.priceImportSearch.value = '';
+    E.priceImportResultsBody.innerHTML = '';
+    E.priceImportPreviewHead.innerHTML = '';
+    E.priceImportPreviewBody.innerHTML = '';
+    E.priceImportSelectAll.checked = false;
+    E.priceImportSelectAll.indeterminate = false;
+    hidePriceImportError();
+  }
+
+  async function handlePriceImportFile() {
+    hidePriceImportError();
+    const file = E.priceImportFile.files?.[0];
+    if (!file) {
+      resetPriceImport(false);
+      return;
+    }
+    if (!window.XLSX) {
+      showPriceImportError('No está disponible el lector de Excel. Revisá la conexión y recargá la aplicación.');
+      return;
+    }
+    const extension = String(file.name.split('.').pop() || '').toLowerCase();
+    if (!['xlsx', 'xls', 'xlsb', 'csv'].includes(extension)) {
+      showPriceImportError('El archivo debe ser XLSX, XLS, XLSB o CSV.');
+      E.priceImportFile.value = '';
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      showPriceImportError('El archivo supera los 20 MB. Reducilo antes de cargarlo.');
+      E.priceImportFile.value = '';
+      return;
+    }
+
+    buttonBusy(E.priceImportAnalyzeButton, true, 'Leyendo archivo...');
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { cellDates: false, cellNF: false, cellText: true });
+      if (!workbook?.SheetNames?.length) throw new Error('El archivo no contiene hojas legibles.');
+      S.priceImportWorkbook = workbook;
+      S.priceImportFileName = file.name;
+      S.priceImportComparison = null;
+      S.priceImportSelected = new Set();
+      E.priceImportSheet.innerHTML = workbook.SheetNames.map((name) => `<option value="${ea(name)}">${eh(name)}</option>`).join('');
+      E.priceImportSheet.value = workbook.SheetNames[0];
+      E.priceImportFileSummary.textContent = `${file.name} · ${formatFileSize(file.size)}`;
+      loadPriceImportSheet(workbook.SheetNames[0]);
+      E.priceImportMapping.classList.remove('d-none');
+      E.priceImportResults.classList.add('d-none');
+      E.priceImportAnalyzeButton.classList.remove('d-none');
+      E.priceImportApplyButton.classList.add('d-none');
+      E.priceImportResetButton.classList.remove('d-none');
+    } catch (error) {
+      console.error(error);
+      resetPriceImport(true);
+      showPriceImportError(error.message || 'No se pudo leer el archivo de precios.');
+    } finally {
+      buttonBusy(E.priceImportAnalyzeButton, false);
+    }
+  }
+
+  function handlePriceImportSheetChange() {
+    if (!S.priceImportWorkbook) return;
+    loadPriceImportSheet(E.priceImportSheet.value);
+  }
+
+  function loadPriceImportSheet(sheetName) {
+    const sheet = S.priceImportWorkbook?.Sheets?.[sheetName];
+    if (!sheet) {
+      showPriceImportError('No se pudo leer la hoja seleccionada.');
+      return;
+    }
+    S.priceImportSheetName = sheetName;
+    S.priceImportRows = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+      blankrows: false
+    });
+    const detection = detectPriceImportStructure(S.priceImportRows);
+    E.priceImportHeaderRow.max = Math.max(1, Math.min(500, S.priceImportRows.length || 1));
+    E.priceImportHeaderRow.value = detection.headerRow + 1;
+    populatePriceImportColumns(detection);
+    E.priceImportMappingWarning.classList.toggle('d-none', detection.confident);
+    E.priceImportMappingWarning.textContent = detection.confident
+      ? ''
+      : 'No se identificaron con suficiente seguridad las columnas. Revisá manualmente la fila de encabezados, SKU y precio antes de analizar.';
+    renderPriceImportPreview();
+    E.priceImportResults.classList.add('d-none');
+    E.priceImportApplyButton.classList.add('d-none');
+  }
+
+  function handlePriceImportHeaderChange() {
+    const headerIndex = Math.max(0, Math.min(S.priceImportRows.length - 1, Math.round(number(E.priceImportHeaderRow.value)) - 1));
+    const detection = detectColumnsInHeader(S.priceImportRows[headerIndex] || []);
+    populatePriceImportColumns({ headerRow: headerIndex, ...detection });
+    E.priceImportMappingWarning.classList.toggle('d-none', detection.confident);
+    E.priceImportMappingWarning.textContent = detection.confident
+      ? ''
+      : 'Seleccioná manualmente las columnas de SKU y precio.';
+    renderPriceImportPreview();
+  }
+
+  function detectPriceImportStructure(rows) {
+    let best = { headerRow: 0, skuColumn: -1, priceColumn: -1, descriptionColumn: -1, score: -1, confident: false };
+    const maxRows = Math.min(rows.length, 50);
+    for (let rowIndex = 0; rowIndex < maxRows; rowIndex += 1) {
+      const detected = detectColumnsInHeader(rows[rowIndex] || []);
+      const nonEmpty = (rows[rowIndex] || []).filter((value) => String(value || '').trim()).length;
+      const score = detected.score + Math.min(nonEmpty, 10);
+      if (score > best.score) best = { headerRow: rowIndex, ...detected, score };
+    }
+    if (best.score < 0) return { headerRow: 0, skuColumn: -1, priceColumn: -1, descriptionColumn: -1, score: 0, confident: false };
+    return best;
+  }
+
+  function detectColumnsInHeader(header) {
+    let skuColumn = -1;
+    let priceColumn = -1;
+    let descriptionColumn = -1;
+    let skuScore = 0;
+    let priceScore = 0;
+    let descriptionScore = 0;
+    header.forEach((value, index) => {
+      const skuCandidate = priceHeaderScore(value, 'sku');
+      const priceCandidate = priceHeaderScore(value, 'price');
+      const descriptionCandidate = priceHeaderScore(value, 'description');
+      if (skuCandidate > skuScore) { skuScore = skuCandidate; skuColumn = index; }
+      if (priceCandidate > priceScore) { priceScore = priceCandidate; priceColumn = index; }
+      if (descriptionCandidate > descriptionScore) { descriptionScore = descriptionCandidate; descriptionColumn = index; }
+    });
+    if (descriptionColumn === skuColumn || descriptionColumn === priceColumn) descriptionColumn = -1;
+    const confident = skuColumn >= 0 && priceColumn >= 0 && skuColumn !== priceColumn && skuScore >= 55 && priceScore >= 55;
+    return { skuColumn, priceColumn, descriptionColumn, score: skuScore + priceScore + Math.min(descriptionScore, 40), confident };
+  }
+
+  function priceHeaderScore(value, kind) {
+    const text = normalize(value).replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!text) return 0;
+    const aliases = {
+      sku: ['sku', 'codigo sku', 'cod sku', 'codigo articulo', 'cod articulo', 'codigo de articulo', 'cod de articulo', 'codigo producto', 'cod producto', 'codigo proveedor', 'codigo interno', 'referencia', 'codigo', 'cod'],
+      price: ['precio unitario', 'precio lista', 'precio de lista', 'precio venta', 'precio de venta', 'precio neto', 'precio final', 'p unitario', 'p unit', 'precio', 'valor unitario', 'importe unitario', 'costo unitario', 'valor', 'importe', 'costo', 'price'],
+      description: ['descripcion', 'producto', 'articulo', 'insumo', 'detalle', 'nombre', 'denominacion']
+    }[kind] || [];
+    let best = 0;
+    aliases.forEach((alias, index) => {
+      if (text === alias) best = Math.max(best, 100 - index);
+      else if (text.startsWith(`${alias} `) || text.endsWith(` ${alias}`)) best = Math.max(best, 75 - Math.min(index, 20));
+      else if (text.includes(alias)) best = Math.max(best, 55 - Math.min(index, 20));
+    });
+    if (kind === 'price' && /iva|lista|neto|unitario/.test(text) && /precio|valor|importe|costo/.test(text)) best += 12;
+    if (kind === 'sku' && /barra|ean|upc/.test(text) && !text.includes('sku')) best = Math.min(best, 35);
+    return best;
+  }
+
+  function populatePriceImportColumns(detection) {
+    const headerIndex = Math.max(0, Math.min(S.priceImportRows.length - 1, number(E.priceImportHeaderRow.value) - 1));
+    const header = S.priceImportRows[headerIndex] || [];
+    const maxColumns = Math.max(header.length, ...S.priceImportRows.slice(headerIndex, headerIndex + 10).map((row) => row.length), 0);
+    const options = Array.from({ length: maxColumns }, (_, index) => {
+      const label = String(header[index] || '').trim() || 'Sin encabezado';
+      return `<option value="${index}">${columnLetter(index)} · ${eh(label)}</option>`;
+    }).join('');
+    E.priceImportSkuColumn.innerHTML = '<option value="">Seleccionar...</option>' + options;
+    E.priceImportPriceColumn.innerHTML = '<option value="">Seleccionar...</option>' + options;
+    E.priceImportDescriptionColumn.innerHTML = '<option value="">No usar</option>' + options;
+    if (detection.skuColumn >= 0) E.priceImportSkuColumn.value = String(detection.skuColumn);
+    if (detection.priceColumn >= 0) E.priceImportPriceColumn.value = String(detection.priceColumn);
+    if (detection.descriptionColumn >= 0) E.priceImportDescriptionColumn.value = String(detection.descriptionColumn);
+  }
+
+  function renderPriceImportPreview() {
+    if (!S.priceImportRows.length) return;
+    const headerIndex = Math.max(0, Math.min(S.priceImportRows.length - 1, Math.round(number(E.priceImportHeaderRow.value)) - 1));
+    const skuColumn = optionalColumnIndex(E.priceImportSkuColumn.value);
+    const priceColumn = optionalColumnIndex(E.priceImportPriceColumn.value);
+    const descriptionColumn = optionalColumnIndex(E.priceImportDescriptionColumn.value);
+    const selectedColumns = [...new Set([skuColumn, descriptionColumn, priceColumn].filter((index) => index >= 0))];
+    const header = S.priceImportRows[headerIndex] || [];
+    if (!selectedColumns.length) {
+      E.priceImportPreviewHead.innerHTML = '';
+      E.priceImportPreviewBody.innerHTML = '<tr><td class="text-secondary">Seleccioná las columnas para ver la vista previa.</td></tr>';
+      E.priceImportPreviewCaption.textContent = '';
+      return;
+    }
+    E.priceImportPreviewHead.innerHTML = `<tr>${selectedColumns.map((index) => `<th>${columnLetter(index)} · ${eh(header[index] || 'Sin encabezado')}</th>`).join('')}</tr>`;
+    const previewRows = S.priceImportRows.slice(headerIndex + 1).filter((row) => row.some((value) => String(value || '').trim())).slice(0, 6);
+    E.priceImportPreviewBody.innerHTML = previewRows.map((row) => `<tr>${selectedColumns.map((index) => `<td>${eh(row[index] ?? '')}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${selectedColumns.length}" class="text-secondary">No hay filas debajo del encabezado seleccionado.</td></tr>`;
+    E.priceImportPreviewCaption.textContent = `${Math.max(0, S.priceImportRows.length - headerIndex - 1)} filas potenciales`;
+  }
+
+  function analyzePriceImport() {
+    hidePriceImportError();
+    if (!S.priceImportRows.length) {
+      showPriceImportError('Primero cargá una lista de precios.');
+      return;
+    }
+    const headerRow = Math.round(number(E.priceImportHeaderRow.value)) - 1;
+    const skuColumn = optionalColumnIndex(E.priceImportSkuColumn.value);
+    const priceColumn = optionalColumnIndex(E.priceImportPriceColumn.value);
+    const descriptionColumn = optionalColumnIndex(E.priceImportDescriptionColumn.value);
+    if (headerRow < 0 || headerRow >= S.priceImportRows.length) {
+      showPriceImportError('La fila de encabezados no es válida.');
+      return;
+    }
+    if (skuColumn < 0 || priceColumn < 0 || skuColumn === priceColumn) {
+      showPriceImportError('Seleccioná columnas diferentes para SKU y precio.');
+      return;
+    }
+
+    const comparison = buildPriceImportComparison({ headerRow, skuColumn, priceColumn, descriptionColumn });
+    S.priceImportComparison = comparison;
+    S.priceImportSelected = new Set(comparison.changes.map((row) => row.materialId));
+    S.priceImportFilter = 'changes';
+    S.priceImportSearch = '';
+    E.priceImportResultFilter.value = 'changes';
+    E.priceImportSearch.value = '';
+    E.priceImportResults.classList.remove('d-none');
+    E.priceImportApplyButton.classList.remove('d-none');
+    renderPriceImportResults();
+    E.priceImportResults.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function buildPriceImportComparison(mapping) {
+    const { headerRow, skuColumn, priceColumn, descriptionColumn } = mapping;
+    const fileGroups = new Map();
+    const issues = [];
+    const rows = S.priceImportRows.slice(headerRow + 1);
+    rows.forEach((row, offset) => {
+      const excelRow = headerRow + offset + 2;
+      const rawSku = row[skuColumn];
+      const sku = spreadsheetSku(rawSku);
+      const description = descriptionColumn >= 0 ? String(row[descriptionColumn] || '').trim() : '';
+      const parsedPrice = parseSpreadsheetPrice(row[priceColumn]);
+      if (!sku && !String(row[priceColumn] || '').trim() && !description) return;
+      if (!sku) {
+        issues.push({ kind: 'issue', issueType: 'missing-sku', sku: '', name: description || 'Fila sin SKU', fileDescription: description, filePrice: parsedPrice.valid ? parsedPrice.value : null, rowNumber: excelRow, statusLabel: 'Fila sin SKU', detail: `Fila ${excelRow}: no tiene un SKU utilizable.` });
+        return;
+      }
+      const key = skuKey(sku);
+      const zeroPrice = parsedPrice.valid && roundMoney(parsedPrice.value) === 0;
+      const entry = { sku, key, fileDescription: description, filePrice: parsedPrice.value, validPrice: parsedPrice.valid && !zeroPrice, rawPrice: row[priceColumn], rowNumber: excelRow };
+      if (zeroPrice) {
+        issues.push({ ...entry, kind: 'issue', issueType: 'zero-price', name: description || sku, statusLabel: 'Precio en cero', detail: `Fila ${excelRow}: el precio es $ 0 y se excluyó de la actualización para evitar un cambio accidental.` });
+      }
+      if (!fileGroups.has(key)) fileGroups.set(key, []);
+      fileGroups.get(key).push(entry);
+    });
+
+    const canonicalFile = new Map();
+    const fileKeysSeen = new Set(fileGroups.keys());
+    fileGroups.forEach((entries, key) => {
+      const valid = entries.filter((entry) => entry.validPrice);
+      const invalid = entries.filter((entry) => !entry.validPrice);
+      invalid.forEach((entry) => issues.push({ ...entry, kind: 'issue', issueType: 'invalid-price', name: entry.fileDescription || 'Precio inválido', statusLabel: 'Precio inválido', detail: `Fila ${entry.rowNumber}: el precio “${String(entry.rawPrice || '')}” no se pudo interpretar.` }));
+      const distinctPrices = [...new Set(valid.map((entry) => roundMoney(entry.filePrice).toFixed(2)))];
+      if (distinctPrices.length > 1) {
+        const first = entries[0];
+        issues.push({ ...first, kind: 'issue', issueType: 'conflicting-duplicate', name: first.fileDescription || first.sku, statusLabel: 'SKU duplicado con precios distintos', detail: `El SKU aparece ${entries.length} veces con precios diferentes: ${distinctPrices.map((price) => formatCurrency(price)).join(', ')}.` });
+        return;
+      }
+      if (!valid.length) return;
+      const canonical = valid[0];
+      canonical.duplicateCount = entries.length;
+      canonicalFile.set(key, canonical);
+      if (entries.length > 1) {
+        issues.push({ ...canonical, kind: 'issue', issueType: 'duplicate', name: canonical.fileDescription || canonical.sku, statusLabel: 'SKU repetido', detail: `El SKU aparece ${entries.length} veces con el mismo precio. Se usó la primera coincidencia válida.` });
+      }
+    });
+
+    const appMap = new Map();
+    const noSkuInApp = [];
+    S.materials.forEach((material) => {
+      const sku = spreadsheetSku(material.sku);
+      if (!sku) {
+        noSkuInApp.push({ kind: 'issue', issueType: 'app-without-sku', materialId: material.id, sku: '', name: material.name, currentPrice: roundMoney(material.unit_price), statusLabel: 'Insumo sin SKU', detail: 'No puede compararse hasta que se cargue un SKU en la app.', active: material.active !== false });
+        return;
+      }
+      appMap.set(skuKey(sku), { ...material, comparableSku: sku });
+    });
+
+    const changes = [];
+    const unchanged = [];
+    const missingInFile = [];
+    const matched = [];
+
+    appMap.forEach((material, key) => {
+      const fileEntry = canonicalFile.get(key);
+      if (!fileEntry) {
+        if (!fileKeysSeen.has(key)) {
+          missingInFile.push({ kind: 'missing-file', materialId: material.id, sku: material.comparableSku, name: material.name, currentPrice: roundMoney(material.unit_price), active: material.active !== false, statusLabel: 'No aparece en el Excel', detail: 'Puede haber sido eliminado o haber cambiado de SKU en la lista nueva.' });
+        }
+        return;
+      }
+      const currentPrice = roundMoney(material.unit_price);
+      const filePrice = roundMoney(fileEntry.filePrice);
+      const difference = roundMoney(filePrice - currentPrice);
+      const percent = currentPrice > 0 ? difference / currentPrice * 100 : null;
+      const common = {
+        materialId: material.id,
+        kind: Math.abs(difference) >= 0.01 ? (difference > 0 ? 'increase' : 'decrease') : 'unchanged',
+        sku: material.comparableSku,
+        name: material.name,
+        currentPrice,
+        filePrice,
+        difference,
+        percent,
+        fileDescription: fileEntry.fileDescription,
+        rowNumber: fileEntry.rowNumber,
+        active: material.active !== false,
+        duplicateCount: fileEntry.duplicateCount || 1
+      };
+      matched.push(common);
+      if (common.kind === 'unchanged') unchanged.push({ ...common, statusLabel: 'Sin cambios' });
+      else changes.push({ ...common, statusLabel: difference > 0 ? 'Aumento' : 'Disminución' });
+    });
+
+    const missingInApp = [];
+    canonicalFile.forEach((entry, key) => {
+      if (appMap.has(key)) return;
+      missingInApp.push({ kind: 'missing-app', sku: entry.sku, name: entry.fileDescription || 'Artículo del archivo', fileDescription: entry.fileDescription, filePrice: roundMoney(entry.filePrice), rowNumber: entry.rowNumber, statusLabel: 'No existe en la app', detail: 'Puede ser un artículo nuevo o un SKU renombrado.' });
+    });
+
+    addPossibleSkuChangeSuggestions(missingInFile, missingInApp);
+    const allIssues = [...issues, ...noSkuInApp];
+    const increases = changes.filter((row) => row.kind === 'increase');
+    const decreases = changes.filter((row) => row.kind === 'decrease');
+    const allRows = [...changes, ...unchanged, ...missingInFile, ...missingInApp, ...allIssues];
+    return { mapping, matched, changes, increases, decreases, unchanged, missingInFile, missingInApp, issues: allIssues, allRows, sourceRows: rows.length };
+  }
+
+
+  function addPossibleSkuChangeSuggestions(missingInFile, missingInApp) {
+    const claimed = new Set();
+    missingInApp.forEach((fileRow) => {
+      let best = null;
+      let bestScore = 0;
+      missingInFile.forEach((appRow) => {
+        if (claimed.has(appRow.materialId)) return;
+        const score = priceImportNameSimilarity(fileRow.fileDescription || fileRow.name, appRow.name);
+        if (score > bestScore) { bestScore = score; best = appRow; }
+      });
+      if (!best || bestScore < 0.72) return;
+      claimed.add(best.materialId);
+      fileRow.detail = `Posible cambio de SKU: el nombre se parece a “${best.name}” (SKU actual ${best.sku}). Revisalo antes de crear o editar el artículo.`;
+      best.detail = `Posible cambio de SKU: en el archivo aparece “${fileRow.fileDescription || fileRow.name}” con SKU ${fileRow.sku}. Revisá si corresponde al mismo artículo.`;
+      fileRow.possibleMatchSku = best.sku;
+      best.possibleMatchSku = fileRow.sku;
+    });
+  }
+
+  function priceImportNameSimilarity(left, right) {
+    const a = normalize(left).replace(/[^a-z0-9]+/g, ' ').trim();
+    const b = normalize(right).replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    if (Math.min(a.length, b.length) >= 7 && (a.includes(b) || b.includes(a))) return 0.88;
+    const stop = new Set(['de','del','la','las','el','los','x','por','con','sin','unidad','unidades','paquete','pack']);
+    const ta = new Set(a.split(/\s+/).filter((token) => token.length > 1 && !stop.has(token)));
+    const tb = new Set(b.split(/\s+/).filter((token) => token.length > 1 && !stop.has(token)));
+    if (!ta.size || !tb.size) return 0;
+    const intersection = [...ta].filter((token) => tb.has(token)).length;
+    const union = new Set([...ta, ...tb]).size;
+    return union ? intersection / union : 0;
+  }
+
+  function renderPriceImportResults() {
+    const comparison = S.priceImportComparison;
+    if (!comparison) return;
+    E.priceImportKpiMatched.textContent = comparison.matched.length;
+    E.priceImportKpiIncreases.textContent = comparison.increases.length;
+    E.priceImportKpiDecreases.textContent = comparison.decreases.length;
+    E.priceImportKpiUnchanged.textContent = comparison.unchanged.length;
+    E.priceImportKpiMissingFile.textContent = comparison.missingInFile.length;
+    E.priceImportKpiMissingApp.textContent = comparison.missingInApp.length;
+    E.priceImportKpiIssues.textContent = comparison.issues.length;
+
+    const selectedChanges = comparison.changes.filter((row) => S.priceImportSelected.has(row.materialId));
+    E.priceImportSummaryAlert.className = `alert ${comparison.changes.length ? 'alert-warning' : 'alert-success'}`;
+    E.priceImportSummaryAlert.innerHTML = comparison.changes.length
+      ? `<i class="bi bi-exclamation-triangle-fill me-2"></i>Se detectaron <strong>${comparison.changes.length}</strong> cambios de precio: ${comparison.increases.length} aumentos y ${comparison.decreases.length} disminuciones. Hay <strong>${selectedChanges.length}</strong> seleccionados para actualizar.`
+      : '<i class="bi bi-check-circle-fill me-2"></i>No se detectaron diferencias de precio entre el archivo y el catálogo.';
+
+    const visible = filteredPriceImportRows();
+    E.priceImportResultsBody.innerHTML = visible.map(priceImportRowHtml).join('') || '<tr><td colspan="8"><div class="empty-inline">No hay resultados para el filtro seleccionado.</div></td></tr>';
+    E.priceImportResultsCaption.textContent = `${visible.length} resultados visibles · ${comparison.sourceRows} filas analizadas en “${S.priceImportSheetName}”`;
+    updatePriceImportSelectionControls(visible);
+  }
+
+  function filteredPriceImportRows() {
+    const comparison = S.priceImportComparison;
+    if (!comparison) return [];
+    const filter = S.priceImportFilter;
+    let rows;
+    if (filter === 'changes') rows = comparison.changes;
+    else if (filter === 'increase') rows = comparison.increases;
+    else if (filter === 'decrease') rows = comparison.decreases;
+    else if (filter === 'unchanged') rows = comparison.unchanged;
+    else if (filter === 'missing-file') rows = comparison.missingInFile;
+    else if (filter === 'missing-app') rows = comparison.missingInApp;
+    else if (filter === 'issues') rows = comparison.issues;
+    else rows = comparison.allRows;
+    const query = normalize(S.priceImportSearch);
+    return rows.filter((row) => !query || normalize(`${row.sku || ''} ${row.name || ''} ${row.fileDescription || ''} ${row.detail || ''}`).includes(query));
+  }
+
+  function priceImportRowHtml(row) {
+    const canUpdate = row.kind === 'increase' || row.kind === 'decrease';
+    const checked = canUpdate && S.priceImportSelected.has(row.materialId);
+    const currentPrice = row.currentPrice == null ? '—' : formatCurrency(row.currentPrice);
+    const filePrice = row.filePrice == null ? '—' : formatCurrency(row.filePrice);
+    const variation = canUpdate
+      ? `<span class="price-change-pill is-${row.kind}"><i class="bi ${row.kind === 'increase' ? 'bi-arrow-up-right' : 'bi-arrow-down-right'}"></i>${row.difference > 0 ? '+' : ''}${eh(formatCurrency(row.difference))}${row.percent == null ? '' : ` · ${row.percent > 0 ? '+' : ''}${eh(formatPercent(row.percent))}`}</span>`
+      : (row.kind === 'unchanged' ? '<span class="price-change-pill is-unchanged">$ 0 · 0%</span>' : '—');
+    const statusClass = canUpdate ? row.kind : row.kind === 'unchanged' ? 'unchanged' : (row.kind === 'issue' ? 'issue' : 'warning');
+    const subtitle = row.fileDescription && normalize(row.fileDescription) !== normalize(row.name)
+      ? `<small>${eh(row.fileDescription)}</small>`
+      : (row.detail ? `<small>${eh(row.detail)}</small>` : '');
+    const inactive = row.active === false ? '<span class="badge text-bg-secondary ms-1">Inactivo</span>' : '';
+    return `<tr class="price-import-row is-${ea(statusClass)}">
+      <td class="price-import-check-col">${canUpdate ? `<input class="form-check-input" type="checkbox" data-price-import-select="${ea(row.materialId)}" ${checked ? 'checked' : ''} aria-label="Seleccionar ${ea(row.sku)}">` : ''}</td>
+      <td><span class="sku-chip">${eh(row.sku || 'Sin SKU')}</span>${row.rowNumber ? `<small class="price-import-row-number">Fila ${row.rowNumber}</small>` : ''}</td>
+      <td><div class="price-import-item-name">${eh(row.name || 'Sin descripción')}${inactive}</div>${subtitle}</td>
+      <td><strong>${eh(currentPrice)}</strong></td>
+      <td><strong>${eh(filePrice)}</strong></td>
+      <td>${variation}</td>
+      <td><span class="price-import-status is-${ea(statusClass)}">${eh(row.statusLabel || 'Revisar')}</span></td>
+      <td>${canUpdate ? `<button class="btn btn-sm btn-outline-primary fw-bold" type="button" data-price-import-update="${ea(row.materialId)}">Actualizar</button>` : ''}</td>
+    </tr>`;
+  }
+
+  function handlePriceImportFilterChange() {
+    S.priceImportFilter = E.priceImportResultFilter.value;
+    renderPriceImportResults();
+  }
+
+  function handlePriceImportSearch() {
+    S.priceImportSearch = E.priceImportSearch.value;
+    renderPriceImportResults();
+  }
+
+  function handlePriceImportResultChange(event) {
+    const checkbox = event.target.closest('[data-price-import-select]');
+    if (!checkbox) return;
+    const id = checkbox.dataset.priceImportSelect;
+    if (checkbox.checked) S.priceImportSelected.add(id);
+    else S.priceImportSelected.delete(id);
+    renderPriceImportResults();
+  }
+
+  async function handlePriceImportResultClick(event) {
+    const button = event.target.closest('[data-price-import-update]');
+    if (!button) return;
+    const change = S.priceImportComparison?.changes.find((row) => row.materialId === button.dataset.priceImportUpdate);
+    if (!change) return;
+    await applyPriceUpdates([change], button);
+  }
+
+  function toggleVisiblePriceImportSelections() {
+    const visibleChanges = filteredPriceImportRows().filter((row) => row.kind === 'increase' || row.kind === 'decrease');
+    const select = E.priceImportSelectAll.checked;
+    visibleChanges.forEach((row) => {
+      if (select) S.priceImportSelected.add(row.materialId);
+      else S.priceImportSelected.delete(row.materialId);
+    });
+    renderPriceImportResults();
+  }
+
+  function updatePriceImportSelectionControls(visibleRows) {
+    const visibleChanges = visibleRows.filter((row) => row.kind === 'increase' || row.kind === 'decrease');
+    const visibleSelected = visibleChanges.filter((row) => S.priceImportSelected.has(row.materialId)).length;
+    E.priceImportSelectAll.disabled = visibleChanges.length === 0;
+    E.priceImportSelectAll.checked = visibleChanges.length > 0 && visibleSelected === visibleChanges.length;
+    E.priceImportSelectAll.indeterminate = visibleSelected > 0 && visibleSelected < visibleChanges.length;
+    const totalSelected = S.priceImportComparison.changes.filter((row) => S.priceImportSelected.has(row.materialId)).length;
+    E.priceImportApplyButton.disabled = totalSelected === 0;
+    E.priceImportApplyButton.innerHTML = `<i class="bi bi-check2-all me-2"></i>Actualizar seleccionados (${totalSelected})`;
+  }
+
+  async function applySelectedPriceUpdates() {
+    const selected = S.priceImportComparison?.changes.filter((row) => S.priceImportSelected.has(row.materialId)) || [];
+    if (!selected.length) {
+      toast('Seleccioná al menos un cambio de precio.', 'error');
+      return;
+    }
+    const increases = selected.filter((row) => row.kind === 'increase').length;
+    const decreases = selected.filter((row) => row.kind === 'decrease').length;
+    const confirmed = window.confirm(`Se actualizarán ${selected.length} precios (${increases} aumentos y ${decreases} disminuciones). Los pedidos ya creados conservarán sus precios históricos. ¿Continuar?`);
+    if (!confirmed) return;
+    await applyPriceUpdates(selected, E.priceImportApplyButton);
+  }
+
+  async function applyPriceUpdates(changes, button) {
+    if (!canManageMasterData()) {
+      toast('Solo el administrador puede actualizar precios.', 'error');
+      return;
+    }
+    buttonBusy(button, true, changes.length === 1 ? 'Actualizando...' : 'Actualizando precios...');
+    hidePriceImportError();
+    try {
+      const updates = changes.map((change) => ({
+        material_id: change.materialId,
+        sku: change.sku,
+        expected_old_price: change.currentPrice,
+        new_price: change.filePrice
+      }));
+      const { data, error } = await S.sb.rpc('admin_bulk_update_material_prices', {
+        p_updates: updates,
+        p_source_file: S.priceImportFileName || null,
+        p_source_sheet: S.priceImportSheetName || null
+      });
+      if (error) throw error;
+      const result = typeof data === 'string' ? JSON.parse(data) : (data || {});
+      await refreshAdmin(false);
+      const mapping = S.priceImportComparison?.mapping;
+      if (mapping) {
+        S.priceImportComparison = buildPriceImportComparison(mapping);
+        S.priceImportSelected = new Set(S.priceImportComparison.changes.map((row) => row.materialId));
+        renderPriceImportResults();
+      }
+      toast(`${number(result.updated_count) || changes.length} precio${changes.length === 1 ? '' : 's'} actualizado${changes.length === 1 ? '' : 's'}.`, 'success');
+    } catch (error) {
+      console.error(error);
+      const message = String(error?.message || '');
+      showPriceImportError(message.includes('admin_bulk_update_material_prices') || message.includes('schema cache')
+        ? 'Falta instalar la actualización de base de datos. Ejecutá actualizar-importacion-precios-excel.sql en Supabase.'
+        : (message || 'No se pudieron actualizar los precios. Volvé a analizar el archivo e intentá nuevamente.'));
+    } finally {
+      buttonBusy(button, false);
+      if (S.priceImportComparison) renderPriceImportResults();
+    }
+  }
+
+  function optionalColumnIndex(value) {
+    if (value === '' || value == null) return -1;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : -1;
+  }
+
+  function spreadsheetSku(value) {
+    let sku = String(value ?? '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\u00a0/g, ' ').trim();
+    if (/^\d+\.0$/.test(sku)) sku = sku.slice(0, -2);
+    return sku.slice(0, 120);
+  }
+
+  function skuKey(value) {
+    return spreadsheetSku(value).toLocaleUpperCase('es-AR');
+  }
+
+  function parseSpreadsheetPrice(value) {
+    if (typeof value === 'number') return { valid: Number.isFinite(value) && value >= 0, value: roundMoney(value) };
+    let text = String(value ?? '').replace(/\u00a0/g, ' ').trim();
+    if (!text) return { valid: false, value: null };
+    const negative = /^\s*\(.*\)\s*$/.test(text) || /^\s*-/.test(text);
+    text = text.replace(/[^0-9,.-]/g, '').replace(/-/g, '');
+    if (!text || !/[0-9]/.test(text)) return { valid: false, value: null };
+    const lastComma = text.lastIndexOf(',');
+    const lastDot = text.lastIndexOf('.');
+    let normalized = text;
+    if (lastComma >= 0 && lastDot >= 0) {
+      const decimal = lastComma > lastDot ? ',' : '.';
+      const thousands = decimal === ',' ? /\./g : /,/g;
+      normalized = text.replace(thousands, '').replace(decimal, '.');
+    } else if (lastComma >= 0 || lastDot >= 0) {
+      const separator = lastComma >= 0 ? ',' : '.';
+      const pieces = text.split(separator);
+      const decimals = pieces[pieces.length - 1].length;
+      if (pieces.length === 2 && decimals > 0 && decimals <= 2) normalized = `${pieces[0]}.${pieces[1]}`;
+      else if (pieces.length > 2 && decimals > 0 && decimals <= 2) normalized = `${pieces.slice(0, -1).join('')}.${pieces[pieces.length - 1]}`;
+      else normalized = pieces.join('');
+    }
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed) || negative || parsed < 0 || parsed > 999999999.99) return { valid: false, value: null };
+    return { valid: true, value: roundMoney(parsed) };
+  }
+
+  function columnLetter(index) {
+    let value = Math.max(0, Math.round(number(index))) + 1;
+    let label = '';
+    while (value > 0) {
+      value -= 1;
+      label = String.fromCharCode(65 + (value % 26)) + label;
+      value = Math.floor(value / 26);
+    }
+    return label;
+  }
+
+  function formatFileSize(bytes) {
+    const size = number(bytes);
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toLocaleString('es-AR', { maximumFractionDigits: 1 })} KB`;
+    return `${(size / 1024 / 1024).toLocaleString('es-AR', { maximumFractionDigits: 1 })} MB`;
+  }
+
+  function showPriceImportError(message) {
+    E.priceImportError.textContent = message;
+    E.priceImportError.classList.remove('d-none');
+    E.priceImportError.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function hidePriceImportError() {
+    E.priceImportError.classList.add('d-none');
+    E.priceImportError.textContent = '';
   }
 
   function renderMaterials() {
@@ -2490,16 +4490,88 @@
   }
 
   function renderHistory() {
-    E.historyTableBody.innerHTML = S.history.map((entry) => {
+    const typeFilter = E.historyTypeFilter?.value || 'all';
+    const query = normalize(E.historySearch?.value || '');
+
+    const orderEvents = S.history.map((entry) => {
       const order = S.orders.find((item) => item.id === entry.order_id);
       const service = order ? serviceById(order.service_id) : null;
       const profile = S.profiles.find((item) => item.id === entry.changed_by);
       const isEdit = Boolean(entry.old_status && entry.old_status === entry.new_status);
-      const change = isEdit
+      const changeHtml = isEdit
         ? '<div class="history-change"><span class="badge text-bg-primary"><i class="bi bi-pencil-square me-1"></i>Pedido editado</span></div>'
         : `<div class="history-change"><span class="status-badge ${ea(entry.old_status || 'pendiente')}">${eh(entry.old_status ? STATUS_LABELS[entry.old_status] : 'Creado')}</span><i class="bi bi-arrow-right history-arrow"></i><span class="status-badge ${ea(entry.new_status)}">${eh(STATUS_LABELS[entry.new_status] || entry.new_status)}</span></div>`;
-      return `<tr><td>${dtf.format(new Date(entry.changed_at))}</td><td><button class="btn btn-link p-0 fw-bold text-decoration-none" type="button" data-order-open="${ea(entry.order_id)}">${eh(order?.order_code || 'Pedido eliminado')}</button></td><td>${eh(service?.name || '—')}</td><td>${change}</td><td>${eh(profile?.full_name || profile?.email || 'Sistema')}</td><td>${eh(entry.notes || '')}</td></tr>`;
-    }).join('') || '<tr><td colspan="6"><div class="empty-inline">Todavía no hay cambios registrados.</div></td></tr>';
+      const userName = profile?.full_name || profile?.email || 'Sistema';
+      const reference = order?.order_code || 'Pedido eliminado';
+      const context = service?.name || '—';
+      const detail = entry.notes || '';
+      return {
+        type: 'order',
+        timestamp: entry.changed_at,
+        searchText: normalize(`${reference} ${context} ${userName} ${detail} pedido ${entry.old_status || ''} ${entry.new_status || ''}`),
+        html: `<tr>
+          <td class="history-date">${dtf.format(new Date(entry.changed_at))}</td>
+          <td><span class="history-type is-order"><i class="bi bi-bag-check"></i>Pedido</span></td>
+          <td><button class="btn btn-link p-0 fw-bold text-decoration-none" type="button" data-order-open="${ea(entry.order_id)}">${eh(reference)}</button></td>
+          <td>${eh(context)}</td>
+          <td>${changeHtml}</td>
+          <td>${eh(userName)}</td>
+          <td>${eh(detail)}</td>
+        </tr>`
+      };
+    });
+
+    const priceEvents = (isFullAdmin() ? S.priceHistory : []).map((entry) => {
+      const material = S.materials.find((item) => item.id === entry.material_id);
+      const profile = S.profiles.find((item) => item.id === entry.changed_by);
+      const materialName = entry.material_name_snapshot || material?.name || 'Insumo eliminado';
+      const sku = entry.sku_snapshot || material?.sku || '';
+      const oldPrice = number(entry.old_price);
+      const newPrice = number(entry.new_price);
+      const difference = roundMoney(newPrice - oldPrice);
+      const percent = oldPrice > 0 ? (difference / oldPrice) * 100 : null;
+      const direction = difference > 0 ? 'increase' : (difference < 0 ? 'decrease' : 'same');
+      const directionLabel = difference > 0 ? 'Aumento' : (difference < 0 ? 'Disminución' : 'Sin variación');
+      const userName = profile?.full_name || profile?.email || 'Sistema';
+      const sourceParts = [];
+      if (entry.source_file) sourceParts.push(`Archivo: ${entry.source_file}`);
+      if (entry.source_sheet) sourceParts.push(`Hoja: ${entry.source_sheet}`);
+      const method = entry.change_method === 'excel' || entry.source_file ? 'Importación Excel' : 'Edición manual';
+      const detailParts = [method, ...sourceParts];
+      if (difference !== 0) {
+        detailParts.push(`${directionLabel}: ${difference > 0 ? '+' : ''}${formatCurrency(difference)}${percent == null ? '' : ` (${percent > 0 ? '+' : ''}${formatPercent(percent)})`}`);
+      }
+      const detail = detailParts.join(' · ');
+      const priceChange = `<div class="history-price-change is-${direction}">
+        <span>${eh(formatCurrency(oldPrice))}</span>
+        <i class="bi bi-arrow-right history-arrow"></i>
+        <strong>${eh(formatCurrency(newPrice))}</strong>
+        ${difference === 0 ? '' : `<small>${difference > 0 ? '+' : ''}${eh(formatCurrency(difference))}${percent == null ? '' : ` · ${percent > 0 ? '+' : ''}${eh(formatPercent(percent))}`}</small>`}
+      </div>`;
+      return {
+        type: 'price',
+        timestamp: entry.changed_at,
+        searchText: normalize(`${materialName} ${sku} ${userName} ${detail} precio`),
+        html: `<tr class="history-price-row">
+          <td class="history-date">${dtf.format(new Date(entry.changed_at))}</td>
+          <td><span class="history-type is-price"><i class="bi bi-currency-dollar"></i>Precio</span></td>
+          <td><div class="history-reference"><strong>${eh(materialName)}</strong>${sku ? `<small>SKU ${eh(sku)}</small>` : ''}</div></td>
+          <td>Catálogo de insumos</td>
+          <td>${priceChange}</td>
+          <td>${eh(userName)}</td>
+          <td>${eh(detail)}</td>
+        </tr>`
+      };
+    });
+
+    const visible = [...orderEvents, ...priceEvents]
+      .filter((event) => typeFilter === 'all' || event.type === typeFilter)
+      .filter((event) => !query || event.searchText.includes(query))
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    E.historyTableBody.innerHTML = visible.map((event) => event.html).join('')
+      || '<tr><td colspan="7"><div class="empty-inline">No hay movimientos que coincidan con los filtros.</div></td></tr>';
+    E.historyResultsCaption.textContent = `${visible.length} ${visible.length === 1 ? 'movimiento visible' : 'movimientos visibles'} · ${orderEvents.length} de pedidos${isFullAdmin() ? ` · ${priceEvents.length} de precios` : ''}`;
   }
 
   function renderServiceBudgetPreview() {
