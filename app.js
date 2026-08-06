@@ -80,7 +80,9 @@
     invoiceOcrWorkerPromise: null,
     invoiceOcrLogger: null,
     invoiceOcrCurrentPage: 0,
-    invoiceOcrTotalPages: 0
+    invoiceOcrTotalPages: 0,
+    invoiceOcrAutoAttempts: new Set(),
+    invoiceOcrRunning: false
   };
 
   const E = {};
@@ -2305,21 +2307,86 @@
     return result;
   }
 
+  function withOcrTimeout(promise, timeoutMs, message) {
+    let timer;
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]).finally(() => window.clearTimeout(timer));
+  }
+
+  function loadOcrScript(src) {
+    return new Promise((resolve, reject) => {
+      const existing = [...document.scripts].find((script) => script.src === src);
+      if (existing && window.Tesseract?.createWorker) return resolve();
+      const script = existing || document.createElement('script');
+      if (!existing) {
+        script.src = src;
+        script.async = true;
+        script.crossOrigin = 'anonymous';
+        document.head.appendChild(script);
+      }
+      const timer = window.setTimeout(() => reject(new Error(`Tiempo agotado al cargar ${src}`)), 25000);
+      script.addEventListener('load', () => { window.clearTimeout(timer); resolve(); }, { once: true });
+      script.addEventListener('error', () => { window.clearTimeout(timer); reject(new Error(`No se pudo cargar ${src}`)); }, { once: true });
+    });
+  }
+
+  async function ensureTesseractLoaded() {
+    if (window.Tesseract?.createWorker) return window.Tesseract;
+    const sources = [
+      'https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js',
+      'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'
+    ];
+    let lastError = null;
+    for (const source of sources) {
+      try {
+        await loadOcrScript(source);
+        if (window.Tesseract?.createWorker) return window.Tesseract;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new Error(`No se pudo iniciar el motor OCR desde ninguno de los servidores disponibles.${lastError?.message ? ` ${lastError.message}` : ''}`);
+  }
+
   async function getInvoiceOcrWorker() {
-    if (!window.Tesseract) throw new Error('No se pudo cargar el motor OCR. Revisá la conexión a internet y recargá la aplicación.');
+    const TesseractApi = await ensureTesseractLoaded();
     if (!S.invoiceOcrWorkerPromise) {
-      S.invoiceOcrWorkerPromise = window.Tesseract.createWorker('spa+eng', 1, {
-        logger: (message) => {
-          if (typeof S.invoiceOcrLogger === 'function') S.invoiceOcrLogger(message || {});
+      // Se usa inglés porque reconoce correctamente letras latinas, SKU y números y
+      // evita descargar dos modelos pesados. Las descripciones en español no son
+      // necesarias para el cruce principal, que se realiza por SKU.
+      const logger = (message) => {
+        if (typeof S.invoiceOcrLogger === 'function') S.invoiceOcrLogger(message || {});
+      };
+      const attempts = [
+        { logger },
+        { logger, workerPath: 'https://unpkg.com/tesseract.js@5.1.1/dist/worker.min.js' },
+        { logger, workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js' }
+      ];
+      S.invoiceOcrWorkerPromise = (async () => {
+        let lastError = null;
+        for (const options of attempts) {
+          try {
+            const worker = await withOcrTimeout(
+              TesseractApi.createWorker('eng', 1, options),
+              70000,
+              'El motor OCR tardó demasiado en inicializarse.'
+            );
+            await worker.setParameters({
+              tessedit_pageseg_mode: '6',
+              preserve_interword_spaces: '1',
+              user_defined_dpi: '240'
+            });
+            return worker;
+          } catch (error) {
+            lastError = error;
+          }
         }
-      }).then(async (worker) => {
-        await worker.setParameters({
-          tessedit_pageseg_mode: '6',
-          preserve_interword_spaces: '1',
-          user_defined_dpi: '220'
-        });
-        return worker;
-      }).catch((error) => {
+        throw lastError || new Error('No se pudo crear el motor OCR.');
+      })().catch((error) => {
         S.invoiceOcrWorkerPromise = null;
         throw error;
       });
@@ -2351,7 +2418,11 @@
         if (onProgress) onProgress(`Renderizando página ${pageNumber}/${pdf.numPages} para OCR...`);
         const page = await pdf.getPage(pageNumber);
         const canvas = await renderPdfPageForOcr(page);
-        const result = await worker.recognize(canvas);
+        const result = await withOcrTimeout(
+          worker.recognize(canvas),
+          150000,
+          `La lectura OCR de la página ${pageNumber} tardó demasiado.`
+        );
         const pageText = normalizeOcrInvoiceText(result?.data?.text || '');
         const pageLines = pageText.split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
         const normalizedPage = normalize(pageText);
@@ -2378,6 +2449,7 @@
       if (index < selectedBlocks.length - 1) allLines.push('');
     });
     const text = allLines.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{4,}/g, '\n\n').trim();
+    if (!text) throw new Error('El OCR terminó, pero no detectó texto. Probá nuevamente o verificá que el PDF no esté protegido.');
     return {
       text,
       lines: allLines.filter((line) => String(line).trim()),
@@ -3173,6 +3245,34 @@
     renderInvoiceDetail(invoice);
     M.invoiceDetail.show();
     if (invoice.matched_order_id) await syncSelectedInvoiceComparison(invoice);
+    // Las facturas cargadas antes de incorporar OCR conservan el texto vacío en la base.
+    // Al abrirlas, la app intenta releerlas automáticamente una sola vez por sesión.
+    window.setTimeout(() => maybeAutoRunInvoiceOcr(invoice), 350);
+  }
+
+  function invoiceNeedsOcr(invoice) {
+    const text = String(invoice?.extracted_text || '').trim();
+    const parsedItems = Array.isArray(invoice?.parsed_items) ? invoice.parsed_items : [];
+    return !text || text.length < 80 || (!parsedItems.length && invoice?.comparison_status === 'sin_lectura');
+  }
+
+  async function maybeAutoRunInvoiceOcr(invoice) {
+    if (!invoice || !isFullAdmin() || !invoiceNeedsOcr(invoice)) return;
+    if (S.invoiceOcrRunning || S.invoiceOcrAutoAttempts.has(invoice.id)) return;
+    S.invoiceOcrAutoAttempts.add(invoice.id);
+    setInvoiceOcrStatus('El PDF no tiene texto incorporado. Iniciando lectura OCR automática…', 'info', true);
+    await reprocessSelectedInvoiceWithOcr({ automatic: true });
+  }
+
+  function setInvoiceOcrStatus(message = '', type = 'info', busy = false) {
+    if (!E.invoiceOcrStatus) return;
+    if (!message) {
+      E.invoiceOcrStatus.className = 'alert d-none mb-3';
+      E.invoiceOcrStatus.innerHTML = '';
+      return;
+    }
+    E.invoiceOcrStatus.className = `alert alert-${type} mb-3`;
+    E.invoiceOcrStatus.innerHTML = `${busy ? '<span class="spinner-border spinner-border-sm me-2" role="status"></span>' : '<i class="bi bi-info-circle me-2"></i>'}${eh(message)}`;
   }
 
   function renderInvoiceDetail(invoice) {
@@ -3384,10 +3484,13 @@
     }
   }
 
-  async function reprocessSelectedInvoiceWithOcr() {
+  async function reprocessSelectedInvoiceWithOcr(options = {}) {
     const invoice = invoiceById(S.selectedInvoiceId);
-    if (!invoice || !isFullAdmin()) return;
+    if (!invoice || !isFullAdmin() || S.invoiceOcrRunning) return;
+    const automatic = Boolean(options?.automatic);
+    S.invoiceOcrRunning = true;
     E.invoiceDetailError.classList.add('d-none');
+    setInvoiceOcrStatus('Preparando OCR… La primera lectura puede tardar hasta dos minutos.', 'info', true);
     buttonBusy(E.reprocessInvoiceOcrButton, true, 'Preparando OCR...');
     try {
       const { data: pdfBlob, error: downloadError } = await S.sb.storage.from(INVOICE_BUCKET).download(invoice.storage_path);
@@ -3397,6 +3500,7 @@
         forceOcr: true,
         onProgress: (message) => {
           E.reprocessInvoiceOcrButton.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${eh(message)}`;
+          setInvoiceOcrStatus(message, 'info', true);
         }
       });
       const parsed = analyzed.parsed;
@@ -3441,11 +3545,15 @@
       replaceInvoiceState(data);
       renderInvoiceDetail(data);
       renderInvoices();
-      toast(`PDF releído con OCR. Se detectaron ${(parsed.items || []).length} artículos.`, 'success');
+      setInvoiceOcrStatus(`Lectura OCR terminada. Se detectaron ${(parsed.items || []).length} artículos.`, 'success', false);
+      toast(`${automatic ? 'Lectura automática finalizada' : 'PDF releído con OCR'}. Se detectaron ${(parsed.items || []).length} artículos.`, 'success');
     } catch (error) {
       console.error(error);
-      showInvoiceDetailError(invoiceModuleErrorMessage(error));
+      const message = `No se pudo completar el OCR: ${invoiceModuleErrorMessage(error)}`;
+      setInvoiceOcrStatus(message, 'danger', false);
+      showInvoiceDetailError(message);
     } finally {
+      S.invoiceOcrRunning = false;
       buttonBusy(E.reprocessInvoiceOcrButton, false);
     }
   }
@@ -3607,6 +3715,7 @@
   }
 
   function resetInvoiceDetailState() {
+    setInvoiceOcrStatus();
     S.invoiceReadingEditMode = false;
     S.invoiceReadingDraft = [];
     S.invoiceReadingTotalDraft = '';
