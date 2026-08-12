@@ -1,0 +1,2 @@
+[functions.analyze-invoice]
+verify_jwt = false

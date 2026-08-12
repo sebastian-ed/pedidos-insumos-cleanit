@@ -21,6 +21,7 @@
   const ROLE_LABELS = { admin: 'Administrador', supplier: 'Proveedor', operator: 'Supervisor' };
   const FULL_ADMIN_ROLE = 'admin';
   const NAON_DISCOUNT_PERCENT = 7;
+  const INVOICE_AI_FUNCTION = 'analyze-invoice';
 
   const STATUS_OPTIONS = Object.entries(STATUS_LABELS)
     .map(([value, label]) => `<option value="${value}">${label}</option>`)
@@ -2084,10 +2085,6 @@
       showInvoiceModuleError(`El archivo ${oversized.name} supera el máximo de 20 MB.`);
       return;
     }
-    if (!window.pdfjsLib) {
-      showInvoiceModuleError('No se pudo cargar el lector de PDF. Revisá la conexión a internet y recargá la aplicación.');
-      return;
-    }
 
     S.invoiceUploadRows = files.map((file, index) => ({
       id: `${Date.now()}-${index}`,
@@ -2100,9 +2097,10 @@
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
       const row = S.invoiceUploadRows[index];
+      let storagePath = null;
       try {
         row.status = 'reading';
-        row.message = 'Leyendo PDF...';
+        row.message = 'Preparando factura...';
         renderInvoiceUploadQueue();
 
         const buffer = await file.arrayBuffer();
@@ -2110,8 +2108,22 @@
         const duplicate = S.invoices.find((item) => item.file_hash && item.file_hash === fileHash);
         if (duplicate) throw new Error(`Esta factura ya fue cargada como ${duplicate.invoice_number || duplicate.file_name}.`);
 
+        // La factura se guarda primero en Storage. El analizador del servidor lee el PDF
+        // directamente desde allí, evitando límites de tamaño y problemas de OCR del navegador.
+        row.message = 'Guardando PDF privado...';
+        renderInvoiceUploadQueue();
+        const objectId = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        storagePath = `${new Date().getFullYear()}/${objectId}-${sanitizeStorageFileName(file.name)}`;
+        const { error: uploadError } = await S.sb.storage.from(INVOICE_BUCKET).upload(storagePath, file, {
+          contentType: 'application/pdf',
+          upsert: false,
+          cacheControl: '3600'
+        });
+        if (uploadError) throw uploadError;
+
         const analyzed = await analyzeInvoicePdf(buffer.slice(0), file.name, {
           forceOcr: false,
+          storagePath,
           onProgress: (message) => {
             row.status = 'reading';
             row.message = message;
@@ -2120,7 +2132,7 @@
         });
         const extracted = analyzed.extracted;
         const parsed = analyzed.parsed;
-        row.message = analyzed.method === 'ocr' ? 'Comparando lectura OCR...' : 'Analizando factura...';
+        row.message = analyzed.method === 'ia_pdf' ? 'Comparando lectura inteligente...' : (analyzed.method === 'ocr' ? 'Comparando lectura OCR...' : 'Analizando factura...');
         renderInvoiceUploadQueue();
 
         const match = findBestInvoiceOrderMatch(parsed, extracted.text);
@@ -2130,17 +2142,6 @@
           : emptyInvoiceComparison(extracted.text.trim() ? 'sin_match' : 'sin_lectura');
         applyInvoiceExtractionMeta(comparison, analyzed);
         const comparisonStatus = selectedOrder ? comparison.status : (extracted.text.trim() ? 'sin_match' : 'sin_lectura');
-
-        row.message = 'Guardando PDF privado...';
-        renderInvoiceUploadQueue();
-        const objectId = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const storagePath = `${new Date().getFullYear()}/${objectId}-${sanitizeStorageFileName(file.name)}`;
-        const { error: uploadError } = await S.sb.storage.from(INVOICE_BUCKET).upload(storagePath, file, {
-          contentType: 'application/pdf',
-          upsert: false,
-          cacheControl: '3600'
-        });
-        if (uploadError) throw uploadError;
 
         const payload = {
           file_name: file.name,
@@ -2169,10 +2170,8 @@
         };
 
         const { data: inserted, error: insertError } = await S.sb.from('supplier_invoices').insert(payload).select('*').single();
-        if (insertError) {
-          await S.sb.storage.from(INVOICE_BUCKET).remove([storagePath]);
-          throw insertError;
-        }
+        if (insertError) throw insertError;
+        storagePath = null; // ya quedó asociado a la factura guardada
         S.invoices.unshift(inserted);
         row.status = 'done';
         row.message = selectedOrder
@@ -2180,6 +2179,9 @@
           : INVOICE_STATUS_LABELS[comparisonStatus];
       } catch (error) {
         console.error(error);
+        if (storagePath) {
+          try { await S.sb.storage.from(INVOICE_BUCKET).remove([storagePath]); } catch (_) { /* no-op */ }
+        }
         row.status = 'error';
         row.message = invoiceModuleErrorMessage(error);
       }
@@ -2208,49 +2210,197 @@
   }
 
   async function analyzeInvoicePdf(buffer, fileName, options = {}) {
-    const { forceOcr = false, onProgress = null } = options;
-    const task = window.pdfjsLib.getDocument({ data: new Uint8Array(buffer), disableFontFace: false });
-    const pdf = await task.promise;
-    try {
-      if (onProgress) onProgress('Leyendo texto incorporado al PDF...');
-      const embedded = await extractEmbeddedPdfTextFromDocument(pdf);
-      let extracted = embedded;
-      let parsed = parseSupplierInvoice(embedded.text, embedded.lines, fileName);
-      let method = 'texto_pdf';
-      let confidence = null;
-      let quality = invoiceParseQuality(parsed, embedded.text);
+    const { forceOcr = false, onProgress = null, storagePath = null } = options;
+    let pdf = null;
+    let embedded = { text: '', lines: [], pageCount: 0, confidence: null };
+    let parsed = parseSupplierInvoice('', [], fileName);
+    let quality = 0;
+    let embeddedError = null;
 
-      if (forceOcr || invoiceExtractionNeedsOcr(embedded, parsed, quality)) {
-        if (!window.Tesseract) {
-          throw new Error('El PDF no contiene texto legible y no se pudo cargar el motor OCR. Revisá la conexión a internet y recargá la aplicación.');
+    // 1) Si el PDF tiene texto real, se usa primero porque es inmediato y no consume IA.
+    if (window.pdfjsLib) {
+      try {
+        const task = window.pdfjsLib.getDocument({ data: new Uint8Array(buffer), disableFontFace: false });
+        pdf = await task.promise;
+        if (onProgress) onProgress('Leyendo texto incorporado al PDF...');
+        embedded = await extractEmbeddedPdfTextFromDocument(pdf);
+        parsed = parseSupplierInvoice(embedded.text, embedded.lines, fileName);
+        quality = invoiceParseQuality(parsed, embedded.text);
+        if (!forceOcr && !invoiceExtractionNeedsOcr(embedded, parsed, quality)) {
+          parsed.extractionMethod = 'texto_pdf';
+          parsed.extractionConfidence = null;
+          parsed.parseQuality = quality;
+          return { extracted: embedded, parsed, method: 'texto_pdf', confidence: null, quality, pageCount: embedded.pageCount };
         }
-        if (onProgress) onProgress('El PDF es una imagen. Preparando lectura OCR...');
-        const ocr = await extractPdfTextWithOcr(pdf, onProgress);
-        const ocrParsed = parseSupplierInvoice(ocr.text, ocr.lines, fileName);
-        const ocrQuality = invoiceParseQuality(ocrParsed, ocr.text);
-        if (forceOcr || ocrQuality >= quality || !embedded.text.trim()) {
-          extracted = ocr;
-          parsed = mergeInvoiceParses(ocrParsed, parsed);
-          method = 'ocr';
-          confidence = ocr.confidence;
-          quality = ocrQuality;
-        }
+      } catch (error) {
+        embeddedError = error;
+        console.warn('No se pudo leer la capa de texto del PDF:', error);
       }
-
-      parsed.extractionMethod = method;
-      parsed.extractionConfidence = confidence;
-      parsed.parseQuality = quality;
-      return {
-        extracted,
-        parsed,
-        method,
-        confidence,
-        quality,
-        pageCount: pdf.numPages
-      };
-    } finally {
-      try { await pdf.destroy(); } catch (_) { /* no-op */ }
     }
+
+    // 2) Para PDFs escaneados o tablas difíciles se usa análisis multimodal en el servidor.
+    // Esto evita depender del OCR del navegador y funciona con facturas de distintos formatos.
+    if (storagePath) {
+      try {
+        if (onProgress) onProgress('Leyendo factura escaneada con análisis inteligente...');
+        const ai = await analyzeInvoiceWithServerAi(storagePath, fileName, onProgress);
+        const aiParsed = normalizeAiInvoiceParse(ai, fileName);
+        const rawText = buildAiInvoiceText(aiParsed, ai);
+        const aiExtracted = {
+          text: rawText,
+          lines: rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+          pageCount: number(ai.pageCount) || number(embedded.pageCount) || number(pdf?.numPages) || 0,
+          confidence: nullableNumber(ai.confidence)
+        };
+        const aiQuality = invoiceParseQuality(aiParsed, aiExtracted.text);
+        aiParsed.extractionMethod = 'ia_pdf';
+        aiParsed.extractionConfidence = aiExtracted.confidence;
+        aiParsed.parseQuality = aiQuality;
+        return {
+          extracted: aiExtracted,
+          parsed: aiParsed,
+          method: 'ia_pdf',
+          confidence: aiExtracted.confidence,
+          quality: aiQuality,
+          pageCount: aiExtracted.pageCount
+        };
+      } catch (aiError) {
+        console.warn('Falló el analizador inteligente de facturas:', aiError);
+
+        // 3) Respaldo: conservar el OCR local existente si el navegador logra iniciarlo.
+        if (pdf) {
+          try {
+            if (onProgress) onProgress('El análisis inteligente no respondió. Intentando OCR local...');
+            const ocr = await extractPdfTextWithOcr(pdf, onProgress);
+            const ocrParsed = parseSupplierInvoice(ocr.text, ocr.lines, fileName);
+            const ocrQuality = invoiceParseQuality(ocrParsed, ocr.text);
+            ocrParsed.extractionMethod = 'ocr';
+            ocrParsed.extractionConfidence = ocr.confidence;
+            ocrParsed.parseQuality = ocrQuality;
+            return { extracted: ocr, parsed: mergeInvoiceParses(ocrParsed, parsed), method: 'ocr', confidence: ocr.confidence, quality: ocrQuality, pageCount: ocr.pageCount };
+          } catch (ocrError) {
+            console.warn('También falló el OCR local:', ocrError);
+            const aiMessage = invoiceAiErrorMessage(aiError);
+            const ocrMessage = String(ocrError?.message || 'OCR local no disponible');
+            throw new Error(`${aiMessage} Respaldo OCR: ${ocrMessage}`);
+          }
+        }
+        throw new Error(invoiceAiErrorMessage(aiError));
+      } finally {
+        try { if (pdf) await pdf.destroy(); } catch (_) { /* no-op */ }
+      }
+    }
+
+    try { if (pdf) await pdf.destroy(); } catch (_) { /* no-op */ }
+    if (embedded.text.trim()) {
+      parsed.extractionMethod = 'texto_pdf';
+      parsed.extractionConfidence = null;
+      parsed.parseQuality = quality;
+      return { extracted: embedded, parsed, method: 'texto_pdf', confidence: null, quality, pageCount: embedded.pageCount };
+    }
+    throw embeddedError || new Error('El PDF no contiene texto legible y no se pudo iniciar el analizador de facturas.');
+  }
+
+  async function analyzeInvoiceWithServerAi(storagePath, fileName, onProgress) {
+    if (!S.session?.access_token) throw new Error('La sesión venció. Volvé a iniciar sesión.');
+    if (!storagePath) throw new Error('No se encontró el PDF almacenado para analizar.');
+    if (onProgress) onProgress('Analizando estructura, artículos, SKU e importes...');
+
+    const knownMaterials = S.materials
+      .filter((material) => material?.sku)
+      .slice(0, 1500)
+      .map((material) => ({
+        sku: String(material.sku),
+        name: String(material.name || ''),
+        unitPrice: number(material.unit_price)
+      }));
+
+    const response = await fetch(`${String(cfg.SUPABASE_URL).replace(/\/$/, '')}/functions/v1/${INVOICE_AI_FUNCTION}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${S.session.access_token}`,
+        'apikey': cfg.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        bucket: INVOICE_BUCKET,
+        storagePath,
+        fileName,
+        knownMaterials
+      })
+    });
+
+    let payload = null;
+    try { payload = await response.json(); } catch (_) { /* no-op */ }
+    if (!response.ok || !payload?.ok) {
+      const message = payload?.error || payload?.message || `El servidor devolvió ${response.status}.`;
+      const error = new Error(message);
+      error.status = response.status;
+      error.code = payload?.code || null;
+      throw error;
+    }
+    return payload.data || {};
+  }
+
+  function invoiceAiErrorMessage(error) {
+    const status = number(error?.status);
+    const code = String(error?.code || '');
+    const message = String(error?.message || '');
+    if (status === 404 || /function|not found/i.test(message)) {
+      return 'El lector inteligente todavía no está publicado en Supabase. Desplegá la función analyze-invoice incluida en esta actualización.';
+    }
+    if (code === 'GEMINI_KEY_MISSING' || /GEMINI_API_KEY/i.test(message)) {
+      return 'Falta configurar GEMINI_API_KEY en Supabase Edge Functions. Una vez cargada la clave, la app podrá leer PDFs escaneados.';
+    }
+    if (status === 401) return 'La sesión no está autorizada para analizar facturas. Cerrá sesión e ingresá nuevamente como administrador.';
+    if (status === 403) return 'Solo el administrador puede ejecutar el análisis de facturas.';
+    return `No se pudo leer la factura con el analizador inteligente: ${message || 'error desconocido'}.`;
+  }
+
+  function normalizeAiInvoiceParse(ai, fileName = '') {
+    const normalizeMoney = (value) => nullableNumber(value);
+    const invoiceDateRaw = String(ai.invoiceDate || '').trim();
+    const invoiceDate = /^\d{4}-\d{2}-\d{2}$/.test(invoiceDateRaw) ? invoiceDateRaw : parseInvoiceDateToIso(invoiceDateRaw);
+    const items = Array.isArray(ai.items) ? ai.items.map((item) => ({
+      sku: String(item?.sku || '').trim(),
+      description: String(item?.description || item?.name || '').trim(),
+      quantity: normalizeMoney(item?.quantity),
+      unit_price: normalizeMoney(item?.unitPrice ?? item?.unit_price),
+      line_total: normalizeMoney(item?.lineTotal ?? item?.line_total),
+      raw_line: String(item?.rawLine || item?.raw_line || '').slice(0, 500),
+      context: String(item?.context || '').slice(0, 800)
+    })).filter((item) => item.sku || item.description) : [];
+
+    return {
+      invoiceNumber: String(ai.invoiceNumber || '').trim() || extractInvoiceNumber(String(ai.rawText || ''), fileName),
+      invoiceDate: invoiceDate || extractInvoiceDate(String(ai.rawText || '')),
+      supplierTaxId: String(ai.supplierTaxId || '').trim() || extractTaxId(String(ai.rawText || '')),
+      supplierName: String(ai.supplierName || '').trim() || null,
+      currency: String(ai.currency || 'ARS').toUpperCase() === 'USD' ? 'USD' : 'ARS',
+      subtotal: normalizeMoney(ai.subtotal),
+      taxAmount: normalizeMoney(ai.taxAmount),
+      totalAmount: normalizeMoney(ai.totalAmount),
+      items,
+      unmatchedLines: Array.isArray(ai.unmatchedLines) ? ai.unmatchedLines.map((line) => String(line)).slice(0, 100) : [],
+      detectedSkus: items.map((item) => normalizeSku(item.sku)).filter(Boolean)
+    };
+  }
+
+  function buildAiInvoiceText(parsed, ai = {}) {
+    const parts = [];
+    const raw = String(ai.rawText || '').trim();
+    if (raw) parts.push(raw);
+    if (parsed.invoiceNumber) parts.push(`Factura: ${parsed.invoiceNumber}`);
+    if (parsed.invoiceDate) parts.push(`Fecha: ${parsed.invoiceDate}`);
+    if (parsed.supplierName) parts.push(`Proveedor: ${parsed.supplierName}`);
+    if (parsed.supplierTaxId) parts.push(`CUIT: ${parsed.supplierTaxId}`);
+    (parsed.items || []).forEach((item) => {
+      parts.push([item.sku, item.quantity, item.description, item.unit_price, item.line_total].filter((value) => value !== null && value !== undefined && value !== '').join(' | '));
+    });
+    if (parsed.subtotal != null) parts.push(`Subtotal: ${parsed.subtotal}`);
+    if (parsed.taxAmount != null) parts.push(`Impuestos: ${parsed.taxAmount}`);
+    if (parsed.totalAmount != null) parts.push(`Total: ${parsed.totalAmount}`);
+    return [...new Set(parts.filter(Boolean))].join('\n').trim();
   }
 
   async function extractEmbeddedPdfTextFromDocument(pdf) {
@@ -3260,7 +3410,7 @@
     if (!invoice || !isFullAdmin() || !invoiceNeedsOcr(invoice)) return;
     if (S.invoiceOcrRunning || S.invoiceOcrAutoAttempts.has(invoice.id)) return;
     S.invoiceOcrAutoAttempts.add(invoice.id);
-    setInvoiceOcrStatus('El PDF no tiene texto incorporado. Iniciando lectura OCR automática…', 'info', true);
+    setInvoiceOcrStatus('El PDF no tiene texto incorporado. Iniciando lectura inteligente automática…', 'info', true);
     await reprocessSelectedInvoiceWithOcr({ automatic: true });
   }
 
@@ -3312,6 +3462,11 @@
 
   function invoiceExtractionLabel(summary, detailed = false) {
     const method = summary?.extraction_method;
+    if (method === 'ia_pdf') {
+      const confidence = summary?.extraction_confidence == null ? '' : ` · confianza ${Math.round(number(summary.extraction_confidence))}%`;
+      const corrected = summary?.reading_corrected_manually ? ' · corregida manualmente' : '';
+      return detailed ? `Lectura inteligente del PDF${confidence}${corrected}` : 'Lectura inteligente';
+    }
     if (method === 'ocr') {
       const confidence = summary?.extraction_confidence == null ? '' : ` · confianza ${Math.round(number(summary.extraction_confidence))}%`;
       const corrected = summary?.reading_corrected_manually ? ' · corregida manualmente' : '';
@@ -3490,14 +3645,15 @@
     const automatic = Boolean(options?.automatic);
     S.invoiceOcrRunning = true;
     E.invoiceDetailError.classList.add('d-none');
-    setInvoiceOcrStatus('Preparando OCR… La primera lectura puede tardar hasta dos minutos.', 'info', true);
-    buttonBusy(E.reprocessInvoiceOcrButton, true, 'Preparando OCR...');
+    setInvoiceOcrStatus('Preparando lectura inteligente de la factura…', 'info', true);
+    buttonBusy(E.reprocessInvoiceOcrButton, true, 'Analizando...');
     try {
       const { data: pdfBlob, error: downloadError } = await S.sb.storage.from(INVOICE_BUCKET).download(invoice.storage_path);
       if (downloadError) throw downloadError;
       const buffer = await pdfBlob.arrayBuffer();
       const analyzed = await analyzeInvoicePdf(buffer, invoice.file_name, {
         forceOcr: true,
+        storagePath: invoice.storage_path,
         onProgress: (message) => {
           E.reprocessInvoiceOcrButton.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${eh(message)}`;
           setInvoiceOcrStatus(message, 'info', true);
@@ -3545,11 +3701,11 @@
       replaceInvoiceState(data);
       renderInvoiceDetail(data);
       renderInvoices();
-      setInvoiceOcrStatus(`Lectura OCR terminada. Se detectaron ${(parsed.items || []).length} artículos.`, 'success', false);
-      toast(`${automatic ? 'Lectura automática finalizada' : 'PDF releído con OCR'}. Se detectaron ${(parsed.items || []).length} artículos.`, 'success');
+      setInvoiceOcrStatus(`Lectura terminada. Se detectaron ${(parsed.items || []).length} artículos.`, 'success', false);
+      toast(`${automatic ? 'Lectura automática finalizada' : 'Factura reanalizada'}. Se detectaron ${(parsed.items || []).length} artículos.`, 'success');
     } catch (error) {
       console.error(error);
-      const message = `No se pudo completar el OCR: ${invoiceModuleErrorMessage(error)}`;
+      const message = invoiceModuleErrorMessage(error);
       setInvoiceOcrStatus(message, 'danger', false);
       showInvoiceDetailError(message);
     } finally {
