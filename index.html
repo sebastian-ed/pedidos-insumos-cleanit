@@ -258,6 +258,13 @@
 
         <section id="adminOrders" class="admin-panel d-none">
           <div class="panel-heading"><div><span class="eyebrow">Operación</span><h1>Pedidos</h1><p>Filtrá, revisá, copiá y actualizá el estado de cada pedido.</p></div></div>
+          <div id="ordersBillingChangeAlert" class="billing-reference-global-alert d-none mb-4">
+            <div>
+              <div class="billing-reference-global-title"><i class="bi bi-exclamation-triangle-fill"></i><strong id="ordersBillingChangeAlertTitle">Hay pedidos con una facturación anterior</strong></div>
+              <p id="ordersBillingChangeAlertText" class="mb-0">Revisá qué referencia presupuestaria querés usar antes de ajustar el pedido.</p>
+            </div>
+            <button id="applyCurrentBillingToOpenOrdersButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-arrow-repeat me-2"></i>Usar nueva facturación en todos</button>
+          </div>
           <div class="section-card mb-4">
             <div class="row g-3">
               <div class="col-lg-4"><label for="ordersSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="ordersSearch" class="form-control" type="search" placeholder="Código, servicio u operario"></div></div>
@@ -397,6 +404,7 @@
         </div>
         <div class="modal-body">
           <div id="orderDetailReadOnly">
+            <div id="orderBillingReferenceAlert" class="mb-3 d-none"></div>
             <div id="orderDetailBudgetOverview" class="mb-3"></div>
             <div id="orderDetailMeta" class="order-detail-meta mb-4"></div>
             <div id="orderDetailItems" class="order-detail-items"></div>
@@ -594,7 +602,7 @@
           <div>
             <div class="eyebrow">Servicios · Control presupuestario</div>
             <h5 class="modal-title fw-black">Actualizar facturación desde Excel</h5>
-            <p class="text-secondary small mb-0 mt-1">Se compara la facturación mensual de cada servicio contra el <strong>Subtotal sin IVA</strong> del Excel. El límite operativo porcentual que definiste manualmente no se modifica.</p>
+            <p class="text-secondary small mb-0 mt-1">Se compara la facturación mensual de cada servicio contra el <strong>Subtotal sin IVA</strong> del Excel. El límite operativo porcentual que definiste manualmente no se modifica. Las filas que no coincidan pueden previsualizarse completas y vincularse manualmente.</p>
           </div>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>

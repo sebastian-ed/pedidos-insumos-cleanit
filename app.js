@@ -223,6 +223,7 @@
     E.ordersServiceFilter.addEventListener('change', renderOrders);
     E.ordersStatusFilter.addEventListener('change', renderOrders);
     E.ordersPriorityFilter.addEventListener('change', renderOrders);
+    E.applyCurrentBillingToOpenOrdersButton.addEventListener('click', applyCurrentBillingToAllOpenOrders);
     E.selectInvoiceFilesButton.addEventListener('click', () => E.invoicePdfInput.click());
     E.invoiceDropZone.addEventListener('click', () => E.invoicePdfInput.click());
     E.invoiceDropZone.addEventListener('keydown', (event) => {
@@ -837,6 +838,16 @@
   }
 
   function handleAppClick(event) {
+    const billingReferenceButton = event.target.closest('[data-order-billing-reference]');
+    if (billingReferenceButton) {
+      setOrderBillingReference(
+        billingReferenceButton.dataset.orderBillingId,
+        billingReferenceButton.dataset.orderBillingReference,
+        billingReferenceButton
+      );
+      return;
+    }
+
     const orderEditQtyButton = event.target.closest('[data-order-edit-action]');
     if (orderEditQtyButton) {
       changeOrderEditQty(orderEditQtyButton.dataset.orderEditKey, orderEditQtyButton.dataset.orderEditAction === 'plus' ? 1 : -1);
@@ -1467,6 +1478,7 @@
   }
 
   function renderOrders() {
+    renderOrdersBillingChangeAlert();
     const query = normalize(E.ordersSearch.value);
     const serviceId = E.ordersServiceFilter.value;
     const status = E.ordersStatusFilter.value;
@@ -1487,7 +1499,7 @@
         <td><div class="order-code">${eh(order.order_code)}</div><div class="order-date">${dtf.format(new Date(order.created_at))}</div></td>
         <td><div class="order-service">${eh(service?.name || 'Servicio eliminado')}</div><div class="table-subtitle">${eh(service?.address || '')}</div></td>
         <td>${eh(order.reporter_name)}</td>
-        <td><strong>${order.total_items}</strong> insumos<div class="order-content-summary">${formatQty(order.total_units)} unidades · ${formatCurrency(order.total_amount)}</div>${budgetBadge(order)}${orderBudgetMiniProgress(order)}</td>
+        <td><strong>${order.total_items}</strong> insumos<div class="order-content-summary">${formatQty(order.total_units)} unidades · ${formatCurrency(order.total_amount)}</div>${orderBillingReferenceBadge(order)}${budgetBadge(order)}${orderBudgetMiniProgress(order)}</td>
         <td><span class="priority-badge ${ea(order.priority)}">${eh(PRIORITY_LABELS[order.priority] || order.priority)}</span></td>
         <td><span class="status-badge ${ea(order.status)}">${eh(STATUS_LABELS[order.status] || order.status)}</span></td>
         <td><div class="action-group"><button class="btn btn-outline-primary" type="button" title="Ver pedido" data-order-open="${ea(order.id)}"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary" type="button" title="Copiar" data-order-copy="${ea(order.id)}"><i class="bi bi-copy"></i></button>${isFullAdmin() ? `<button class="btn btn-outline-danger" type="button" title="Eliminar" data-order-delete="${ea(order.id)}"><i class="bi bi-trash3"></i></button>` : ''}</div></td>
@@ -1528,6 +1540,7 @@
       detailMeta.push([`Descuento Naón (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)})`, `− ${formatCurrency(order.discount_amount)}`]);
     }
     detailMeta.push(['Total', formatCurrency(order.total_amount)]);
+    renderOrderBillingReferenceAlert(order);
     E.orderDetailBudgetOverview.innerHTML = orderBudgetOverview(order);
     E.orderDetailMeta.innerHTML = detailMeta.map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
 
@@ -1562,6 +1575,10 @@
     if (E.orderNaonPickupCheckbox) E.orderNaonPickupCheckbox.checked = true;
     if (E.orderEditItems) E.orderEditItems.innerHTML = '';
     if (E.orderAddMaterialSelect) E.orderAddMaterialSelect.innerHTML = '<option value="">Seleccionar insumo...</option>';
+    if (E.orderBillingReferenceAlert) {
+      E.orderBillingReferenceAlert.innerHTML = '';
+      E.orderBillingReferenceAlert.classList.add('d-none');
+    }
   }
 
   function startOrderEdit() {
@@ -1571,6 +1588,12 @@
     }
     const order = getSelectedOrder();
     if (!order) return;
+    const billingReferenceState = orderBillingReferenceState(order);
+    if (billingReferenceState.needsReview) {
+      toast('Primero elegí si este pedido usará la facturación anterior o la nueva.', 'error');
+      E.orderBillingReferenceAlert?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
     if (['entregado', 'cancelado'].includes(order.status)) {
       toast('El pedido está cerrado. Reabrilo antes de modificar sus insumos.', 'error');
       return;
@@ -4708,7 +4731,14 @@
       if (!excelName || normalize(excelName)==='total') continue;
       const subtotalParsed=parseSpreadsheetPrice(source[mapping.subtotalColumn]);
       const rowKey=`${i+1}:${billingServiceKey(excelName)}`;
-      excelRows.push({ rowNumber:i+1, rowKey, excelName, subtotalParsed });
+      excelRows.push({
+        rowNumber:i+1,
+        rowKey,
+        excelName,
+        subtotalParsed,
+        rawCells:[...source],
+        headers:[...(S.billingImportRows[mapping.headerRow] || [])]
+      });
     }
     const duplicateNames=new Set();
     const counts=new Map();
@@ -4753,7 +4783,7 @@
     if (duplicateName) return billingIssueRow(sourceRow, match, suggested, 'Nombre duplicado en el Excel', 'Hay más de una fila con el mismo nombre de servicio.');
     if (!subtotalParsed.valid) return billingIssueRow(sourceRow, match, suggested, 'Subtotal no legible', 'La columna Subtotal no contiene un importe válido.');
     if (!match) {
-      return { kind:'unmatched', rowNumber,rowKey,excelName,fileSubtotal:subtotalParsed.value,serviceId:null,serviceName:'',suggestedServiceId:suggested?.id||null,suggestedServiceName:suggested?.name||'',suggestedScore:suggested?.score||0,canUpdate:false,statusLabel:suggested?'Revisar coincidencia':'Servicio no encontrado',searchText:normalize(`${excelName} ${suggested?.name||''} no encontrado`) };
+      return { kind:'unmatched', rowNumber,rowKey,excelName,fileSubtotal:subtotalParsed.value,serviceId:null,serviceName:'',suggestedServiceId:suggested?.id||null,suggestedServiceName:suggested?.name||'',suggestedScore:suggested?.score||0,canUpdate:false,statusLabel:suggested?'Revisar coincidencia':'Servicio no encontrado',rawCells:sourceRow.rawCells||[],headers:sourceRow.headers||[],searchText:normalize(`${excelName} ${(sourceRow.rawCells||[]).join(' ')} ${suggested?.name||''} no encontrado`) };
     }
     const currentBilling=roundMoney(match.monthly_billing);
     const fileSubtotal=roundMoney(subtotalParsed.value);
@@ -4767,14 +4797,16 @@
       currentFive:roundMoney(currentBilling*0.05),fileFive:roundMoney(fileSubtotal*0.05),currentSeven:roundMoney(currentBilling*0.07),fileSeven:roundMoney(fileSubtotal*0.07),
       limitPercent,currentLimit:roundMoney(currentBilling*limitPercent/100),fileLimit:roundMoney(fileSubtotal*limitPercent/100),
       canUpdate:true,statusLabel:zeroReview?'Subtotal $0 · revisar':(unchanged?'Coincide':'Requiere ajuste'),issue:zeroReview?'El Excel informa subtotal $0. Verificá el dato antes de reemplazar una facturación existente.':'',
-      searchText:normalize(`${excelName} ${match.name} ${match.address||''} ${unchanged?'coincide':'ajuste'}`)
+      rawCells:sourceRow.rawCells||[],headers:sourceRow.headers||[],
+      searchText:normalize(`${excelName} ${(sourceRow.rawCells||[]).join(' ')} ${match.name} ${match.address||''} ${unchanged?'coincide':'ajuste'}`)
     };
   }
 
   function billingIssueRow(sourceRow, match, suggested, label, issue) {
     return { kind:'review', rowNumber:sourceRow.rowNumber,rowKey:sourceRow.rowKey,excelName:sourceRow.excelName,fileSubtotal:sourceRow.subtotalParsed.valid?sourceRow.subtotalParsed.value:null,
       serviceId:match?.id||null,serviceName:match?.name||'',suggestedServiceId:suggested?.id||null,suggestedServiceName:suggested?.name||'',suggestedScore:suggested?.score||0,canUpdate:false,statusLabel:label,issue,
-      searchText:normalize(`${sourceRow.excelName} ${match?.name||''} ${suggested?.name||''} revisar`) };
+      rawCells:sourceRow.rawCells||[],headers:sourceRow.headers||[],
+      searchText:normalize(`${sourceRow.excelName} ${(sourceRow.rawCells||[]).join(' ')} ${match?.name||''} ${suggested?.name||''} revisar`) };
   }
 
   function billingServiceKey(value) {
@@ -4849,7 +4881,7 @@
     E.billingImportKpiReview.textContent=s.review;
     E.billingImportKpiUnmatched.textContent=s.unmatched;
     E.billingImportKpiMissingFile.textContent=s.missingFile;
-    E.billingImportSummaryAlert.innerHTML=`<strong>${s.changes ? `${s.changes} servicio${s.changes===1?' requiere':'s requieren'} ajuste.` : 'La facturación encontrada coincide en todos los servicios vinculados.'}</strong> Los valores de 5%, límite operativo y 7% se calculan siempre sobre el <strong>Subtotal sin IVA</strong>. El porcentaje de límite operativo de cada servicio se conserva tal como está configurado.`;
+    E.billingImportSummaryAlert.innerHTML=`<strong>${s.changes ? `${s.changes} servicio${s.changes===1?' requiere':'s requieren'} ajuste.` : 'La facturación encontrada coincide en todos los servicios vinculados.'}</strong> Los valores de 5%, límite operativo y 7% se calculan siempre sobre el <strong>Subtotal sin IVA</strong>. El porcentaje de límite operativo de cada servicio se conserva tal como está configurado.${(s.review+s.unmatched)>0 ? ' En las filas amarillas podés abrir <strong>“Ver fila original del Excel”</strong> para revisar Razón Social, CUIT, operario y demás campos antes de vincularla manualmente.' : ''}`;
     const visible=filteredBillingImportRows();
     E.billingImportResultsBody.innerHTML=visible.map(renderBillingImportRow).join('') || '<tr><td colspan="9"><div class="empty-inline">No hay resultados para este filtro.</div></td></tr>';
     E.billingImportResultsCaption.textContent=`${visible.length} filas visibles · ${s.sourceRows} servicios leídos del Excel · ${s.missingFile} servicios de la app sin fila vinculada`;
@@ -4862,13 +4894,25 @@
     return `<div class="billing-value-change ${changed?'is-changed':''}"><span>${eh(formatCurrency(oldValue))}</span>${changed?'<i class="bi bi-arrow-right"></i>':''}<strong>${changed?eh(formatCurrency(newValue)):''}</strong></div>`;
   }
 
+  function billingSourcePreview(row) {
+    if (!['review','unmatched'].includes(row.kind)) return '';
+    const cells=(row.rawCells||[]).map((value,index)=>{
+      const text=String(value ?? '').replace(/\s+/g,' ').trim();
+      if (!text) return null;
+      const header=String((row.headers||[])[index] ?? '').replace(/\s+/g,' ').trim() || `Columna ${columnLetter(index)}`;
+      return `<div class="billing-source-field"><span>${eh(header)}</span><strong>${eh(text)}</strong></div>`;
+    }).filter(Boolean);
+    if (!cells.length) return '';
+    return `<details class="billing-source-preview mt-2"><summary><i class="bi bi-file-earmark-spreadsheet me-1"></i>Ver fila ${eh(String(row.rowNumber || ''))} original del Excel</summary><div class="billing-source-grid">${cells.join('')}</div></details>`;
+  }
+
   function billingMatchSelect(row) {
     if (row.kind==='missing-file') return `<div class="billing-match-name"><strong>${eh(row.serviceName)}</strong><small>Sin fila vinculada en el Excel</small></div>`;
     const selected=row.serviceId || '';
     const options=['<option value="">— Vincular manualmente —</option>',...S.services.map((service)=>`<option value="${ea(service.id)}" ${service.id===selected?'selected':''}>${eh(service.name)}</option>`)].join('');
     const suggestion=row.suggestedServiceName ? `<small class="billing-match-suggestion">Sugerencia: ${eh(row.suggestedServiceName)} (${Math.round(number(row.suggestedScore)*100)}%)</small>` : '';
     const matchLabel=row.serviceId ? `<small>${row.matchType==='manual'?'Vinculación manual':row.matchType==='exact'?'Coincidencia exacta':'Coincidencia automática'}</small>` : suggestion;
-    return `<div class="billing-match-name"><strong>${eh(row.excelName)}</strong>${matchLabel}<select class="form-select form-select-sm mt-2" data-billing-import-match="${ea(row.rowKey)}">${options}</select></div>`;
+    return `<div class="billing-match-name"><strong>${eh(row.excelName)}</strong>${matchLabel}<select class="form-select form-select-sm mt-2" data-billing-import-match="${ea(row.rowKey)}">${options}</select>${billingSourcePreview(row)}</div>`;
   }
 
   function renderBillingImportRow(row) {
@@ -4973,8 +5017,9 @@
         S.billingImportSelected=new Set(S.billingImportComparison.rows.filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0).map((row)=>row.rowKey));
         renderBillingImportResults();
       }
+      const pendingReferences = ordersNeedingBillingReferenceReview();
       if (failures.length) showBillingImportError(`Se actualizaron ${updated} servicios, pero ${failures.length} fallaron: ${failures.slice(0,3).join(' · ')}`);
-      else toast(`${updated} servicio${updated===1?'':'s'} actualizado${updated===1?'':'s'}.`, 'success');
+      else toast(`${updated} servicio${updated===1?'':'s'} actualizado${updated===1?'':'s'}.${pendingReferences.length ? ` ${pendingReferences.length} pedido${pendingReferences.length===1?'':'s'} abierto${pendingReferences.length===1?'':'s'} debe${pendingReferences.length===1?'':'n'} confirmar la nueva referencia.` : ''}`, 'success');
     } catch (error) {
       console.error(error); showBillingImportError(error.message || 'No se pudo actualizar la facturación.');
     } finally { buttonBusy(button,false); if (S.billingImportComparison) renderBillingImportResults(); }
@@ -5878,6 +5923,150 @@
       sobre_limite: 'Supera el límite operativo',
       sobre_7: 'Supera el 7%'
     })[status] || 'Sin información';
+  }
+
+
+  function isOpenOperationalOrder(order) {
+    return Boolean(order) && !['entregado','cancelado'].includes(order.status);
+  }
+
+  function orderBillingReferenceState(order) {
+    const service=serviceById(order?.service_id);
+    const snapshotBilling=roundMoney(number(order?.monthly_billing_snapshot));
+    const snapshotPercent=number(order?.budget_limit_percent_snapshot) || 5;
+    const currentBilling=roundMoney(number(service?.monthly_billing));
+    const currentPercent=Math.min(7,Math.max(5,number(service?.budget_limit_percent)||5));
+    const billingChanged=Math.abs(currentBilling-snapshotBilling)>=0.01;
+    const percentChanged=Math.abs(currentPercent-snapshotPercent)>=0.001;
+    const changed=Boolean(service) && (billingChanged || percentChanged);
+    const reviewedBilling=order?.billing_reference_reviewed_service_billing == null ? null : roundMoney(order.billing_reference_reviewed_service_billing);
+    const reviewedPercent=order?.billing_reference_reviewed_limit_percent == null ? null : number(order.billing_reference_reviewed_limit_percent);
+    const reviewedCurrent=reviewedBilling!=null && reviewedPercent!=null &&
+      Math.abs(reviewedBilling-currentBilling)<0.01 && Math.abs(reviewedPercent-currentPercent)<0.001;
+    const decision=String(order?.billing_reference_decision||'');
+    const open=isOpenOperationalOrder(order);
+    const usingPrevious=open && changed && reviewedCurrent && decision==='previous';
+    const needsReview=open && changed && !usingPrevious;
+    const currentLimit=roundMoney(currentBilling*currentPercent/100);
+    const currentFive=roundMoney(currentBilling*0.05);
+    const currentSeven=roundMoney(currentBilling*0.07);
+    const snapshotLimit=roundMoney(number(order?.budget_limit_amount_snapshot) || snapshotBilling*snapshotPercent/100);
+    const snapshotFive=roundMoney(number(order?.budget_five_percent_snapshot) || snapshotBilling*0.05);
+    const snapshotSeven=roundMoney(number(order?.budget_seven_percent_snapshot) || snapshotBilling*0.07);
+    return {
+      service,open,changed,billingChanged,percentChanged,needsReview,usingPrevious,decision,
+      snapshotBilling,snapshotPercent,snapshotLimit,snapshotFive,snapshotSeven,
+      currentBilling,currentPercent,currentLimit,currentFive,currentSeven,
+      billingDifference:roundMoney(currentBilling-snapshotBilling)
+    };
+  }
+
+  function ordersNeedingBillingReferenceReview() {
+    return S.orders.filter((order)=>orderBillingReferenceState(order).needsReview);
+  }
+
+  function renderOrdersBillingChangeAlert() {
+    if (!E.ordersBillingChangeAlert) return;
+    const rows=ordersNeedingBillingReferenceReview();
+    const visible=isFullAdmin() && rows.length>0;
+    E.ordersBillingChangeAlert.classList.toggle('d-none',!visible);
+    if (!visible) return;
+    E.ordersBillingChangeAlertTitle.textContent=`${rows.length} pedido${rows.length===1?'':'s'} abierto${rows.length===1?' usa':'s usan'} una facturación anterior`;
+    E.ordersBillingChangeAlertText.textContent='La facturación o el porcentaje operativo del servicio cambió después de crear esos pedidos. La barra sigue usando la referencia anterior hasta que Operaciones elija qué criterio conservar.';
+    E.applyCurrentBillingToOpenOrdersButton.innerHTML=`<i class="bi bi-arrow-repeat me-2"></i>Usar nueva facturación en todos (${rows.length})`;
+  }
+
+  function orderBillingReferenceBadge(order) {
+    const state=orderBillingReferenceState(order);
+    if (state.needsReview) return '<div class="billing-reference-badge is-review"><i class="bi bi-exclamation-triangle-fill"></i>Facturación cambió · revisar</div>';
+    if (state.usingPrevious) return '<div class="billing-reference-badge is-previous"><i class="bi bi-clock-history"></i>Usa límite anterior</div>';
+    return '';
+  }
+
+  function renderOrderBillingReferenceAlert(order) {
+    if (!E.orderBillingReferenceAlert) return;
+    const state=orderBillingReferenceState(order);
+    if (!state.needsReview && !state.usingPrevious) {
+      E.orderBillingReferenceAlert.innerHTML='';
+      E.orderBillingReferenceAlert.classList.add('d-none');
+      return;
+    }
+    const direction=state.billingDifference>0?'aumentó':state.billingDifference<0?'disminuyó':'cambió';
+    const oldValues=`<div class="billing-reference-option-card is-old"><span>Referencia del pedido</span><strong>${eh(formatCurrency(state.snapshotBilling))}</strong><small>5%: ${eh(formatCurrency(state.snapshotFive))} · Límite ${eh(formatPercent(state.snapshotPercent))}: ${eh(formatCurrency(state.snapshotLimit))} · 7%: ${eh(formatCurrency(state.snapshotSeven))}</small></div>`;
+    const newValues=`<div class="billing-reference-option-card is-new"><span>Facturación actual del servicio</span><strong>${eh(formatCurrency(state.currentBilling))}</strong><small>5%: ${eh(formatCurrency(state.currentFive))} · Límite ${eh(formatPercent(state.currentPercent))}: ${eh(formatCurrency(state.currentLimit))} · 7%: ${eh(formatCurrency(state.currentSeven))}</small></div>`;
+    if (state.needsReview) {
+      E.orderBillingReferenceAlert.className='billing-reference-order-alert is-review mb-3';
+      E.orderBillingReferenceAlert.innerHTML=`
+        <div class="billing-reference-order-head"><div><span class="eyebrow">Referencia presupuestaria pendiente</span><h6>La facturación del servicio ${eh(direction)} desde que se creó este pedido</h6><p>Elegí qué referencia debe usar la barra y el control del pedido. La opción recomendada es trabajar con la facturación actual.</p></div><i class="bi bi-exclamation-triangle-fill"></i></div>
+        <div class="billing-reference-options">${oldValues}${newValues}</div>
+        <div class="billing-reference-actions">
+          <button class="btn btn-primary fw-bold" type="button" data-order-billing-reference="current" data-order-billing-id="${ea(order.id)}"><i class="bi bi-arrow-repeat me-2"></i>Usar nueva facturación</button>
+          <button class="btn btn-outline-secondary fw-bold" type="button" data-order-billing-reference="previous" data-order-billing-id="${ea(order.id)}"><i class="bi bi-clock-history me-2"></i>Mantener facturación anterior</button>
+        </div>`;
+    } else {
+      E.orderBillingReferenceAlert.className='billing-reference-order-alert is-previous mb-3';
+      E.orderBillingReferenceAlert.innerHTML=`
+        <div class="billing-reference-order-head"><div><span class="eyebrow">Referencia elegida</span><h6>Este pedido continúa trabajando con la facturación anterior</h6><p>La decisión ya fue registrada. La barra permanece sobre la referencia original, aunque el servicio tenga una facturación más nueva.</p></div><i class="bi bi-clock-history"></i></div>
+        <div class="billing-reference-options">${oldValues}${newValues}</div>
+        <div class="billing-reference-actions"><button class="btn btn-primary fw-bold" type="button" data-order-billing-reference="current" data-order-billing-id="${ea(order.id)}"><i class="bi bi-arrow-repeat me-2"></i>Pasar a nueva facturación</button></div>`;
+    }
+    E.orderBillingReferenceAlert.classList.remove('d-none');
+  }
+
+  async function setOrderBillingReference(orderId,mode,button=null) {
+    if (!isFullAdmin()) { toast('Solo el administrador puede definir la referencia presupuestaria.', 'error'); return; }
+    if (!['current','previous'].includes(mode)) return;
+    const order=S.orders.find((item)=>item.id===orderId);
+    if (!order) return;
+    const state=orderBillingReferenceState(order);
+    const actionText=mode==='current'
+      ? `usar la facturación actual de ${formatCurrency(state.currentBilling)}`
+      : `mantener la facturación anterior de ${formatCurrency(state.snapshotBilling)}`;
+    if (!confirm(`Este pedido pasará a ${actionText}. ¿Continuar?`)) return;
+    if (button) buttonBusy(button,true,mode==='current'?'Actualizando referencia...':'Guardando decisión...');
+    try {
+      const { error }=await S.sb.rpc('admin_set_order_billing_reference',{p_order_id:orderId,p_mode:mode});
+      if (error) {
+        if (/admin_set_order_billing_reference|schema cache|function/i.test(String(error.message||''))) {
+          throw new Error('Falta instalar la actualización de base de datos. Ejecutá actualizar-referencia-facturacion-pedidos.sql en Supabase.');
+        }
+        throw error;
+      }
+      await refreshAdmin(false);
+      const updated=S.orders.find((item)=>item.id===orderId);
+      if (updated && S.selectedOrderId===orderId) renderOrderDetail(updated);
+      toast(mode==='current'?'El pedido ahora usa la facturación actual del servicio.':'Se registró que este pedido seguirá usando la facturación anterior.','success');
+    } catch(error) {
+      console.error(error);
+      toast(error.message||'No se pudo actualizar la referencia del pedido.','error');
+    } finally {
+      if (button && document.body.contains(button)) buttonBusy(button,false);
+    }
+  }
+
+  async function applyCurrentBillingToAllOpenOrders() {
+    if (!isFullAdmin()) return;
+    const rows=ordersNeedingBillingReferenceReview();
+    if (!rows.length) { toast('No hay pedidos abiertos pendientes de revisar.', 'success'); return; }
+    if (!confirm(`Se actualizarán ${rows.length} pedido${rows.length===1?'':'s'} abierto${rows.length===1?'':'s'} para que usen la facturación y el límite actuales de sus servicios. Los pedidos entregados o cancelados no se modifican. ¿Continuar?`)) return;
+    buttonBusy(E.applyCurrentBillingToOpenOrdersButton,true,'Actualizando pedidos...');
+    let updated=0;
+    const failures=[];
+    try {
+      for (const order of rows) {
+        const { error }=await S.sb.rpc('admin_set_order_billing_reference',{p_order_id:order.id,p_mode:'current'});
+        if (error) failures.push(`${order.order_code}: ${error.message}`); else updated+=1;
+      }
+      await refreshAdmin(false);
+      if (failures.length) toast(`${updated} pedidos actualizados. ${failures.length} no pudieron modificarse.`, 'error');
+      else toast(`${updated} pedido${updated===1?'':'s'} actualizado${updated===1?'':'s'} a la nueva facturación.`, 'success');
+    } catch(error) {
+      console.error(error);
+      toast(error.message||'No se pudieron actualizar los pedidos.','error');
+    } finally {
+      buttonBusy(E.applyCurrentBillingToOpenOrdersButton,false);
+      renderOrders();
+    }
   }
 
   function orderBudgetMetrics(order) {
