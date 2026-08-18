@@ -71,6 +71,16 @@
     priceImportSelected: new Set(),
     priceImportFilter: 'changes',
     priceImportSearch: '',
+    billingImportWorkbook: null,
+    billingImportRows: [],
+    billingImportFileName: '',
+    billingImportSheetName: '',
+    billingImportComparison: null,
+    billingImportSelected: new Set(),
+    billingImportManualMatches: new Map(),
+    billingImportFilter: 'changes',
+    billingImportSearch: '',
+    deferredInstallPrompt: null,
     invoices: [],
     selectedInvoiceId: null,
     invoiceUploadRows: [],
@@ -114,12 +124,14 @@
     M.serviceMaterials = new bootstrap.Modal(E.serviceMaterialsModal);
     M.material = new bootstrap.Modal(E.materialModal);
     M.priceImport = new bootstrap.Modal(E.priceImportModal);
+    M.billingImport = new bootstrap.Modal(E.billingImportModal);
     M.user = new bootstrap.Modal(E.userModal);
     M.consumptionHistory = new bootstrap.Modal(E.consumptionHistoryModal);
     M.toast = new bootstrap.Toast(E.appToast, { delay: 3200 });
     if (E.consumptionMonth) E.consumptionMonth.value = monthInputValue(new Date());
 
     bindEvents();
+    setupPwa();
     if (window.pdfjsLib) {
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
     }
@@ -270,6 +282,23 @@
     E.priceImportResultsBody.addEventListener('click', handlePriceImportResultClick);
     E.priceImportApplyButton.addEventListener('click', applySelectedPriceUpdates);
     E.priceImportModal.addEventListener('hidden.bs.modal', () => hidePriceImportError());
+    E.importBillingButton.addEventListener('click', openBillingImport);
+    E.billingImportFile.addEventListener('change', handleBillingImportFile);
+    E.billingImportSheet.addEventListener('change', handleBillingImportSheetChange);
+    E.billingImportHeaderRow.addEventListener('input', handleBillingImportHeaderChange);
+    E.billingImportNameColumn.addEventListener('change', renderBillingImportPreview);
+    E.billingImportSubtotalColumn.addEventListener('change', renderBillingImportPreview);
+    E.billingImportAnalyzeButton.addEventListener('click', analyzeBillingImport);
+    E.billingImportResetButton.addEventListener('click', () => resetBillingImport(true));
+    E.billingImportResultFilter.addEventListener('change', () => { S.billingImportFilter = E.billingImportResultFilter.value; renderBillingImportResults(); });
+    E.billingImportSearch.addEventListener('input', () => { S.billingImportSearch = E.billingImportSearch.value; renderBillingImportResults(); });
+    E.billingImportSelectAll.addEventListener('change', toggleVisibleBillingImportSelections);
+    E.billingImportResultsBody.addEventListener('change', handleBillingImportResultChange);
+    E.billingImportResultsBody.addEventListener('click', handleBillingImportResultClick);
+    E.billingImportApplyButton.addEventListener('click', applySelectedBillingUpdates);
+    E.billingImportApplyAllButton.addEventListener('click', applyAllBillingUpdates);
+    E.billingImportModal.addEventListener('hidden.bs.modal', hideBillingImportError);
+    if (E.installAppButton) E.installAppButton.addEventListener('click', installPwa);
     E.materialForm.addEventListener('submit', saveMaterial);
     E.materialImageFile.addEventListener('change', previewMaterialImage);
     E.addServiceButton.addEventListener('click', () => openService());
@@ -4449,6 +4478,516 @@
       buttonBusy(button, false);
       if (S.priceImportComparison) renderPriceImportResults();
     }
+  }
+
+
+  function setupPwa() {
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+      navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('No se pudo registrar el service worker:', error));
+    }
+    const standalone = window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    if (standalone && E.installAppButton) E.installAppButton.classList.add('d-none');
+    window.addEventListener('beforeinstallprompt', (event) => {
+      event.preventDefault();
+      S.deferredInstallPrompt = event;
+      if (E.installAppButton && !standalone) E.installAppButton.classList.remove('d-none');
+    });
+    window.addEventListener('appinstalled', () => {
+      S.deferredInstallPrompt = null;
+      if (E.installAppButton) E.installAppButton.classList.add('d-none');
+      toast('Pedidos Clean It quedó instalada.', 'success');
+    });
+  }
+
+  async function installPwa() {
+    if (!S.deferredInstallPrompt) {
+      toast('Si Chrome no muestra el botón de instalación, abrí el menú del navegador y elegí “Instalar Pedidos Clean It”.', 'error');
+      return;
+    }
+    const prompt = S.deferredInstallPrompt;
+    S.deferredInstallPrompt = null;
+    await prompt.prompt();
+    await prompt.userChoice.catch(() => null);
+    if (E.installAppButton) E.installAppButton.classList.add('d-none');
+  }
+
+  function openBillingImport() {
+    if (!canManageMasterData()) { toast('Solo el administrador puede actualizar la facturación.', 'error'); return; }
+    hideBillingImportError();
+    if (!window.XLSX) {
+      E.billingImportLibraryError.textContent = 'No se pudo cargar el lector de Excel. Revisá la conexión a internet y volvé a abrir la aplicación.';
+      E.billingImportLibraryError.classList.remove('d-none');
+    } else E.billingImportLibraryError.classList.add('d-none');
+    if (!S.billingImportWorkbook) resetBillingImport(false);
+    M.billingImport.show();
+  }
+
+  function clearBillingImportState() {
+    S.billingImportWorkbook = null;
+    S.billingImportRows = [];
+    S.billingImportFileName = '';
+    S.billingImportSheetName = '';
+    S.billingImportComparison = null;
+    S.billingImportSelected = new Set();
+    S.billingImportManualMatches = new Map();
+    S.billingImportFilter = 'changes';
+    S.billingImportSearch = '';
+  }
+
+  function resetBillingImport(clearFile = true) {
+    clearBillingImportState();
+    if (clearFile && E.billingImportFile) E.billingImportFile.value = '';
+    E.billingImportMapping.classList.add('d-none');
+    E.billingImportResults.classList.add('d-none');
+    E.billingImportAnalyzeButton.classList.add('d-none');
+    E.billingImportApplyButton.classList.add('d-none');
+    E.billingImportApplyAllButton.classList.add('d-none');
+    E.billingImportResetButton.classList.add('d-none');
+    E.billingImportResultFilter.value = 'changes';
+    E.billingImportSearch.value = '';
+    E.billingImportResultsBody.innerHTML = '';
+    E.billingImportPreviewHead.innerHTML = '';
+    E.billingImportPreviewBody.innerHTML = '';
+    E.billingImportSelectAll.checked = false;
+    E.billingImportSelectAll.indeterminate = false;
+    hideBillingImportError();
+  }
+
+  async function handleBillingImportFile() {
+    hideBillingImportError();
+    const file = E.billingImportFile.files?.[0];
+    if (!file) { resetBillingImport(false); return; }
+    if (!window.XLSX) { showBillingImportError('No está disponible el lector de Excel. Revisá la conexión y recargá la aplicación.'); return; }
+    const extension = String(file.name.split('.').pop() || '').toLowerCase();
+    if (!['xlsx','xls','xlsb','csv'].includes(extension)) { showBillingImportError('El archivo debe ser XLSX, XLS, XLSB o CSV.'); E.billingImportFile.value=''; return; }
+    if (file.size > 25 * 1024 * 1024) { showBillingImportError('El archivo supera los 25 MB.'); E.billingImportFile.value=''; return; }
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { cellDates: false, cellNF: false, cellText: true });
+      if (!workbook?.SheetNames?.length) throw new Error('El archivo no contiene hojas legibles.');
+      S.billingImportWorkbook = workbook;
+      S.billingImportFileName = file.name;
+      S.billingImportComparison = null;
+      S.billingImportSelected = new Set();
+      S.billingImportManualMatches = new Map();
+      E.billingImportSheet.innerHTML = workbook.SheetNames.map((name) => `<option value="${ea(name)}">${eh(name)}</option>`).join('');
+      const preferred = workbook.SheetNames.find((name) => normalize(name) === 'prefacturacion') || workbook.SheetNames[0];
+      E.billingImportSheet.value = preferred;
+      E.billingImportFileSummary.textContent = `${file.name} · ${formatFileSize(file.size)}`;
+      loadBillingImportSheet(preferred);
+      E.billingImportMapping.classList.remove('d-none');
+      E.billingImportResults.classList.add('d-none');
+      E.billingImportAnalyzeButton.classList.remove('d-none');
+      E.billingImportApplyButton.classList.add('d-none');
+      E.billingImportApplyAllButton.classList.add('d-none');
+      E.billingImportResetButton.classList.remove('d-none');
+    } catch (error) {
+      console.error(error);
+      resetBillingImport(true);
+      showBillingImportError(error.message || 'No se pudo leer el archivo.');
+    }
+  }
+
+  function handleBillingImportSheetChange() {
+    if (S.billingImportWorkbook) loadBillingImportSheet(E.billingImportSheet.value);
+  }
+
+  function loadBillingImportSheet(sheetName) {
+    const sheet = S.billingImportWorkbook?.Sheets?.[sheetName];
+    if (!sheet) { showBillingImportError('No se pudo leer la hoja seleccionada.'); return; }
+    S.billingImportSheetName = sheetName;
+    S.billingImportRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false, blankrows: false });
+    const detection = detectBillingImportStructure(S.billingImportRows);
+    E.billingImportHeaderRow.max = Math.max(1, Math.min(500, S.billingImportRows.length || 1));
+    E.billingImportHeaderRow.value = detection.headerRow + 1;
+    populateBillingImportColumns(detection);
+    E.billingImportMappingWarning.classList.toggle('d-none', detection.confident);
+    E.billingImportMappingWarning.textContent = detection.confident ? '' : 'No se identificaron con seguridad “Nombre” y “Subtotal”. Revisá las columnas antes de analizar.';
+    renderBillingImportPreview();
+    E.billingImportResults.classList.add('d-none');
+    E.billingImportApplyButton.classList.add('d-none');
+    E.billingImportApplyAllButton.classList.add('d-none');
+  }
+
+  function handleBillingImportHeaderChange() {
+    const headerIndex = Math.max(0, Math.min(S.billingImportRows.length - 1, Math.round(number(E.billingImportHeaderRow.value)) - 1));
+    const detection = detectBillingColumnsInHeader(S.billingImportRows[headerIndex] || []);
+    populateBillingImportColumns({ headerRow: headerIndex, ...detection });
+    E.billingImportMappingWarning.classList.toggle('d-none', detection.confident);
+    E.billingImportMappingWarning.textContent = detection.confident ? '' : 'Seleccioná manualmente la columna del servicio y la columna Subtotal sin IVA.';
+    renderBillingImportPreview();
+  }
+
+  function detectBillingImportStructure(rows) {
+    let best = { headerRow:0, nameColumn:-1, subtotalColumn:-1, score:-1, confident:false };
+    for (let i=0; i<Math.min(rows.length,40); i+=1) {
+      const detected = detectBillingColumnsInHeader(rows[i] || []);
+      const score = detected.score + Math.min((rows[i] || []).filter((v)=>String(v||'').trim()).length, 12);
+      if (score > best.score) best = { headerRow:i, ...detected, score };
+    }
+    return best;
+  }
+
+  function detectBillingColumnsInHeader(header) {
+    let nameColumn=-1, subtotalColumn=-1, nameScore=0, subtotalScore=0;
+    header.forEach((value,index)=>{
+      const text=normalize(value).replace(/[^a-z0-9]+/g,' ').trim();
+      let ns=0, ss=0;
+      if (text === 'nombre') ns=100;
+      else if (['servicio','nombre servicio','servicio nombre','establecimiento'].includes(text)) ns=92;
+      else if (text.includes('servicio') || text.includes('nombre')) ns=65;
+      if (text === 'subtotal') ss=110;
+      else if (text === 'subtotal sin iva' || text === 'neto sin iva' || text === 'importe neto') ss=105;
+      else if (text.includes('subtotal')) ss=92;
+      else if ((text.includes('neto') || text.includes('importe')) && !text.includes('iva') && !text.includes('total')) ss=60;
+      if (ns>nameScore) { nameScore=ns; nameColumn=index; }
+      if (ss>subtotalScore) { subtotalScore=ss; subtotalColumn=index; }
+    });
+    const confident = nameColumn>=0 && subtotalColumn>=0 && nameColumn!==subtotalColumn && nameScore>=80 && subtotalScore>=80;
+    return { nameColumn, subtotalColumn, score:nameScore+subtotalScore, confident };
+  }
+
+  function populateBillingImportColumns(detection) {
+    const header = S.billingImportRows[detection.headerRow] || [];
+    const maxCols = Math.max(header.length, ...S.billingImportRows.slice(0,10).map((row)=>row.length), 0);
+    const options = Array.from({length:maxCols},(_,index)=>{
+      const label=String(header[index] ?? '').trim();
+      return `<option value="${index}">${columnLetter(index)}${label ? ` · ${eh(label)}` : ''}</option>`;
+    }).join('');
+    E.billingImportNameColumn.innerHTML = options;
+    E.billingImportSubtotalColumn.innerHTML = options;
+    if (detection.nameColumn>=0) E.billingImportNameColumn.value=String(detection.nameColumn);
+    if (detection.subtotalColumn>=0) E.billingImportSubtotalColumn.value=String(detection.subtotalColumn);
+  }
+
+  function renderBillingImportPreview() {
+    if (!S.billingImportRows.length) return;
+    const headerIndex=Math.max(0,Math.round(number(E.billingImportHeaderRow.value))-1);
+    const nameCol=optionalColumnIndex(E.billingImportNameColumn.value);
+    const subtotalCol=optionalColumnIndex(E.billingImportSubtotalColumn.value);
+    const header=S.billingImportRows[headerIndex] || [];
+    E.billingImportPreviewHead.innerHTML=`<tr><th>Fila</th><th>${eh(header[nameCol] || 'Servicio')}</th><th>${eh(header[subtotalCol] || 'Subtotal')}</th><th>5% calculado</th><th>7% calculado</th></tr>`;
+    const examples=[];
+    for (let i=headerIndex+1; i<S.billingImportRows.length && examples.length<6; i+=1) {
+      const row=S.billingImportRows[i] || [];
+      const name=String(row[nameCol] ?? '').trim();
+      if (!name || normalize(name)==='total') continue;
+      const parsed=parseSpreadsheetPrice(row[subtotalCol]);
+      examples.push(`<tr><td>${i+1}</td><td>${eh(name)}</td><td>${parsed.valid ? eh(formatCurrency(parsed.value)) : '<span class="text-danger">No legible</span>'}</td><td>${parsed.valid ? eh(formatCurrency(parsed.value*0.05)) : '—'}</td><td>${parsed.valid ? eh(formatCurrency(parsed.value*0.07)) : '—'}</td></tr>`);
+    }
+    E.billingImportPreviewBody.innerHTML=examples.join('') || '<tr><td colspan="5">No hay filas de datos para previsualizar.</td></tr>';
+    E.billingImportPreviewCaption.textContent=`${Math.max(0,S.billingImportRows.length-headerIndex-1)} filas debajo del encabezado`;
+  }
+
+  function analyzeBillingImport() {
+    hideBillingImportError();
+    if (!S.billingImportRows.length) { showBillingImportError('Primero cargá un archivo.'); return; }
+    const mapping={
+      headerRow:Math.max(0,Math.round(number(E.billingImportHeaderRow.value))-1),
+      nameColumn:optionalColumnIndex(E.billingImportNameColumn.value),
+      subtotalColumn:optionalColumnIndex(E.billingImportSubtotalColumn.value)
+    };
+    if (mapping.nameColumn<0 || mapping.subtotalColumn<0 || mapping.nameColumn===mapping.subtotalColumn) { showBillingImportError('Seleccioná columnas distintas para servicio y Subtotal.'); return; }
+    S.billingImportComparison=buildBillingImportComparison(mapping);
+    S.billingImportSelected=new Set(S.billingImportComparison.rows.filter((row)=>row.kind==='change' && row.fileSubtotal>0 && row.canUpdate).map((row)=>row.rowKey));
+    S.billingImportFilter='changes';
+    S.billingImportSearch='';
+    E.billingImportResultFilter.value='changes';
+    E.billingImportSearch.value='';
+    E.billingImportResults.classList.remove('d-none');
+    E.billingImportApplyButton.classList.remove('d-none');
+    E.billingImportApplyAllButton.classList.remove('d-none');
+    renderBillingImportResults();
+  }
+
+  function buildBillingImportComparison(mapping) {
+    const excelRows=[];
+    for (let i=mapping.headerRow+1; i<S.billingImportRows.length; i+=1) {
+      const source=S.billingImportRows[i] || [];
+      const excelName=String(source[mapping.nameColumn] ?? '').replace(/\s+/g,' ').trim();
+      if (!excelName || normalize(excelName)==='total') continue;
+      const subtotalParsed=parseSpreadsheetPrice(source[mapping.subtotalColumn]);
+      const rowKey=`${i+1}:${billingServiceKey(excelName)}`;
+      excelRows.push({ rowNumber:i+1, rowKey, excelName, subtotalParsed });
+    }
+    const duplicateNames=new Set();
+    const counts=new Map();
+    excelRows.forEach((row)=>{ const key=billingServiceKey(row.excelName); counts.set(key,(counts.get(key)||0)+1); });
+    counts.forEach((count,key)=>{ if (count>1) duplicateNames.add(key); });
+
+    const rows=excelRows.map((row)=>buildBillingImportRow(row, duplicateNames.has(billingServiceKey(row.excelName))));
+    const byService=new Map();
+    rows.forEach((row)=>{ if (row.serviceId) { if (!byService.has(row.serviceId)) byService.set(row.serviceId,[]); byService.get(row.serviceId).push(row); } });
+    byService.forEach((items)=>{
+      if (items.length>1) items.forEach((row)=>{ row.kind='review'; row.canUpdate=false; row.statusLabel='Servicio duplicado en el Excel'; row.issue='Más de una fila termina vinculada al mismo servicio.'; });
+    });
+    const matchedIds=new Set(rows.filter((r)=>r.serviceId).map((r)=>r.serviceId));
+    const missingFile=S.services.filter((service)=>service.active!==false && !matchedIds.has(service.id)).map((service)=>({
+      kind:'missing-file', rowKey:`missing:${service.id}`, serviceId:service.id, serviceName:service.name, excelName:'', currentBilling:roundMoney(service.monthly_billing), fileSubtotal:null,
+      currentFive:roundMoney(number(service.monthly_billing)*0.05), fileFive:null, currentSeven:roundMoney(number(service.monthly_billing)*0.07), fileSeven:null,
+      limitPercent:number(service.budget_limit_percent||5), currentLimit:roundMoney(number(service.monthly_billing)*number(service.budget_limit_percent||5)/100), fileLimit:null,
+      canUpdate:false, statusLabel:'No aparece en el Excel', searchText:normalize(`${service.name} ${service.address||''} faltante excel`)
+    }));
+    const summary={
+      sourceRows:rows.length,
+      unchanged:rows.filter((r)=>r.kind==='unchanged').length,
+      changes:rows.filter((r)=>r.kind==='change').length,
+      review:rows.filter((r)=>r.kind==='review').length,
+      unmatched:rows.filter((r)=>r.kind==='unmatched').length,
+      missingFile:missingFile.length
+    };
+    return { mapping, rows, missingFile, summary };
+  }
+
+  function buildBillingImportRow(sourceRow, duplicateName=false) {
+    const { rowNumber,rowKey,excelName,subtotalParsed }=sourceRow;
+    const manualId=S.billingImportManualMatches.get(rowKey) || '';
+    let match=null, suggested=null, matchType='';
+    if (manualId) { match=S.services.find((s)=>s.id===manualId) || null; matchType='manual'; }
+    else {
+      const found=findBillingServiceMatch(excelName);
+      match=found.autoService;
+      suggested=found.suggestedService;
+      matchType=match ? found.matchType : '';
+    }
+    if (duplicateName) return billingIssueRow(sourceRow, match, suggested, 'Nombre duplicado en el Excel', 'Hay más de una fila con el mismo nombre de servicio.');
+    if (!subtotalParsed.valid) return billingIssueRow(sourceRow, match, suggested, 'Subtotal no legible', 'La columna Subtotal no contiene un importe válido.');
+    if (!match) {
+      return { kind:'unmatched', rowNumber,rowKey,excelName,fileSubtotal:subtotalParsed.value,serviceId:null,serviceName:'',suggestedServiceId:suggested?.id||null,suggestedServiceName:suggested?.name||'',suggestedScore:suggested?.score||0,canUpdate:false,statusLabel:suggested?'Revisar coincidencia':'Servicio no encontrado',searchText:normalize(`${excelName} ${suggested?.name||''} no encontrado`) };
+    }
+    const currentBilling=roundMoney(match.monthly_billing);
+    const fileSubtotal=roundMoney(subtotalParsed.value);
+    const diff=roundMoney(fileSubtotal-currentBilling);
+    const unchanged=Math.abs(diff)<0.01;
+    const limitPercent=number(match.budget_limit_percent||5);
+    const zeroReview=fileSubtotal===0 && currentBilling!==0;
+    return {
+      kind: zeroReview ? 'review' : (unchanged ? 'unchanged' : 'change'), rowNumber,rowKey,excelName,serviceId:match.id,serviceName:match.name,serviceAddress:match.address||'',matchType,
+      fileSubtotal,currentBilling,difference:diff,percent:currentBilling>0 ? (diff/currentBilling)*100 : null,
+      currentFive:roundMoney(currentBilling*0.05),fileFive:roundMoney(fileSubtotal*0.05),currentSeven:roundMoney(currentBilling*0.07),fileSeven:roundMoney(fileSubtotal*0.07),
+      limitPercent,currentLimit:roundMoney(currentBilling*limitPercent/100),fileLimit:roundMoney(fileSubtotal*limitPercent/100),
+      canUpdate:true,statusLabel:zeroReview?'Subtotal $0 · revisar':(unchanged?'Coincide':'Requiere ajuste'),issue:zeroReview?'El Excel informa subtotal $0. Verificá el dato antes de reemplazar una facturación existente.':'',
+      searchText:normalize(`${excelName} ${match.name} ${match.address||''} ${unchanged?'coincide':'ajuste'}`)
+    };
+  }
+
+  function billingIssueRow(sourceRow, match, suggested, label, issue) {
+    return { kind:'review', rowNumber:sourceRow.rowNumber,rowKey:sourceRow.rowKey,excelName:sourceRow.excelName,fileSubtotal:sourceRow.subtotalParsed.valid?sourceRow.subtotalParsed.value:null,
+      serviceId:match?.id||null,serviceName:match?.name||'',suggestedServiceId:suggested?.id||null,suggestedServiceName:suggested?.name||'',suggestedScore:suggested?.score||0,canUpdate:false,statusLabel:label,issue,
+      searchText:normalize(`${sourceRow.excelName} ${match?.name||''} ${suggested?.name||''} revisar`) };
+  }
+
+  function billingServiceKey(value) {
+    return normalize(value).replace(/\b(consorcio|cons|de|del|la|las|los|propietarios|propietario|copropietarios|coprop|edificio|calle|finca)\b/g,' ').replace(/\bavenida\b/g,' av ').replace(/\bavda\b/g,' av ').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+  }
+
+  function billingTokens(value) { return billingServiceKey(value).split(' ').filter((token)=>token.length>1); }
+  function billingNumbers(value) { return (billingServiceKey(value).match(/\b\d{2,5}\b/g) || []); }
+  function jaccardScore(a,b) {
+    const A=new Set(billingTokens(a)), B=new Set(billingTokens(b));
+    if (!A.size || !B.size) return 0;
+    let intersection=0; A.forEach((t)=>{ if (B.has(t)) intersection+=1; });
+    return intersection/(A.size+B.size-intersection);
+  }
+  function stringSimilarity(a,b) {
+    const x=billingServiceKey(a), y=billingServiceKey(b);
+    if (!x || !y) return 0;
+    if (x===y) return 1;
+    const longer=x.length>=y.length?x:y, shorter=x.length>=y.length?y:x;
+    const costs=Array.from({length:shorter.length+1},(_,i)=>i);
+    for (let i=1;i<=longer.length;i+=1) {
+      let prev=costs[0]; costs[0]=i;
+      for (let j=1;j<=shorter.length;j+=1) {
+        const temp=costs[j]; costs[j]=Math.min(costs[j]+1,costs[j-1]+1,prev+(longer[i-1]===shorter[j-1]?0:1)); prev=temp;
+      }
+    }
+    return 1-costs[shorter.length]/longer.length;
+  }
+  function serviceCandidateScore(excelName, service) {
+    const candidates=[service.name,service.address].filter(Boolean);
+    let best=0;
+    candidates.forEach((candidate)=>{
+      let score=Math.max(stringSimilarity(excelName,candidate)*0.65+jaccardScore(excelName,candidate)*0.35, jaccardScore(excelName,candidate));
+      const aNums=billingNumbers(excelName), bNums=billingNumbers(candidate);
+      if (aNums.length && bNums.length) {
+        const overlap=aNums.some((n)=>bNums.includes(n));
+        if (overlap) score=Math.min(1,score+0.12); else score*=0.58;
+      }
+      best=Math.max(best,score);
+    });
+    return best;
+  }
+  function findBillingServiceMatch(excelName) {
+    const exactKey=billingServiceKey(excelName);
+    const exact=S.services.find((service)=>billingServiceKey(service.name)===exactKey || (service.address && billingServiceKey(service.address)===exactKey));
+    if (exact) return { autoService:exact,suggestedService:null,matchType:'exact' };
+    const ranked=S.services.map((service)=>({service,score:serviceCandidateScore(excelName,service)})).sort((a,b)=>b.score-a.score);
+    const best=ranked[0], second=ranked[1];
+    if (best && best.score>=0.88 && (!second || best.score-second.score>=0.10)) return { autoService:best.service,suggestedService:null,matchType:'auto' };
+    if (best && best.score>=0.52) return { autoService:null,suggestedService:{...best.service,score:best.score},matchType:'suggested' };
+    return { autoService:null,suggestedService:null,matchType:'' };
+  }
+
+  function filteredBillingImportRows() {
+    if (!S.billingImportComparison) return [];
+    const all=[...S.billingImportComparison.rows,...S.billingImportComparison.missingFile];
+    const filter=S.billingImportFilter || 'changes';
+    const q=normalize(S.billingImportSearch||'');
+    return all.filter((row)=>{
+      const matchesFilter=filter==='all' || (filter==='changes' ? row.kind==='change' : filter==='unchanged' ? row.kind==='unchanged' : filter==='review' ? ['review','unmatched'].includes(row.kind) : filter==='missing-file' ? row.kind==='missing-file' : true);
+      return matchesFilter && (!q || (row.searchText||'').includes(q));
+    });
+  }
+
+  function renderBillingImportResults() {
+    const comparison=S.billingImportComparison;
+    if (!comparison) return;
+    const s=comparison.summary;
+    E.billingImportKpiRows.textContent=s.sourceRows;
+    E.billingImportKpiUnchanged.textContent=s.unchanged;
+    E.billingImportKpiChanges.textContent=s.changes;
+    E.billingImportKpiReview.textContent=s.review;
+    E.billingImportKpiUnmatched.textContent=s.unmatched;
+    E.billingImportKpiMissingFile.textContent=s.missingFile;
+    E.billingImportSummaryAlert.innerHTML=`<strong>${s.changes ? `${s.changes} servicio${s.changes===1?' requiere':'s requieren'} ajuste.` : 'La facturación encontrada coincide en todos los servicios vinculados.'}</strong> Los valores de 5%, límite operativo y 7% se calculan siempre sobre el <strong>Subtotal sin IVA</strong>. El porcentaje de límite operativo de cada servicio se conserva tal como está configurado.`;
+    const visible=filteredBillingImportRows();
+    E.billingImportResultsBody.innerHTML=visible.map(renderBillingImportRow).join('') || '<tr><td colspan="9"><div class="empty-inline">No hay resultados para este filtro.</div></td></tr>';
+    E.billingImportResultsCaption.textContent=`${visible.length} filas visibles · ${s.sourceRows} servicios leídos del Excel · ${s.missingFile} servicios de la app sin fila vinculada`;
+    updateBillingImportSelectionControls(visible);
+  }
+
+  function billingValueChangeHtml(oldValue,newValue) {
+    if (newValue==null) return `<strong>${eh(formatCurrency(oldValue))}</strong>`;
+    const changed=Math.abs(roundMoney(newValue)-roundMoney(oldValue))>=0.01;
+    return `<div class="billing-value-change ${changed?'is-changed':''}"><span>${eh(formatCurrency(oldValue))}</span>${changed?'<i class="bi bi-arrow-right"></i>':''}<strong>${changed?eh(formatCurrency(newValue)):''}</strong></div>`;
+  }
+
+  function billingMatchSelect(row) {
+    if (row.kind==='missing-file') return `<div class="billing-match-name"><strong>${eh(row.serviceName)}</strong><small>Sin fila vinculada en el Excel</small></div>`;
+    const selected=row.serviceId || '';
+    const options=['<option value="">— Vincular manualmente —</option>',...S.services.map((service)=>`<option value="${ea(service.id)}" ${service.id===selected?'selected':''}>${eh(service.name)}</option>`)].join('');
+    const suggestion=row.suggestedServiceName ? `<small class="billing-match-suggestion">Sugerencia: ${eh(row.suggestedServiceName)} (${Math.round(number(row.suggestedScore)*100)}%)</small>` : '';
+    const matchLabel=row.serviceId ? `<small>${row.matchType==='manual'?'Vinculación manual':row.matchType==='exact'?'Coincidencia exacta':'Coincidencia automática'}</small>` : suggestion;
+    return `<div class="billing-match-name"><strong>${eh(row.excelName)}</strong>${matchLabel}<select class="form-select form-select-sm mt-2" data-billing-import-match="${ea(row.rowKey)}">${options}</select></div>`;
+  }
+
+  function renderBillingImportRow(row) {
+    if (row.kind==='missing-file') return `<tr class="billing-import-row is-missing"><td></td><td>${billingMatchSelect(row)}</td><td>—</td><td><strong>${eh(formatCurrency(row.currentBilling))}</strong></td><td>${eh(formatCurrency(row.currentFive))}</td><td>${eh(formatCurrency(row.currentLimit))} <small>${eh(formatPercent(row.limitPercent))}</small></td><td>${eh(formatCurrency(row.currentSeven))}</td><td><span class="price-import-status is-warning">No aparece en Excel</span></td><td></td></tr>`;
+    const canSelect=row.kind==='change' && row.canUpdate;
+    const checked=S.billingImportSelected.has(row.rowKey);
+    const statusClass=row.kind==='unchanged'?'unchanged':row.kind==='change'?'issue':'warning';
+    const statusDetail=row.issue ? `<small class="billing-status-detail">${eh(row.issue)}</small>` : '';
+    const fileBilling=row.fileSubtotal==null?'—':formatCurrency(row.fileSubtotal);
+    return `<tr class="billing-import-row is-${ea(row.kind)}">
+      <td class="price-import-check-col">${canSelect?`<input class="form-check-input" type="checkbox" data-billing-import-select="${ea(row.rowKey)}" ${checked?'checked':''}>`:''}</td>
+      <td>${billingMatchSelect(row)}</td>
+      <td><strong>${eh(fileBilling)}</strong><small>Base sin IVA</small></td>
+      <td>${row.currentBilling==null?'—':billingValueChangeHtml(row.currentBilling,row.fileSubtotal)}</td>
+      <td>${row.currentFive==null?'—':billingValueChangeHtml(row.currentFive,row.fileFive)}</td>
+      <td>${row.currentLimit==null?'—':`${billingValueChangeHtml(row.currentLimit,row.fileLimit)}<small>${eh(formatPercent(row.limitPercent))} se mantiene</small>`}</td>
+      <td>${row.currentSeven==null?'—':billingValueChangeHtml(row.currentSeven,row.fileSeven)}</td>
+      <td><span class="price-import-status is-${statusClass}">${eh(row.statusLabel||'Revisar')}</span>${statusDetail}</td>
+      <td>${row.canUpdate && row.serviceId && row.kind!=='unchanged'?`<button class="btn btn-sm btn-outline-primary fw-bold" type="button" data-billing-import-update="${ea(row.rowKey)}">Actualizar</button>`:''}</td>
+    </tr>`;
+  }
+
+  function handleBillingImportResultChange(event) {
+    const select=event.target.closest('[data-billing-import-match]');
+    if (select) {
+      const rowKey=select.dataset.billingImportMatch;
+      if (select.value) S.billingImportManualMatches.set(rowKey,select.value); else S.billingImportManualMatches.delete(rowKey);
+      const mapping=S.billingImportComparison?.mapping;
+      if (mapping) {
+        S.billingImportComparison=buildBillingImportComparison(mapping);
+        const validKeys=new Set(S.billingImportComparison.rows.filter((r)=>r.kind==='change'&&r.canUpdate).map((r)=>r.rowKey));
+        S.billingImportSelected=new Set([...S.billingImportSelected].filter((key)=>validKeys.has(key)));
+        renderBillingImportResults();
+      }
+      return;
+    }
+    const checkbox=event.target.closest('[data-billing-import-select]');
+    if (!checkbox) return;
+    const key=checkbox.dataset.billingImportSelect;
+    if (checkbox.checked) S.billingImportSelected.add(key); else S.billingImportSelected.delete(key);
+    renderBillingImportResults();
+  }
+
+  async function handleBillingImportResultClick(event) {
+    const button=event.target.closest('[data-billing-import-update]');
+    if (!button) return;
+    const row=S.billingImportComparison?.rows.find((item)=>item.rowKey===button.dataset.billingImportUpdate);
+    if (!row || !row.canUpdate || !row.serviceId) return;
+    if (row.fileSubtotal===0 && row.currentBilling!==0 && !confirm(`El Excel informa $0 de subtotal para ${row.serviceName}. ¿Querés reemplazar igualmente la facturación actual?`)) return;
+    await applyBillingUpdates([row],button);
+  }
+
+  function toggleVisibleBillingImportSelections() {
+    const rows=filteredBillingImportRows().filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0);
+    rows.forEach((row)=>{ if (E.billingImportSelectAll.checked) S.billingImportSelected.add(row.rowKey); else S.billingImportSelected.delete(row.rowKey); });
+    renderBillingImportResults();
+  }
+
+  function updateBillingImportSelectionControls(visibleRows) {
+    const changes=visibleRows.filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0);
+    const selectedVisible=changes.filter((row)=>S.billingImportSelected.has(row.rowKey)).length;
+    E.billingImportSelectAll.disabled=changes.length===0;
+    E.billingImportSelectAll.checked=changes.length>0 && selectedVisible===changes.length;
+    E.billingImportSelectAll.indeterminate=selectedVisible>0 && selectedVisible<changes.length;
+    const totalSelected=S.billingImportComparison.rows.filter((row)=>row.kind==='change'&&row.canUpdate&&S.billingImportSelected.has(row.rowKey)).length;
+    const allChanges=S.billingImportComparison.rows.filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0).length;
+    E.billingImportApplyButton.disabled=totalSelected===0;
+    E.billingImportApplyButton.innerHTML=`<i class="bi bi-check2-square me-2"></i>Actualizar seleccionados (${totalSelected})`;
+    E.billingImportApplyAllButton.disabled=allChanges===0;
+    E.billingImportApplyAllButton.innerHTML=`<i class="bi bi-check2-all me-2"></i>Actualizar todos los ajustes (${allChanges})`;
+  }
+
+  async function applySelectedBillingUpdates() {
+    const rows=S.billingImportComparison?.rows.filter((row)=>row.kind==='change'&&row.canUpdate&&S.billingImportSelected.has(row.rowKey)) || [];
+    if (!rows.length) { toast('Seleccioná al menos un ajuste.', 'error'); return; }
+    if (!confirm(`Se actualizará la facturación mensual de ${rows.length} servicio${rows.length===1?'':'s'}. Los porcentajes de límite operativo no cambiarán. ¿Continuar?`)) return;
+    await applyBillingUpdates(rows,E.billingImportApplyButton);
+  }
+
+  async function applyAllBillingUpdates() {
+    const rows=S.billingImportComparison?.rows.filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0) || [];
+    if (!rows.length) { toast('No hay ajustes seguros para aplicar.', 'error'); return; }
+    if (!confirm(`Se actualizarán todos los ${rows.length} servicios con diferencias seguras. Las filas a revisar, sin coincidencia o con subtotal $0 quedarán sin cambios. ¿Continuar?`)) return;
+    await applyBillingUpdates(rows,E.billingImportApplyAllButton);
+  }
+
+  async function applyBillingUpdates(rows,button) {
+    if (!canManageMasterData()) { toast('Solo el administrador puede actualizar la facturación.', 'error'); return; }
+    buttonBusy(button,true,rows.length===1?'Actualizando...':'Actualizando servicios...');
+    hideBillingImportError();
+    const failures=[];
+    let updated=0;
+    try {
+      for (const row of rows) {
+        const { error }=await S.sb.from('services').update({ monthly_billing:roundMoney(row.fileSubtotal) }).eq('id',row.serviceId);
+        if (error) failures.push(`${row.serviceName}: ${error.message}`); else updated+=1;
+      }
+      await refreshAdmin(false);
+      const mapping=S.billingImportComparison?.mapping;
+      if (mapping) {
+        S.billingImportComparison=buildBillingImportComparison(mapping);
+        S.billingImportSelected=new Set(S.billingImportComparison.rows.filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0).map((row)=>row.rowKey));
+        renderBillingImportResults();
+      }
+      if (failures.length) showBillingImportError(`Se actualizaron ${updated} servicios, pero ${failures.length} fallaron: ${failures.slice(0,3).join(' · ')}`);
+      else toast(`${updated} servicio${updated===1?'':'s'} actualizado${updated===1?'':'s'}.`, 'success');
+    } catch (error) {
+      console.error(error); showBillingImportError(error.message || 'No se pudo actualizar la facturación.');
+    } finally { buttonBusy(button,false); if (S.billingImportComparison) renderBillingImportResults(); }
+  }
+
+  function showBillingImportError(message) {
+    E.billingImportError.textContent=message;
+    E.billingImportError.classList.remove('d-none');
+    E.billingImportError.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+  function hideBillingImportError() {
+    if (!E.billingImportError) return;
+    E.billingImportError.textContent=''; E.billingImportError.classList.add('d-none');
   }
 
   function optionalColumnIndex(value) {

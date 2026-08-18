@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "Pedidos Clean It",
+  "short_name": "Pedidos Clean It",
+  "description": "Gestión de pedidos, insumos, consumos y control operativo de Clean It.",
+  "lang": "es-AR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#f4f7fb",
+  "theme_color": "#0d6efd",
+  "orientation": "any",
+  "icons": [
+    {"src":"icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}
