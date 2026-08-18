@@ -288,6 +288,7 @@
     E.billingImportSheet.addEventListener('change', handleBillingImportSheetChange);
     E.billingImportHeaderRow.addEventListener('input', handleBillingImportHeaderChange);
     E.billingImportNameColumn.addEventListener('change', renderBillingImportPreview);
+    E.billingImportCuitColumn.addEventListener('change', renderBillingImportPreview);
     E.billingImportSubtotalColumn.addEventListener('change', renderBillingImportPreview);
     E.billingImportAnalyzeButton.addEventListener('click', analyzeBillingImport);
     E.billingImportResetButton.addEventListener('click', () => resetBillingImport(true));
@@ -306,6 +307,7 @@
     E.serviceForm.addEventListener('submit', saveService);
     E.serviceBilling.addEventListener('input', renderServiceBudgetPreview);
     E.serviceBudgetPercent.addEventListener('input', renderServiceBudgetPreview);
+    E.serviceCuit.addEventListener('input', renderServiceCuitWarning);
     E.serviceMaterialsSearch.addEventListener('input', renderServiceMaterials);
     E.serviceMaterialsFilter.addEventListener('change', renderServiceMaterials);
     E.serviceMaterialsList.addEventListener('change', handleServiceMaterialToggle);
@@ -4642,7 +4644,7 @@
   }
 
   function detectBillingImportStructure(rows) {
-    let best = { headerRow:0, nameColumn:-1, subtotalColumn:-1, score:-1, confident:false };
+    let best = { headerRow:0, nameColumn:-1, cuitColumn:-1, subtotalColumn:-1, score:-1, confident:false };
     for (let i=0; i<Math.min(rows.length,40); i+=1) {
       const detected = detectBillingColumnsInHeader(rows[i] || []);
       const score = detected.score + Math.min((rows[i] || []).filter((v)=>String(v||'').trim()).length, 12);
@@ -4652,34 +4654,41 @@
   }
 
   function detectBillingColumnsInHeader(header) {
-    let nameColumn=-1, subtotalColumn=-1, nameScore=0, subtotalScore=0;
+    let nameColumn=-1, cuitColumn=-1, subtotalColumn=-1, nameScore=0, cuitScore=0, subtotalScore=0;
     header.forEach((value,index)=>{
       const text=normalize(value).replace(/[^a-z0-9]+/g,' ').trim();
-      let ns=0, ss=0;
+      let ns=0, cs=0, ss=0;
       if (text === 'nombre') ns=100;
       else if (['servicio','nombre servicio','servicio nombre','establecimiento'].includes(text)) ns=92;
       else if (text.includes('servicio') || text.includes('nombre')) ns=65;
+      if (['cuit','c u i t','cuit cliente','cuit servicio'].includes(text)) cs=120;
+      else if (text.includes('cuit')) cs=100;
+      else if (text.includes('cuil')) cs=55;
       if (text === 'subtotal') ss=110;
       else if (text === 'subtotal sin iva' || text === 'neto sin iva' || text === 'importe neto') ss=105;
       else if (text.includes('subtotal')) ss=92;
       else if ((text.includes('neto') || text.includes('importe')) && !text.includes('iva') && !text.includes('total')) ss=60;
       if (ns>nameScore) { nameScore=ns; nameColumn=index; }
+      if (cs>cuitScore) { cuitScore=cs; cuitColumn=index; }
       if (ss>subtotalScore) { subtotalScore=ss; subtotalColumn=index; }
     });
     const confident = nameColumn>=0 && subtotalColumn>=0 && nameColumn!==subtotalColumn && nameScore>=80 && subtotalScore>=80;
-    return { nameColumn, subtotalColumn, score:nameScore+subtotalScore, confident };
+    return { nameColumn, cuitColumn, subtotalColumn, score:nameScore+cuitScore+subtotalScore, confident };
   }
 
   function populateBillingImportColumns(detection) {
     const header = S.billingImportRows[detection.headerRow] || [];
     const maxCols = Math.max(header.length, ...S.billingImportRows.slice(0,10).map((row)=>row.length), 0);
-    const options = Array.from({length:maxCols},(_,index)=>{
+    const requiredOptions = Array.from({length:maxCols},(_,index)=>{
       const label=String(header[index] ?? '').trim();
       return `<option value="${index}">${columnLetter(index)}${label ? ` · ${eh(label)}` : ''}</option>`;
     }).join('');
-    E.billingImportNameColumn.innerHTML = options;
-    E.billingImportSubtotalColumn.innerHTML = options;
+    const optionalOptions = `<option value="">No usar CUIT</option>${requiredOptions}`;
+    E.billingImportNameColumn.innerHTML = requiredOptions;
+    E.billingImportCuitColumn.innerHTML = optionalOptions;
+    E.billingImportSubtotalColumn.innerHTML = requiredOptions;
     if (detection.nameColumn>=0) E.billingImportNameColumn.value=String(detection.nameColumn);
+    E.billingImportCuitColumn.value=detection.cuitColumn>=0 ? String(detection.cuitColumn) : '';
     if (detection.subtotalColumn>=0) E.billingImportSubtotalColumn.value=String(detection.subtotalColumn);
   }
 
@@ -4687,19 +4696,21 @@
     if (!S.billingImportRows.length) return;
     const headerIndex=Math.max(0,Math.round(number(E.billingImportHeaderRow.value))-1);
     const nameCol=optionalColumnIndex(E.billingImportNameColumn.value);
+    const cuitCol=optionalColumnIndex(E.billingImportCuitColumn.value);
     const subtotalCol=optionalColumnIndex(E.billingImportSubtotalColumn.value);
     const header=S.billingImportRows[headerIndex] || [];
-    E.billingImportPreviewHead.innerHTML=`<tr><th>Fila</th><th>${eh(header[nameCol] || 'Servicio')}</th><th>${eh(header[subtotalCol] || 'Subtotal')}</th><th>5% calculado</th><th>7% calculado</th></tr>`;
+    E.billingImportPreviewHead.innerHTML=`<tr><th>Fila</th><th>${eh(header[nameCol] || 'Servicio')}</th><th>${cuitCol>=0 ? eh(header[cuitCol] || 'CUIT') : 'CUIT'}</th><th>${eh(header[subtotalCol] || 'Subtotal')}</th><th>5% calculado</th><th>7% calculado</th></tr>`;
     const examples=[];
     for (let i=headerIndex+1; i<S.billingImportRows.length && examples.length<6; i+=1) {
       const row=S.billingImportRows[i] || [];
       const name=String(row[nameCol] ?? '').trim();
       if (!name || normalize(name)==='total') continue;
+      const cuit=cuitCol>=0 ? normalizeCuit(row[cuitCol]) : '';
       const parsed=parseSpreadsheetPrice(row[subtotalCol]);
-      examples.push(`<tr><td>${i+1}</td><td>${eh(name)}</td><td>${parsed.valid ? eh(formatCurrency(parsed.value)) : '<span class="text-danger">No legible</span>'}</td><td>${parsed.valid ? eh(formatCurrency(parsed.value*0.05)) : '—'}</td><td>${parsed.valid ? eh(formatCurrency(parsed.value*0.07)) : '—'}</td></tr>`);
+      examples.push(`<tr><td>${i+1}</td><td>${eh(name)}</td><td>${cuit ? eh(formatCuit(cuit)) : '<span class="text-secondary">—</span>'}</td><td>${parsed.valid ? eh(formatCurrency(parsed.value)) : '<span class="text-danger">No legible</span>'}</td><td>${parsed.valid ? eh(formatCurrency(parsed.value*0.05)) : '—'}</td><td>${parsed.valid ? eh(formatCurrency(parsed.value*0.07)) : '—'}</td></tr>`);
     }
-    E.billingImportPreviewBody.innerHTML=examples.join('') || '<tr><td colspan="5">No hay filas de datos para previsualizar.</td></tr>';
-    E.billingImportPreviewCaption.textContent=`${Math.max(0,S.billingImportRows.length-headerIndex-1)} filas debajo del encabezado`;
+    E.billingImportPreviewBody.innerHTML=examples.join('') || '<tr><td colspan="6">No hay filas de datos para previsualizar.</td></tr>';
+    E.billingImportPreviewCaption.textContent=`${Math.max(0,S.billingImportRows.length-headerIndex-1)} filas debajo del encabezado${cuitCol>=0 ? ' · CUIT habilitado para matching' : ' · matching por nombre/dirección'}`;
   }
 
   function analyzeBillingImport() {
@@ -4708,9 +4719,11 @@
     const mapping={
       headerRow:Math.max(0,Math.round(number(E.billingImportHeaderRow.value))-1),
       nameColumn:optionalColumnIndex(E.billingImportNameColumn.value),
+      cuitColumn:optionalColumnIndex(E.billingImportCuitColumn.value),
       subtotalColumn:optionalColumnIndex(E.billingImportSubtotalColumn.value)
     };
     if (mapping.nameColumn<0 || mapping.subtotalColumn<0 || mapping.nameColumn===mapping.subtotalColumn) { showBillingImportError('Seleccioná columnas distintas para servicio y Subtotal.'); return; }
+    if (mapping.cuitColumn>=0 && [mapping.nameColumn,mapping.subtotalColumn].includes(mapping.cuitColumn)) { showBillingImportError('La columna CUIT debe ser distinta de Servicio y Subtotal.'); return; }
     S.billingImportComparison=buildBillingImportComparison(mapping);
     S.billingImportSelected=new Set(S.billingImportComparison.rows.filter((row)=>row.kind==='change' && row.fileSubtotal>0 && row.canUpdate).map((row)=>row.rowKey));
     S.billingImportFilter='changes';
@@ -4729,84 +4742,140 @@
       const source=S.billingImportRows[i] || [];
       const excelName=String(source[mapping.nameColumn] ?? '').replace(/\s+/g,' ').trim();
       if (!excelName || normalize(excelName)==='total') continue;
+      const excelCuitRaw=mapping.cuitColumn>=0 ? String(source[mapping.cuitColumn] ?? '').trim() : '';
+      const excelCuit=normalizeCuit(excelCuitRaw);
+      const excelCuitValid=!excelCuitRaw || isCuitFormatValid(excelCuit);
       const subtotalParsed=parseSpreadsheetPrice(source[mapping.subtotalColumn]);
-      const rowKey=`${i+1}:${billingServiceKey(excelName)}`;
+      const rowKey=`${i+1}:${billingServiceKey(excelName)}:${excelCuit || 'sin-cuit'}`;
       excelRows.push({
         rowNumber:i+1,
         rowKey,
         excelName,
+        excelCuitRaw,
+        excelCuit,
+        excelCuitValid,
         subtotalParsed,
         rawCells:[...source],
         headers:[...(S.billingImportRows[mapping.headerRow] || [])]
       });
     }
-    const duplicateNames=new Set();
-    const counts=new Map();
-    excelRows.forEach((row)=>{ const key=billingServiceKey(row.excelName); counts.set(key,(counts.get(key)||0)+1); });
-    counts.forEach((count,key)=>{ if (count>1) duplicateNames.add(key); });
 
-    const rows=excelRows.map((row)=>buildBillingImportRow(row, duplicateNames.has(billingServiceKey(row.excelName))));
+    const duplicateNames=new Set();
+    const nameCounts=new Map();
+    excelRows.forEach((row)=>{ const key=billingServiceKey(row.excelName); nameCounts.set(key,(nameCounts.get(key)||0)+1); });
+    nameCounts.forEach((count,key)=>{ if (count>1) duplicateNames.add(key); });
+
+    const excelCuitGroups=new Map();
+    excelRows.forEach((row)=>{
+      if (!row.excelCuit || !row.excelCuitValid) return;
+      if (!excelCuitGroups.has(row.excelCuit)) excelCuitGroups.set(row.excelCuit,[]);
+      excelCuitGroups.get(row.excelCuit).push(row);
+    });
+    const duplicateExcelCuits=new Map([...excelCuitGroups].filter(([,items])=>items.length>1));
+    const duplicateAppCuits=duplicateServiceCuitGroups();
+
+    const rows=excelRows.map((row)=>buildBillingImportRow(row, {
+      duplicateName:duplicateNames.has(billingServiceKey(row.excelName)),
+      duplicateExcelCuit:row.excelCuit ? duplicateExcelCuits.get(row.excelCuit) || [] : [],
+      duplicateAppCuit:row.excelCuit ? duplicateAppCuits.get(row.excelCuit) || [] : []
+    }));
+
     const byService=new Map();
     rows.forEach((row)=>{ if (row.serviceId) { if (!byService.has(row.serviceId)) byService.set(row.serviceId,[]); byService.get(row.serviceId).push(row); } });
     byService.forEach((items)=>{
-      if (items.length>1) items.forEach((row)=>{ row.kind='review'; row.canUpdate=false; row.statusLabel='Servicio duplicado en el Excel'; row.issue='Más de una fila termina vinculada al mismo servicio.'; });
+      if (items.length>1) items.forEach((row)=>{
+        row.kind='review';
+        row.canUpdate=false;
+        row.statusLabel='Servicio duplicado en el Excel';
+        row.issue='Más de una fila termina vinculada al mismo servicio. Revisá el CUIT y elegí manualmente el servicio correcto.';
+      });
     });
+
     const matchedIds=new Set(rows.filter((r)=>r.serviceId).map((r)=>r.serviceId));
     const missingFile=S.services.filter((service)=>service.active!==false && !matchedIds.has(service.id)).map((service)=>({
-      kind:'missing-file', rowKey:`missing:${service.id}`, serviceId:service.id, serviceName:service.name, excelName:'', currentBilling:roundMoney(service.monthly_billing), fileSubtotal:null,
+      kind:'missing-file', rowKey:`missing:${service.id}`, serviceId:service.id, serviceName:service.name, serviceCuit:normalizeCuit(service.cuit), excelName:'', excelCuit:'', currentBilling:roundMoney(service.monthly_billing), fileSubtotal:null,
       currentFive:roundMoney(number(service.monthly_billing)*0.05), fileFive:null, currentSeven:roundMoney(number(service.monthly_billing)*0.07), fileSeven:null,
       limitPercent:number(service.budget_limit_percent||5), currentLimit:roundMoney(number(service.monthly_billing)*number(service.budget_limit_percent||5)/100), fileLimit:null,
-      canUpdate:false, statusLabel:'No aparece en el Excel', searchText:normalize(`${service.name} ${service.address||''} faltante excel`)
+      canUpdate:false, statusLabel:'No aparece en el Excel', searchText:normalize(`${service.name} ${service.cuit||''} ${service.address||''} faltante excel`)
     }));
+
+    const duplicateCuitKeys=new Set([...duplicateAppCuits.keys(),...duplicateExcelCuits.keys()]);
     const summary={
       sourceRows:rows.length,
       unchanged:rows.filter((r)=>r.kind==='unchanged').length,
       changes:rows.filter((r)=>r.kind==='change').length,
       review:rows.filter((r)=>r.kind==='review').length,
       unmatched:rows.filter((r)=>r.kind==='unmatched').length,
-      missingFile:missingFile.length
+      missingFile:missingFile.length,
+      duplicateCuits:duplicateCuitKeys.size,
+      duplicateAppCuits:duplicateAppCuits.size,
+      duplicateExcelCuits:duplicateExcelCuits.size
     };
-    return { mapping, rows, missingFile, summary };
+    return { mapping, rows, missingFile, summary, duplicateAppCuits, duplicateExcelCuits };
   }
 
-  function buildBillingImportRow(sourceRow, duplicateName=false) {
-    const { rowNumber,rowKey,excelName,subtotalParsed }=sourceRow;
+  function buildBillingImportRow(sourceRow, flags={}) {
+    const { rowNumber,rowKey,excelName,excelCuit,excelCuitRaw,excelCuitValid,subtotalParsed }=sourceRow;
     const manualId=S.billingImportManualMatches.get(rowKey) || '';
-    let match=null, suggested=null, matchType='';
-    if (manualId) { match=S.services.find((s)=>s.id===manualId) || null; matchType='manual'; }
-    else {
-      const found=findBillingServiceMatch(excelName);
+    let match=null, suggested=null, matchType='', matchInfo={};
+    if (manualId) {
+      match=S.services.find((s)=>s.id===manualId) || null;
+      matchType='manual';
+    } else {
+      const found=findBillingServiceMatch(excelName,excelCuit);
       match=found.autoService;
       suggested=found.suggestedService;
-      matchType=match ? found.matchType : '';
+      matchType=match ? found.matchType : (found.matchType || '');
+      matchInfo=found;
     }
-    if (duplicateName) return billingIssueRow(sourceRow, match, suggested, 'Nombre duplicado en el Excel', 'Hay más de una fila con el mismo nombre de servicio.');
+
+    if (excelCuitRaw && !excelCuitValid && !manualId) {
+      return billingIssueRow(sourceRow, match, suggested, 'CUIT no válido', `El CUIT “${excelCuitRaw}” no tiene 11 dígitos. Revisá la fila antes de vincularla.`);
+    }
+    if (flags.duplicateName && !manualId) {
+      return billingIssueRow(sourceRow, match, suggested, 'Nombre duplicado en el Excel', 'Hay más de una fila con el mismo nombre de servicio. Usá el CUIT y la vinculación manual para confirmar cuál corresponde.');
+    }
+    if (matchInfo.cuitConflict && !manualId) {
+      return billingIssueRow(sourceRow, null, suggested, 'CUIT no coincide', `El nombre se parece a un servicio de la app, pero el CUIT del Excel (${formatCuit(excelCuit)}) es distinto del CUIT cargado en ese servicio.`);
+    }
+    if (matchInfo.duplicateCuitServices?.length && !manualId) {
+      const names=matchInfo.duplicateCuitServices.map((service)=>service.name).join(', ');
+      return billingIssueRow(sourceRow, null, suggested, 'CUIT compartido · revisar', `El CUIT ${formatCuit(excelCuit)} está cargado en ${matchInfo.duplicateCuitServices.length} servicios: ${names}. Elegí manualmente cuál corresponde a esta fila.`);
+    }
     if (!subtotalParsed.valid) return billingIssueRow(sourceRow, match, suggested, 'Subtotal no legible', 'La columna Subtotal no contiene un importe válido.');
     if (!match) {
-      return { kind:'unmatched', rowNumber,rowKey,excelName,fileSubtotal:subtotalParsed.value,serviceId:null,serviceName:'',suggestedServiceId:suggested?.id||null,suggestedServiceName:suggested?.name||'',suggestedScore:suggested?.score||0,canUpdate:false,statusLabel:suggested?'Revisar coincidencia':'Servicio no encontrado',rawCells:sourceRow.rawCells||[],headers:sourceRow.headers||[],searchText:normalize(`${excelName} ${(sourceRow.rawCells||[]).join(' ')} ${suggested?.name||''} no encontrado`) };
+      return { kind:'unmatched', rowNumber,rowKey,excelName,excelCuit,fileSubtotal:subtotalParsed.value,serviceId:null,serviceName:'',serviceCuit:'',suggestedServiceId:suggested?.id||null,suggestedServiceName:suggested?.name||'',suggestedScore:suggested?.score||0,matchType,canUpdate:false,statusLabel:suggested?'Revisar coincidencia':'Servicio no encontrado',rawCells:sourceRow.rawCells||[],headers:sourceRow.headers||[],searchText:normalize(`${excelName} ${excelCuit} ${(sourceRow.rawCells||[]).join(' ')} ${suggested?.name||''} no encontrado`) };
     }
+
     const currentBilling=roundMoney(match.monthly_billing);
     const fileSubtotal=roundMoney(subtotalParsed.value);
     const diff=roundMoney(fileSubtotal-currentBilling);
     const unchanged=Math.abs(diff)<0.01;
     const limitPercent=number(match.budget_limit_percent||5);
     const zeroReview=fileSubtotal===0 && currentBilling!==0;
+    const serviceCuit=normalizeCuit(match.cuit);
+    const cuitMismatch=Boolean(excelCuit && serviceCuit && excelCuit!==serviceCuit);
+    const sharedCuitCount=serviceCuit ? (duplicateServiceCuitGroups().get(serviceCuit)?.length || 0) : 0;
+    const issueParts=[];
+    if (cuitMismatch) issueParts.push(`CUIT Excel ${formatCuit(excelCuit)} ≠ CUIT app ${formatCuit(serviceCuit)}.`);
+    if (sharedCuitCount>1) issueParts.push(`El CUIT de la app está compartido por ${sharedCuitCount} servicios.`);
+    if (zeroReview) issueParts.push('El Excel informa subtotal $0. Verificá el dato antes de reemplazar una facturación existente.');
     return {
-      kind: zeroReview ? 'review' : (unchanged ? 'unchanged' : 'change'), rowNumber,rowKey,excelName,serviceId:match.id,serviceName:match.name,serviceAddress:match.address||'',matchType,
+      kind: zeroReview ? 'review' : (unchanged ? 'unchanged' : 'change'), rowNumber,rowKey,excelName,excelCuit,serviceId:match.id,serviceName:match.name,serviceCuit,serviceAddress:match.address||'',matchType,
       fileSubtotal,currentBilling,difference:diff,percent:currentBilling>0 ? (diff/currentBilling)*100 : null,
       currentFive:roundMoney(currentBilling*0.05),fileFive:roundMoney(fileSubtotal*0.05),currentSeven:roundMoney(currentBilling*0.07),fileSeven:roundMoney(fileSubtotal*0.07),
       limitPercent,currentLimit:roundMoney(currentBilling*limitPercent/100),fileLimit:roundMoney(fileSubtotal*limitPercent/100),
-      canUpdate:true,statusLabel:zeroReview?'Subtotal $0 · revisar':(unchanged?'Coincide':'Requiere ajuste'),issue:zeroReview?'El Excel informa subtotal $0. Verificá el dato antes de reemplazar una facturación existente.':'',
+      canUpdate:true,statusLabel:zeroReview?'Subtotal $0 · revisar':(unchanged?'Coincide':'Requiere ajuste'),issue:issueParts.join(' '),
       rawCells:sourceRow.rawCells||[],headers:sourceRow.headers||[],
-      searchText:normalize(`${excelName} ${(sourceRow.rawCells||[]).join(' ')} ${match.name} ${match.address||''} ${unchanged?'coincide':'ajuste'}`)
+      searchText:normalize(`${excelName} ${excelCuit} ${match.cuit||''} ${(sourceRow.rawCells||[]).join(' ')} ${match.name} ${match.address||''} ${unchanged?'coincide':'ajuste'}`)
     };
   }
 
   function billingIssueRow(sourceRow, match, suggested, label, issue) {
-    return { kind:'review', rowNumber:sourceRow.rowNumber,rowKey:sourceRow.rowKey,excelName:sourceRow.excelName,fileSubtotal:sourceRow.subtotalParsed.valid?sourceRow.subtotalParsed.value:null,
-      serviceId:match?.id||null,serviceName:match?.name||'',suggestedServiceId:suggested?.id||null,suggestedServiceName:suggested?.name||'',suggestedScore:suggested?.score||0,canUpdate:false,statusLabel:label,issue,
+    return { kind:'review', rowNumber:sourceRow.rowNumber,rowKey:sourceRow.rowKey,excelName:sourceRow.excelName,excelCuit:sourceRow.excelCuit||'',fileSubtotal:sourceRow.subtotalParsed.valid?sourceRow.subtotalParsed.value:null,
+      serviceId:match?.id||null,serviceName:match?.name||'',serviceCuit:normalizeCuit(match?.cuit),suggestedServiceId:suggested?.id||null,suggestedServiceName:suggested?.name||'',suggestedScore:suggested?.score||0,canUpdate:false,statusLabel:label,issue,
       rawCells:sourceRow.rawCells||[],headers:sourceRow.headers||[],
-      searchText:normalize(`${sourceRow.excelName} ${(sourceRow.rawCells||[]).join(' ')} ${match?.name||''} ${suggested?.name||''} revisar`) };
+      searchText:normalize(`${sourceRow.excelName} ${sourceRow.excelCuit||''} ${(sourceRow.rawCells||[]).join(' ')} ${match?.name||''} ${match?.cuit||''} ${suggested?.name||''} revisar`) };
   }
 
   function billingServiceKey(value) {
@@ -4835,7 +4904,7 @@
     }
     return 1-costs[shorter.length]/longer.length;
   }
-  function serviceCandidateScore(excelName, service) {
+  function serviceCandidateScore(excelName, service, excelCuit='') {
     const candidates=[service.name,service.address].filter(Boolean);
     let best=0;
     candidates.forEach((candidate)=>{
@@ -4845,19 +4914,49 @@
         const overlap=aNums.some((n)=>bNums.includes(n));
         if (overlap) score=Math.min(1,score+0.12); else score*=0.58;
       }
+      const serviceCuit=normalizeCuit(service.cuit);
+      if (excelCuit && serviceCuit && excelCuit!==serviceCuit) score*=0.28;
       best=Math.max(best,score);
     });
     return best;
   }
-  function findBillingServiceMatch(excelName) {
+
+  function findBillingServiceMatch(excelName, excelCuit='') {
+    const normalizedCuit=normalizeCuit(excelCuit);
+    if (isCuitFormatValid(normalizedCuit)) {
+      const cuitMatches=S.services.filter((service)=>normalizeCuit(service.cuit)===normalizedCuit);
+      if (cuitMatches.length===1) return { autoService:cuitMatches[0],suggestedService:null,matchType:'cuit' };
+      if (cuitMatches.length>1) {
+        const ranked=cuitMatches.map((service)=>({service,score:serviceCandidateScore(excelName,service,normalizedCuit)})).sort((a,b)=>b.score-a.score);
+        const best=ranked[0];
+        return { autoService:null,suggestedService:best?{...best.service,score:best.score}:null,matchType:'cuit-duplicate',duplicateCuitServices:cuitMatches };
+      }
+    }
+
     const exactKey=billingServiceKey(excelName);
     const exact=S.services.find((service)=>billingServiceKey(service.name)===exactKey || (service.address && billingServiceKey(service.address)===exactKey));
-    if (exact) return { autoService:exact,suggestedService:null,matchType:'exact' };
-    const ranked=S.services.map((service)=>({service,score:serviceCandidateScore(excelName,service)})).sort((a,b)=>b.score-a.score);
+    if (exact) {
+      const serviceCuit=normalizeCuit(exact.cuit);
+      if (normalizedCuit && serviceCuit && normalizedCuit!==serviceCuit) return { autoService:null,suggestedService:{...exact,score:1},matchType:'cuit-conflict',cuitConflict:true };
+      return { autoService:exact,suggestedService:null,matchType:'exact' };
+    }
+
+    const ranked=S.services.map((service)=>({service,score:serviceCandidateScore(excelName,service,normalizedCuit)})).sort((a,b)=>b.score-a.score);
     const best=ranked[0], second=ranked[1];
     if (best && best.score>=0.88 && (!second || best.score-second.score>=0.10)) return { autoService:best.service,suggestedService:null,matchType:'auto' };
     if (best && best.score>=0.52) return { autoService:null,suggestedService:{...best.service,score:best.score},matchType:'suggested' };
     return { autoService:null,suggestedService:null,matchType:'' };
+  }
+
+  function duplicateServiceCuitGroups() {
+    const groups=new Map();
+    S.services.forEach((service)=>{
+      const cuit=normalizeCuit(service.cuit);
+      if (!isCuitFormatValid(cuit)) return;
+      if (!groups.has(cuit)) groups.set(cuit,[]);
+      groups.get(cuit).push(service);
+    });
+    return new Map([...groups].filter(([,items])=>items.length>1));
   }
 
   function filteredBillingImportRows() {
@@ -4881,11 +4980,28 @@
     E.billingImportKpiReview.textContent=s.review;
     E.billingImportKpiUnmatched.textContent=s.unmatched;
     E.billingImportKpiMissingFile.textContent=s.missingFile;
-    E.billingImportSummaryAlert.innerHTML=`<strong>${s.changes ? `${s.changes} servicio${s.changes===1?' requiere':'s requieren'} ajuste.` : 'La facturación encontrada coincide en todos los servicios vinculados.'}</strong> Los valores de 5%, límite operativo y 7% se calculan siempre sobre el <strong>Subtotal sin IVA</strong>. El porcentaje de límite operativo de cada servicio se conserva tal como está configurado.${(s.review+s.unmatched)>0 ? ' En las filas amarillas podés abrir <strong>“Ver fila original del Excel”</strong> para revisar Razón Social, CUIT, operario y demás campos antes de vincularla manualmente.' : ''}`;
+    E.billingImportKpiDuplicateCuits.textContent=s.duplicateCuits || 0;
+    E.billingImportSummaryAlert.innerHTML=`<strong>${s.changes ? `${s.changes} servicio${s.changes===1?' requiere':'s requieren'} ajuste.` : 'La facturación encontrada coincide en todos los servicios vinculados.'}</strong> El matching prioriza <strong>CUIT único</strong> y luego nombre/dirección. Los valores de 5%, límite operativo y 7% se calculan siempre sobre el <strong>Subtotal sin IVA</strong>.${(s.review+s.unmatched)>0 ? ' En las filas amarillas podés abrir <strong>“Ver fila original del Excel”</strong> y vincular manualmente el servicio.' : ''}`;
+    renderBillingDuplicateCuitAlert(comparison);
     const visible=filteredBillingImportRows();
     E.billingImportResultsBody.innerHTML=visible.map(renderBillingImportRow).join('') || '<tr><td colspan="9"><div class="empty-inline">No hay resultados para este filtro.</div></td></tr>';
     E.billingImportResultsCaption.textContent=`${visible.length} filas visibles · ${s.sourceRows} servicios leídos del Excel · ${s.missingFile} servicios de la app sin fila vinculada`;
     updateBillingImportSelectionControls(visible);
+  }
+
+  function renderBillingDuplicateCuitAlert(comparison) {
+    const appGroups=[...(comparison.duplicateAppCuits || new Map()).entries()];
+    const excelGroups=[...(comparison.duplicateExcelCuits || new Map()).entries()];
+    if (!appGroups.length && !excelGroups.length) {
+      E.billingImportDuplicateCuitAlert.classList.add('d-none');
+      E.billingImportDuplicateCuitAlert.innerHTML='';
+      return;
+    }
+    const appHtml=appGroups.slice(0,5).map(([cuit,services])=>`<li><strong>${eh(formatCuit(cuit))}</strong> en la app: ${services.map((service)=>eh(service.name)).join(', ')}</li>`).join('');
+    const excelHtml=excelGroups.slice(0,5).map(([cuit,rows])=>`<li><strong>${eh(formatCuit(cuit))}</strong> en el Excel: ${rows.map((row)=>eh(row.excelName)).join(', ')}</li>`).join('');
+    const extra=(appGroups.length>5 || excelGroups.length>5) ? '<li>Hay más CUIT compartidos. Filtrá “Revisar / no encontrados” para verlos.</li>' : '';
+    E.billingImportDuplicateCuitAlert.innerHTML=`<div class="d-flex gap-2"><i class="bi bi-exclamation-triangle-fill"></i><div><strong>Hay CUIT repetidos.</strong> Esto puede ser correcto cuando un mismo titular corresponde a varios consorcios, pero la app no va a elegir a ciegas entre ellos.<ul class="mb-0 mt-2">${appHtml}${excelHtml}${extra}</ul></div></div>`;
+    E.billingImportDuplicateCuitAlert.classList.remove('d-none');
   }
 
   function billingValueChangeHtml(oldValue,newValue) {
@@ -4907,12 +5023,17 @@
   }
 
   function billingMatchSelect(row) {
-    if (row.kind==='missing-file') return `<div class="billing-match-name"><strong>${eh(row.serviceName)}</strong><small>Sin fila vinculada en el Excel</small></div>`;
+    if (row.kind==='missing-file') return `<div class="billing-match-name"><strong>${eh(row.serviceName)}</strong>${row.serviceCuit?`<span class="cuit-chip mt-1">${eh(formatCuit(row.serviceCuit))}</span>`:''}<small>Sin fila vinculada en el Excel</small></div>`;
     const selected=row.serviceId || '';
-    const options=['<option value="">— Vincular manualmente —</option>',...S.services.map((service)=>`<option value="${ea(service.id)}" ${service.id===selected?'selected':''}>${eh(service.name)}</option>`)].join('');
+    const options=['<option value="">— Vincular manualmente —</option>',...S.services.map((service)=>{
+      const cuit=normalizeCuit(service.cuit);
+      return `<option value="${ea(service.id)}" ${service.id===selected?'selected':''}>${eh(service.name)}${cuit?` · ${eh(formatCuit(cuit))}`:''}</option>`;
+    })].join('');
     const suggestion=row.suggestedServiceName ? `<small class="billing-match-suggestion">Sugerencia: ${eh(row.suggestedServiceName)} (${Math.round(number(row.suggestedScore)*100)}%)</small>` : '';
-    const matchLabel=row.serviceId ? `<small>${row.matchType==='manual'?'Vinculación manual':row.matchType==='exact'?'Coincidencia exacta':'Coincidencia automática'}</small>` : suggestion;
-    return `<div class="billing-match-name"><strong>${eh(row.excelName)}</strong>${matchLabel}<select class="form-select form-select-sm mt-2" data-billing-import-match="${ea(row.rowKey)}">${options}</select>${billingSourcePreview(row)}</div>`;
+    const matchText=row.matchType==='manual'?'Vinculación manual':row.matchType==='cuit'?'Coincidencia por CUIT':row.matchType==='exact'?'Coincidencia exacta por nombre':'Coincidencia automática';
+    const matchLabel=row.serviceId ? `<small>${matchText}${row.serviceCuit?` · App ${eh(formatCuit(row.serviceCuit))}`:''}</small>` : suggestion;
+    const excelCuit=row.excelCuit ? `<span class="cuit-chip mt-1">Excel ${eh(formatCuit(row.excelCuit))}</span>` : '<small>Excel sin CUIT legible</small>';
+    return `<div class="billing-match-name"><strong>${eh(row.excelName)}</strong>${excelCuit}${matchLabel}<select class="form-select form-select-sm mt-2" data-billing-import-match="${ea(row.rowKey)}">${options}</select>${billingSourcePreview(row)}</div>`;
   }
 
   function renderBillingImportRow(row) {
@@ -5240,7 +5361,9 @@
   function renderServices() {
     if (!canManageMasterData()) return;
     const query = normalize(E.adminServiceSearch.value);
-    const filtered = S.services.filter((service) => !query || normalize(`${service.name} ${service.zone || ''} ${service.address || ''} ${service.supervisor || ''}`).includes(query));
+    const duplicateCuits=duplicateServiceCuitGroups();
+    renderServiceDuplicateCuitAlert(duplicateCuits);
+    const filtered = S.services.filter((service) => !query || normalize(`${service.name} ${service.cuit || ''} ${formatCuit(service.cuit || '')} ${service.zone || ''} ${service.address || ''} ${service.supervisor || ''}`).includes(query));
     const activeMaterials = S.materials.filter((material) => material.active !== false);
 
     E.servicesTableBody.innerHTML = filtered.map((service) => {
@@ -5248,8 +5371,14 @@
       const hiddenCount = activeMaterials.filter((material) => isMaterialHiddenForService(material.id, service.id)).length;
       const visibleCount = Math.max(0, activeMaterials.length - hiddenCount);
       const limitAmount = number(service.monthly_billing) * number(service.budget_limit_percent || 5) / 100;
+      const cuit=normalizeCuit(service.cuit);
+      const sharedCount=cuit ? (duplicateCuits.get(cuit)?.length || 0) : 0;
+      const cuitHtml=cuit
+        ? `<div class="service-cuit-cell"><strong>${eh(formatCuit(cuit))}</strong>${sharedCount>1?`<span class="badge text-bg-warning">Compartido · ${sharedCount}</span>`:''}</div>`
+        : '<span class="text-secondary small">Sin CUIT</span>';
       return `<tr>
         <td><div class="table-title">${eh(service.name)}</div><div class="table-subtitle">${eh(service.address || '')}</div></td>
+        <td>${cuitHtml}</td>
         <td>${eh(service.zone || '—')}</td>
         <td><strong>${eh(formatCurrency(service.monthly_billing))}</strong></td>
         <td><div class="service-material-count">${eh(formatPercent(service.budget_limit_percent || 5))}</div><div class="table-subtitle">${eh(formatCurrency(limitAmount))}</div></td>
@@ -5260,7 +5389,21 @@
         <td><span class="badge ${service.active ? 'text-bg-success' : 'text-bg-secondary'}">${service.active ? 'Activo' : 'Inactivo'}</span></td>
         <td><div class="action-group"><button class="btn btn-outline-primary" type="button" data-configure-service-materials="${ea(service.id)}" title="Configurar insumos"><i class="bi bi-sliders"></i></button><button class="btn btn-outline-primary" type="button" data-edit-service="${ea(service.id)}" title="Editar servicio"><i class="bi bi-pencil"></i></button><button class="btn btn-outline-secondary" type="button" data-toggle-service="${ea(service.id)}" title="${service.active ? 'Desactivar' : 'Activar'}"><i class="bi ${service.active ? 'bi-pause-circle' : 'bi-play-circle'}"></i></button><button class="btn btn-outline-danger" type="button" data-delete-service="${ea(service.id)}" title="Eliminar"><i class="bi bi-trash3"></i></button></div></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="10"><div class="empty-inline">No hay servicios para mostrar.</div></td></tr>';
+    }).join('') || '<tr><td colspan="11"><div class="empty-inline">No hay servicios para mostrar.</div></td></tr>';
+  }
+
+  function renderServiceDuplicateCuitAlert(groups=duplicateServiceCuitGroups()) {
+    if (!E.serviceDuplicateCuitAlert) return;
+    const entries=[...groups.entries()];
+    if (!entries.length) {
+      E.serviceDuplicateCuitAlert.classList.add('d-none');
+      E.serviceDuplicateCuitAlert.innerHTML='';
+      return;
+    }
+    const list=entries.slice(0,6).map(([cuit,services])=>`<li><strong>${eh(formatCuit(cuit))}</strong>: ${services.map((service)=>eh(service.name)).join(', ')}</li>`).join('');
+    const extra=entries.length>6 ? `<li>Y ${entries.length-6} CUIT compartido${entries.length-6===1?'':'s'} más.</li>` : '';
+    E.serviceDuplicateCuitAlert.innerHTML=`<div class="d-flex gap-2"><i class="bi bi-exclamation-triangle-fill"></i><div><strong>${entries.length} CUIT ${entries.length===1?'está':'están'} asignado${entries.length===1?'':'s'} a más de un servicio.</strong> Puede ser correcto, pero al importar facturación esos casos requerirán revisión para no matchear el consorcio equivocado.<ul class="mb-0 mt-2">${list}${extra}</ul></div></div>`;
+    E.serviceDuplicateCuitAlert.classList.remove('d-none');
   }
 
   function openServiceMaterials(serviceId) {
@@ -5358,6 +5501,7 @@
     E.serviceId.value = service?.id || '';
     E.serviceModalTitle.textContent = service ? 'Editar servicio' : 'Nuevo servicio';
     E.serviceName.value = service?.name || '';
+    E.serviceCuit.value = service?.cuit ? formatCuit(service.cuit) : '';
     E.serviceAddress.value = service?.address || '';
     E.serviceZone.value = service?.zone || '';
     E.serviceSupervisor.value = service?.supervisor || '';
@@ -5367,7 +5511,33 @@
     E.serviceNotes.value = service?.notes || '';
     E.serviceActive.checked = service ? service.active !== false : true;
     renderServiceBudgetPreview();
+    renderServiceCuitWarning();
     M.service.show();
+  }
+
+  function renderServiceCuitWarning() {
+    if (!E.serviceCuitWarning) return;
+    const raw=E.serviceCuit.value.trim();
+    const cuit=normalizeCuit(raw);
+    const currentId=E.serviceId.value;
+    if (!raw) {
+      E.serviceCuitWarning.classList.add('d-none');
+      E.serviceCuitWarning.querySelector('.alert').innerHTML='';
+      return;
+    }
+    if (!isCuitFormatValid(cuit)) {
+      E.serviceCuitWarning.querySelector('.alert').innerHTML='<strong>CUIT incompleto.</strong> Debe tener 11 dígitos. Podés escribirlo con o sin guiones.';
+      E.serviceCuitWarning.classList.remove('d-none');
+      return;
+    }
+    const duplicates=S.services.filter((service)=>service.id!==currentId && normalizeCuit(service.cuit)===cuit);
+    if (!duplicates.length) {
+      E.serviceCuitWarning.classList.add('d-none');
+      E.serviceCuitWarning.querySelector('.alert').innerHTML='';
+      return;
+    }
+    E.serviceCuitWarning.querySelector('.alert').innerHTML=`<strong>CUIT compartido.</strong> ${eh(formatCuit(cuit))} ya está cargado en ${duplicates.map((service)=>`<strong>${eh(service.name)}</strong>`).join(', ')}. Se puede guardar igualmente, pero el importador pedirá revisar estos casos.`;
+    E.serviceCuitWarning.classList.remove('d-none');
   }
 
   async function saveService(event) {
@@ -5379,10 +5549,21 @@
       E.serviceBudgetPercent.focus();
       return;
     }
+    const rawCuit=E.serviceCuit.value.trim();
+    const cuit=normalizeCuit(rawCuit);
+    if (rawCuit && !isCuitFormatValid(cuit)) {
+      toast('El CUIT debe tener 11 dígitos.', 'error');
+      E.serviceCuit.focus();
+      return;
+    }
+    const id = E.serviceId.value;
+    const duplicateCuitServices=cuit ? S.services.filter((service)=>service.id!==id && normalizeCuit(service.cuit)===cuit) : [];
+    if (duplicateCuitServices.length && !confirm(`El CUIT ${formatCuit(cuit)} ya está cargado en ${duplicateCuitServices.map((service)=>service.name).join(', ')}. Puede ser correcto si son consorcios distintos. ¿Querés guardarlo igualmente?`)) return;
     buttonBusy(E.saveServiceButton, true, 'Guardando...');
     try {
       const payload = {
         name: E.serviceName.value.trim(),
+        cuit: cuit || null,
         address: E.serviceAddress.value.trim() || null,
         zone: E.serviceZone.value.trim() || null,
         supervisor: E.serviceSupervisor.value.trim() || null,
@@ -5392,7 +5573,6 @@
         notes: E.serviceNotes.value.trim() || null,
         active: E.serviceActive.checked
       };
-      const id = E.serviceId.value;
       const query = id ? S.sb.from('services').update(payload).eq('id', id) : S.sb.from('services').insert(payload);
       const { error } = await query;
       if (error) throw error;
@@ -5401,7 +5581,10 @@
       toast(id ? 'Servicio actualizado.' : 'Servicio creado.', 'success');
     } catch (error) {
       console.error(error);
-      toast(error.message || 'No se pudo guardar el servicio.', 'error');
+      const message=String(error?.message || '');
+      toast((message.includes('cuit') && (message.includes('column') || message.includes('schema cache')))
+        ? 'Falta instalar el CUIT en la base. Ejecutá actualizar-cuit-servicios.sql en Supabase.'
+        : (message || 'No se pudo guardar el servicio.'), 'error');
     } finally {
       buttonBusy(E.saveServiceButton, false);
     }
@@ -6302,6 +6485,20 @@
 
   function normalize(value) {
     return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  }
+
+  function normalizeCuit(value) {
+    return String(value ?? '').replace(/[^0-9]/g, '');
+  }
+
+  function isCuitFormatValid(value) {
+    return /^\d{11}$/.test(normalizeCuit(value));
+  }
+
+  function formatCuit(value) {
+    const digits=normalizeCuit(value);
+    if (digits.length!==11) return digits || '';
+    return `${digits.slice(0,2)}-${digits.slice(2,10)}-${digits.slice(10)}`;
   }
 
   function slugify(value) {

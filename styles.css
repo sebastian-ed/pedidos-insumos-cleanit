@@ -171,3 +171,6 @@
   .billing-source-field:nth-child(odd){border-right:0}
   .billing-reference-actions .btn{width:100%}
 }
+
+/* CUIT por servicio y matching de facturación */
+.service-cuit-cell{display:flex;flex-direction:column;align-items:flex-start;gap:5px;white-space:nowrap}.service-cuit-cell>strong{font-size:.82rem;color:#172033}.service-cuit-cell .badge{font-size:.62rem}.cuit-chip{display:inline-flex;align-items:center;width:max-content;border-radius:999px;padding:4px 8px;background:#eef4fb;color:#42526b;font-size:.68rem;font-weight:900;white-space:nowrap}.billing-match-name .cuit-chip{margin-right:6px}.billing-import-row.is-review .cuit-chip,.billing-import-row.is-unmatched .cuit-chip{background:#fff4d6;color:#8a5a00}#serviceDuplicateCuitAlert ul,#billingImportDuplicateCuitAlert ul{padding-left:1.15rem}#serviceDuplicateCuitAlert li,#billingImportDuplicateCuitAlert li{margin-top:3px;font-size:.82rem}
