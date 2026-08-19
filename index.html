@@ -6,12 +6,18 @@
   <meta name="theme-color" content="#0d6efd">
   <title>Pedidos Clean It</title>
   <meta name="description" content="Pedidos visuales de insumos por servicio para Clean It.">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Pedidos Clean It">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260806-invoice-ocr-auto2">
+  <link rel="stylesheet" href="styles.css?v=20260818-billing-pwa1">
 </head>
 <body>
   <div id="loadingScreen" class="loading-screen">
@@ -146,6 +152,7 @@
           <div class="min-w-0"><div class="fw-black text-truncate" id="appTitle">Pedidos Clean It</div><div class="small text-secondary text-truncate" id="appSubtitle">Gestión de insumos</div></div>
         </div>
         <div class="d-flex align-items-center gap-2">
+          <button id="installAppButton" class="btn btn-outline-primary d-none" type="button" title="Instalar Pedidos Clean It"><i class="bi bi-download me-sm-2"></i><span class="d-none d-sm-inline">Instalar app</span></button>
           <button id="switchServiceButton" class="btn btn-outline-primary d-none" type="button"><i class="bi bi-buildings me-sm-2"></i><span class="d-none d-sm-inline">Cambiar servicio</span></button>
           <button id="headerAdminLoginButton" class="btn btn-outline-secondary d-none" type="button"><i class="bi bi-shield-lock me-sm-2"></i><span class="d-none d-sm-inline">Administración</span></button>
           <div id="headerUserChip" class="user-chip d-none d-sm-flex"><i class="bi bi-person-circle"></i><div class="min-w-0"><div id="headerUserName" class="small fw-bold text-truncate">Usuario</div><div id="headerUserRole" class="micro text-secondary text-truncate">Carga pública</div></div></div>
@@ -251,6 +258,13 @@
 
         <section id="adminOrders" class="admin-panel d-none">
           <div class="panel-heading"><div><span class="eyebrow">Operación</span><h1>Pedidos</h1><p>Filtrá, revisá, copiá y actualizá el estado de cada pedido.</p></div></div>
+          <div id="ordersBillingChangeAlert" class="billing-reference-global-alert d-none mb-4">
+            <div>
+              <div class="billing-reference-global-title"><i class="bi bi-exclamation-triangle-fill"></i><strong id="ordersBillingChangeAlertTitle">Hay pedidos con una facturación anterior</strong></div>
+              <p id="ordersBillingChangeAlertText" class="mb-0">Revisá qué referencia presupuestaria querés usar antes de ajustar el pedido.</p>
+            </div>
+            <button id="applyCurrentBillingToOpenOrdersButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-arrow-repeat me-2"></i>Usar nueva facturación en todos</button>
+          </div>
           <div class="section-card mb-4">
             <div class="row g-3">
               <div class="col-lg-4"><label for="ordersSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="ordersSearch" class="form-control" type="search" placeholder="Código, servicio u operario"></div></div>
@@ -323,9 +337,10 @@
         </section>
 
         <section id="adminServices" class="admin-panel d-none">
-          <div class="panel-heading"><div><span class="eyebrow">Estructura operativa</span><h1>Servicios</h1><p>Configurá facturación, topes presupuestarios y catálogo habilitado por establecimiento.</p></div><button id="addServiceButton" class="btn btn-primary fw-bold"><i class="bi bi-plus-lg me-2"></i>Nuevo servicio</button></div>
-          <div class="section-card mb-4"><label for="adminServiceSearch" class="form-label">Buscar servicio</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="adminServiceSearch" class="form-control" type="search" placeholder="Nombre, zona, dirección o supervisor"></div></div>
-          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Servicio</th><th>Zona</th><th>Facturación</th><th>Tope</th><th>Frecuencia</th><th>Supervisor</th><th>Insumos visibles</th><th>Pedidos</th><th>Estado</th><th></th></tr></thead><tbody id="servicesTableBody"></tbody></table></div></div>
+          <div class="panel-heading"><div><span class="eyebrow">Estructura operativa</span><h1>Servicios</h1><p>Configurá CUIT, facturación, topes presupuestarios y catálogo habilitado por establecimiento.</p></div><div class="d-flex flex-wrap gap-2"><button id="importBillingButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Actualizar facturación desde Excel</button><button id="addServiceButton" class="btn btn-primary fw-bold"><i class="bi bi-plus-lg me-2"></i>Nuevo servicio</button></div></div>
+          <div id="serviceDuplicateCuitAlert" class="alert alert-warning d-none mb-4"></div>
+          <div class="section-card mb-4"><label for="adminServiceSearch" class="form-label">Buscar servicio</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="adminServiceSearch" class="form-control" type="search" placeholder="Nombre, CUIT, zona, dirección o supervisor"></div></div>
+          <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Servicio</th><th>CUIT</th><th>Zona</th><th>Facturación</th><th>Tope</th><th>Frecuencia</th><th>Supervisor</th><th>Insumos visibles</th><th>Pedidos</th><th>Estado</th><th></th></tr></thead><tbody id="servicesTableBody"></tbody></table></div></div>
         </section>
 
         <section id="adminUsers" class="admin-panel d-none">
@@ -390,6 +405,7 @@
         </div>
         <div class="modal-body">
           <div id="orderDetailReadOnly">
+            <div id="orderBillingReferenceAlert" class="mb-3 d-none"></div>
             <div id="orderDetailBudgetOverview" class="mb-3"></div>
             <div id="orderDetailMeta" class="order-detail-meta mb-4"></div>
             <div id="orderDetailItems" class="order-detail-items"></div>
@@ -484,7 +500,7 @@
 
   <div class="modal fade" id="serviceMaterialsModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Catálogo por servicio</div><h5 id="serviceMaterialsModalTitle" class="modal-title fw-black">Insumos habilitados</h5><p id="serviceMaterialsModalSubtitle" class="text-secondary small mb-0 mt-1"></p></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="alert alert-info py-2"><i class="bi bi-info-circle me-2"></i>Todos los insumos están visibles por defecto. Desactivá únicamente los que este servicio no debe pedir.</div><div class="row g-3 align-items-end mb-3"><div class="col-lg-6"><label for="serviceMaterialsSearch" class="form-label">Buscar insumo</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="serviceMaterialsSearch" class="form-control" type="search" placeholder="Nombre, categoría o detalle"></div></div><div class="col-sm-6 col-lg-3"><label for="serviceMaterialsFilter" class="form-label">Mostrar</label><select id="serviceMaterialsFilter" class="form-select"><option value="all">Todos</option><option value="visible">Visibles</option><option value="hidden">Ocultos</option></select></div><div class="col-sm-6 col-lg-3"><div class="d-flex gap-2"><button id="showAllServiceMaterialsButton" class="btn btn-outline-primary flex-fill" type="button">Habilitar todos</button><button id="hideAllServiceMaterialsButton" class="btn btn-outline-secondary flex-fill" type="button">Ocultar todos</button></div></div></div><div class="service-material-summary mb-3"><span id="serviceMaterialsVisibleCount" class="badge text-bg-primary">0 visibles</span><span id="serviceMaterialsHiddenCount" class="badge text-bg-secondary">0 ocultos</span></div><div id="serviceMaterialsList" class="service-material-list"></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveServiceMaterialsButton" type="button" class="btn btn-primary fw-bold">Guardar configuración</button></div></div></div></div>
 
-  <div class="modal fade" id="serviceModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Servicio</div><h5 id="serviceModalTitle" class="modal-title fw-black">Nuevo servicio</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="serviceForm"><input id="serviceId" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="serviceName" class="form-label">Nombre</label><input id="serviceName" class="form-control" maxlength="150" required><div class="form-text">Es el texto que verá el operario en el selector.</div></div><div class="col-md-5"><label for="serviceAddress" class="form-label">Dirección</label><input id="serviceAddress" class="form-control" maxlength="200"></div><div class="col-md-6"><label for="serviceZone" class="form-label">Zona</label><input id="serviceZone" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceSupervisor" class="form-label">Supervisor</label><input id="serviceSupervisor" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceBilling" class="form-label">Facturación mensual del servicio</label><input id="serviceBilling" class="form-control" type="number" min="0" max="999999999.99" step="0.01" value="0"><div class="form-text">Base utilizada para calcular los topes del pedido.</div></div><div class="col-md-6"><label for="serviceBudgetPercent" class="form-label">Límite operativo (%)</label><input id="serviceBudgetPercent" class="form-control" type="number" min="5" max="7" step="0.1" value="5"><div class="form-text">Debe estar entre 5% y 7%. El pedido podrá enviarse aunque lo supere.</div></div><div class="col-12"><div class="budget-preview"><div><span>Referencia 5%</span><strong id="serviceFiveValue">$ 0</strong></div><div class="is-limit"><span>Límite configurado</span><strong id="serviceLimitValue">$ 0</strong></div><div><span>Referencia 7%</span><strong id="serviceSevenValue">$ 0</strong></div></div></div><div class="col-12"><label for="serviceDescription" class="form-label">Descripción o frecuencia</label><textarea id="serviceDescription" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><label for="serviceNotes" class="form-label">Observaciones internas</label><textarea id="serviceNotes" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><div class="form-check form-switch"><input id="serviceActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="serviceActive">Servicio activo</label></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveServiceButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
+  <div class="modal fade" id="serviceModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Servicio</div><h5 id="serviceModalTitle" class="modal-title fw-black">Nuevo servicio</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="serviceForm"><input id="serviceId" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="serviceName" class="form-label">Nombre</label><input id="serviceName" class="form-control" maxlength="150" required><div class="form-text">Es el texto que verá el operario en el selector.</div></div><div class="col-md-5"><label for="serviceCuit" class="form-label">CUIT</label><input id="serviceCuit" class="form-control" inputmode="numeric" maxlength="13" placeholder="30-12345678-9"><div class="form-text">Se usa para matchear la facturación del Excel. Puede repetirse entre servicios.</div></div><div id="serviceCuitWarning" class="col-12 d-none"><div class="alert alert-warning py-2 mb-0"></div></div><div class="col-md-7"><label for="serviceAddress" class="form-label">Dirección</label><input id="serviceAddress" class="form-control" maxlength="200"></div><div class="col-md-5"><label for="serviceZone" class="form-label">Zona</label><input id="serviceZone" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceSupervisor" class="form-label">Supervisor</label><input id="serviceSupervisor" class="form-control" maxlength="100"></div><div class="col-md-6"><label for="serviceBilling" class="form-label">Facturación mensual del servicio</label><input id="serviceBilling" class="form-control" type="number" min="0" max="999999999.99" step="0.01" value="0"><div class="form-text">Base utilizada para calcular los topes del pedido.</div></div><div class="col-md-6"><label for="serviceBudgetPercent" class="form-label">Límite operativo (%)</label><input id="serviceBudgetPercent" class="form-control" type="number" min="5" max="7" step="0.1" value="5"><div class="form-text">Debe estar entre 5% y 7%. El pedido podrá enviarse aunque lo supere.</div></div><div class="col-12"><div class="budget-preview"><div><span>Referencia 5%</span><strong id="serviceFiveValue">$ 0</strong></div><div class="is-limit"><span>Límite configurado</span><strong id="serviceLimitValue">$ 0</strong></div><div><span>Referencia 7%</span><strong id="serviceSevenValue">$ 0</strong></div></div></div><div class="col-12"><label for="serviceDescription" class="form-label">Descripción o frecuencia</label><textarea id="serviceDescription" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><label for="serviceNotes" class="form-label">Observaciones internas</label><textarea id="serviceNotes" class="form-control" rows="2" maxlength="500"></textarea></div><div class="col-12"><div class="form-check form-switch"><input id="serviceActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="serviceActive">Servicio activo</label></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveServiceButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
 
 
 
@@ -579,6 +595,100 @@
     </div>
   </div>
 
+
+  <div class="modal fade" id="billingImportModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content price-import-modal-content">
+        <div class="modal-header">
+          <div>
+            <div class="eyebrow">Servicios · Control presupuestario</div>
+            <h5 class="modal-title fw-black">Actualizar facturación desde Excel</h5>
+            <p class="text-secondary small mb-0 mt-1">Se compara la facturación mensual de cada servicio contra el <strong>Subtotal sin IVA</strong> del Excel. El límite operativo porcentual que definiste manualmente no se modifica. Las filas que no coincidan pueden previsualizarse completas y vincularse manualmente.</p>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <div id="billingImportLibraryError" class="alert alert-danger d-none"></div>
+          <div id="billingImportError" class="alert alert-danger d-none"></div>
+
+          <section class="price-import-upload">
+            <div class="price-import-upload-icon"><i class="bi bi-file-earmark-spreadsheet"></i></div>
+            <div class="price-import-upload-copy">
+              <label for="billingImportFile" class="form-label mb-1">Archivo de facturación</label>
+              <p class="text-secondary small mb-2">En el archivo que compartiste se usa <strong>Prefacturación → Nombre + Subtotal</strong>. La app detecta esas columnas automáticamente y nunca usa IVA 21% ni Total para calcular 5% y 7%.</p>
+              <input id="billingImportFile" class="form-control" type="file" accept=".xlsx,.xls,.xlsb,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv">
+            </div>
+          </section>
+
+          <section id="billingImportMapping" class="d-none mt-4">
+            <div class="price-import-section-heading">
+              <div><span class="price-import-step">1</span><div><h6 class="fw-black mb-1">Confirmá cómo se lee el Excel</h6><p class="text-secondary small mb-0">La detección es automática. Podés cambiar hoja, fila de encabezados o columnas si el formato varía.</p></div></div>
+              <span id="billingImportFileSummary" class="badge text-bg-light border"></span>
+            </div>
+            <div class="section-card price-import-mapping-card">
+              <div class="row g-3 align-items-end">
+                <div class="col-md-6 col-xl-3"><label for="billingImportSheet" class="form-label">Hoja</label><select id="billingImportSheet" class="form-select"></select></div>
+                <div class="col-md-6 col-xl-2"><label for="billingImportHeaderRow" class="form-label">Fila de encabezados</label><input id="billingImportHeaderRow" class="form-control" type="number" min="1" max="500" step="1" value="1"></div>
+                <div class="col-md-6 col-xl-3"><label for="billingImportNameColumn" class="form-label">Columna servicio</label><select id="billingImportNameColumn" class="form-select"></select></div>
+                <div class="col-md-6 col-xl-2"><label for="billingImportCuitColumn" class="form-label">Columna CUIT</label><select id="billingImportCuitColumn" class="form-select"></select><div class="form-text">Opcional, pero recomendado.</div></div>
+                <div class="col-md-6 col-xl-2"><label for="billingImportSubtotalColumn" class="form-label">Subtotal sin IVA</label><select id="billingImportSubtotalColumn" class="form-select"></select></div>
+              </div>
+              <div id="billingImportMappingWarning" class="alert alert-warning py-2 mt-3 mb-0 d-none"></div>
+            </div>
+            <div class="price-import-preview-wrap mt-3">
+              <div class="d-flex justify-content-between align-items-center gap-3 mb-2"><strong>Vista previa</strong><span id="billingImportPreviewCaption" class="text-secondary small"></span></div>
+              <div class="table-responsive"><table class="table table-sm price-import-preview-table mb-0"><thead id="billingImportPreviewHead"></thead><tbody id="billingImportPreviewBody"></tbody></table></div>
+            </div>
+          </section>
+
+          <section id="billingImportResults" class="d-none mt-4">
+            <div class="price-import-section-heading">
+              <div><span class="price-import-step">2</span><div><h6 class="fw-black mb-1">Resultado del control</h6><p class="text-secondary small mb-0">Verde = coincide. Rojo = requiere ajuste. Amarillo = revisar coincidencia o dato antes de actualizar.</p></div></div>
+            </div>
+
+            <div class="row g-3 mb-4">
+              <div class="col-6 col-lg-4 col-xxl"><div class="price-import-kpi"><span>Servicios leídos</span><strong id="billingImportKpiRows">0</strong></div></div>
+              <div class="col-6 col-lg-4 col-xxl"><div class="price-import-kpi is-decrease"><span>Coinciden</span><strong id="billingImportKpiUnchanged">0</strong></div></div>
+              <div class="col-6 col-lg-4 col-xxl"><div class="price-import-kpi is-increase"><span>Requieren ajuste</span><strong id="billingImportKpiChanges">0</strong></div></div>
+              <div class="col-6 col-lg-4 col-xxl"><div class="price-import-kpi is-warning"><span>Revisar</span><strong id="billingImportKpiReview">0</strong></div></div>
+              <div class="col-6 col-lg-4 col-xxl"><div class="price-import-kpi is-warning"><span>No encontrados</span><strong id="billingImportKpiUnmatched">0</strong></div></div>
+              <div class="col-6 col-lg-4 col-xxl"><div class="price-import-kpi"><span>Faltan en Excel</span><strong id="billingImportKpiMissingFile">0</strong></div></div>
+              <div class="col-6 col-lg-4 col-xxl"><div class="price-import-kpi is-warning"><span>CUIT compartidos</span><strong id="billingImportKpiDuplicateCuits">0</strong></div></div>
+            </div>
+
+            <div id="billingImportSummaryAlert" class="alert alert-info"></div>
+            <div id="billingImportDuplicateCuitAlert" class="alert alert-warning d-none"></div>
+
+            <div class="section-card price-import-results-toolbar mb-3">
+              <div class="row g-3 align-items-end">
+                <div class="col-md-4"><label for="billingImportResultFilter" class="form-label">Mostrar</label><select id="billingImportResultFilter" class="form-select"><option value="changes">Solo ajustes</option><option value="unchanged">Coinciden</option><option value="review">Revisar / no encontrados</option><option value="missing-file">Servicios de la app que faltan en Excel</option><option value="all">Todos</option></select></div>
+                <div class="col-md-5"><label for="billingImportSearch" class="form-label">Buscar</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="billingImportSearch" class="form-control" type="search" placeholder="Servicio, CUIT, dirección o nombre del Excel"></div></div>
+                <div class="col-md-3"><div class="form-check price-import-select-all"><input id="billingImportSelectAll" class="form-check-input" type="checkbox"><label class="form-check-label fw-bold" for="billingImportSelectAll">Seleccionar ajustes visibles</label></div></div>
+              </div>
+            </div>
+
+            <div class="section-card p-0 overflow-hidden">
+              <div class="table-responsive billing-import-results-table-wrap">
+                <table class="table admin-table align-middle billing-import-results-table mb-0">
+                  <thead><tr><th class="price-import-check-col"></th><th>Servicio Excel / App</th><th>Subtotal sin IVA</th><th>Facturación actual</th><th>Referencia 5%</th><th>Límite operativo</th><th>Referencia 7%</th><th>Estado</th><th></th></tr></thead>
+                  <tbody id="billingImportResultsBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div id="billingImportResultsCaption" class="text-secondary small mt-2"></div>
+          </section>
+        </div>
+        <div class="modal-footer price-import-footer">
+          <button id="billingImportResetButton" class="btn btn-light me-auto d-none" type="button"><i class="bi bi-arrow-counterclockwise me-2"></i>Cargar otro archivo</button>
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+          <button id="billingImportAnalyzeButton" class="btn btn-primary fw-bold d-none" type="button"><i class="bi bi-search me-2"></i>Analizar facturación</button>
+          <button id="billingImportApplyAllButton" class="btn btn-outline-primary fw-bold d-none" type="button"><i class="bi bi-check2-all me-2"></i>Actualizar todos los ajustes</button>
+          <button id="billingImportApplyButton" class="btn btn-primary fw-bold d-none" type="button"><i class="bi bi-check2-square me-2"></i>Actualizar seleccionados</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="materialModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Catálogo</div><h5 id="materialModalTitle" class="modal-title fw-black">Nuevo insumo</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="materialForm"><input id="materialId" type="hidden"><input id="materialCurrentImage" type="hidden"><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="materialName" class="form-label">Nombre</label><input id="materialName" class="form-control" maxlength="150" required></div><div class="col-md-5"><label for="materialSku" class="form-label">SKU</label><input id="materialSku" class="form-control" maxlength="80" placeholder="Código interno o del proveedor"></div><div class="col-md-5"><label for="materialCategory" class="form-label">Categoría</label><input id="materialCategory" class="form-control" maxlength="100" required></div><div class="col-md-7"><label for="materialDetail" class="form-label">Detalle / marca</label><input id="materialDetail" class="form-control" maxlength="200"></div><div class="col-md-4"><label for="materialUnit" class="form-label">Unidad de pedido</label><input id="materialUnit" class="form-control" maxlength="80" value="unidad" required></div><div class="col-md-4"><label for="materialUnitPrice" class="form-label">Precio unitario</label><input id="materialUnitPrice" class="form-control" type="number" min="0" max="999999999.99" step="0.01" value="0" required></div><div class="col-md-4"><label for="materialSuggestedQuantity" class="form-label">Cantidad sugerida</label><input id="materialSuggestedQuantity" class="form-control" type="number" min="0.01" max="999" step="0.01" value="1" required></div><div class="col-md-4"><label for="materialSortOrder" class="form-label">Orden</label><input id="materialSortOrder" class="form-control" type="number" min="0" step="1" value="100" required></div><div class="col-md-4 d-flex align-items-end"><div class="form-check form-switch mb-2"><input id="materialActive" class="form-check-input" type="checkbox" checked><label class="form-check-label fw-bold" for="materialActive">Insumo activo</label></div></div><div class="col-md-7"><label for="materialImageFile" class="form-label">Foto del insumo</label><input id="materialImageFile" class="form-control" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><div class="form-text">Podés conservar la imagen actual o cargar una nueva.</div></div><div class="col-md-5"><div class="material-image-preview-wrap"><img id="materialImagePreview" class="material-image-preview" src="assets/materials/default.svg" alt="Vista previa"></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="saveMaterialButton" type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
 
   <div class="modal fade" id="userModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><div class="eyebrow">Acceso</div><h5 class="modal-title fw-black">Editar usuario</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form id="userForm"><input id="userId" type="hidden"><div class="modal-body"><label for="userName" class="form-label">Nombre</label><input id="userName" class="form-control mb-3" maxlength="120"><label for="userRole" class="form-label">Rol</label><select id="userRole" class="form-select mb-3"><option value="operator">Supervisor</option><option value="supplier">Proveedor</option><option value="admin">Administrador</option></select><label for="userService" class="form-label">Servicio asignado</label><select id="userService" class="form-select"></select><div class="form-text">Los administradores pueden quedar sin servicio.</div></div><div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary fw-bold">Guardar</button></div></form></div></div></div>
@@ -611,8 +721,8 @@
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
-  <!-- Build facturas IA: 2026-08-12-v1 -->
+  <!-- Build: facturas IA + PWA + facturación + scroll horizontal persistente 2026-08-19-v1 -->
   <script src="config.js"></script>
-  <script src="app.js?v=20260806-invoice-ocr-auto2"></script>
+  <script src="app.js?v=20260819-scroll1"></script>
 </body>
 </html>
