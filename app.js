@@ -4786,9 +4786,14 @@
     byService.forEach((items)=>{
       if (items.length>1) items.forEach((row)=>{
         row.kind='review';
-        row.canUpdate=false;
-        row.statusLabel='Servicio duplicado en el Excel';
-        row.issue='Más de una fila termina vinculada al mismo servicio. Revisá el CUIT y elegí manualmente el servicio correcto.';
+        // Una coincidencia duplicada no se aplica en lote automáticamente, pero el
+        // administrador puede elegir explícitamente una de las filas y aplicarla
+        // desde esta misma pantalla. Así evitamos bloquear casos reales donde un
+        // mismo CUIT aparece en más de una línea del Excel.
+        row.canUpdate=Boolean(row.serviceId && row.fileSubtotal!=null && Number.isFinite(Number(row.fileSubtotal)) && row.currentBilling!=null);
+        row.requiresExplicitSelection=true;
+        row.statusLabel='Más de una fila para el mismo servicio';
+        row.issue='Hay más de una fila vinculada a este servicio. Elegí la fila correcta y podés actualizar solo esa. “Actualizar todos” la excluye por seguridad.';
       });
     });
 
@@ -4982,7 +4987,7 @@
     E.billingImportKpiUnmatched.textContent=s.unmatched;
     E.billingImportKpiMissingFile.textContent=s.missingFile;
     E.billingImportKpiDuplicateCuits.textContent=s.duplicateCuits || 0;
-    E.billingImportSummaryAlert.innerHTML=`<strong>${s.changes ? `${s.changes} servicio${s.changes===1?' requiere':'s requieren'} ajuste.` : 'La facturación encontrada coincide en todos los servicios vinculados.'}</strong> El matching prioriza <strong>CUIT único</strong> y luego nombre/dirección. Los valores de 5%, límite operativo y 7% se calculan siempre sobre el <strong>Subtotal sin IVA</strong>.${(s.review+s.unmatched)>0 ? ' En las filas amarillas podés abrir <strong>“Ver fila original del Excel”</strong> y vincular manualmente el servicio.' : ''}`;
+    E.billingImportSummaryAlert.innerHTML=`<strong>${s.changes ? `${s.changes} servicio${s.changes===1?' requiere':'s requieren'} ajuste.` : 'La facturación encontrada coincide en todos los servicios vinculados.'}</strong> El matching prioriza <strong>CUIT único</strong> y luego nombre/dirección. Los valores de 5%, límite operativo y 7% se calculan siempre sobre el <strong>Subtotal sin IVA</strong>.${(s.review+s.unmatched)>0 ? ' En las filas amarillas podés abrir <strong>“Ver fila original del Excel”</strong>, elegir el servicio correcto y, si ya está vinculado, <strong>seleccionar esa fila para aplicar solamente ese ajuste</strong>.' : ''}`;
     renderBillingDuplicateCuitAlert(comparison);
     const visible=filteredBillingImportRows();
     E.billingImportResultsBody.innerHTML=visible.map(renderBillingImportRow).join('') || '<tr><td colspan="9"><div class="empty-inline">No hay resultados para este filtro.</div></td></tr>';
@@ -5037,15 +5042,21 @@
     return `<div class="billing-match-name"><strong>${eh(row.excelName)}</strong>${excelCuit}${matchLabel}<select class="form-select form-select-sm mt-2" data-billing-import-match="${ea(row.rowKey)}">${options}</select>${billingSourcePreview(row)}</div>`;
   }
 
+  function isBillingSelectableRow(row) {
+    return Boolean(row && row.canUpdate && row.serviceId && row.fileSubtotal!=null && Number.isFinite(Number(row.fileSubtotal)) && (row.kind==='change' || row.kind==='review'));
+  }
+
   function renderBillingImportRow(row) {
     if (row.kind==='missing-file') return `<tr class="billing-import-row is-missing"><td></td><td>${billingMatchSelect(row)}</td><td>—</td><td><strong>${eh(formatCurrency(row.currentBilling))}</strong></td><td>${eh(formatCurrency(row.currentFive))}</td><td>${eh(formatCurrency(row.currentLimit))} <small>${eh(formatPercent(row.limitPercent))}</small></td><td>${eh(formatCurrency(row.currentSeven))}</td><td><span class="price-import-status is-warning">No aparece en Excel</span></td><td></td></tr>`;
-    const canSelect=row.kind==='change' && row.canUpdate;
+    const canSelect=isBillingSelectableRow(row);
     const checked=S.billingImportSelected.has(row.rowKey);
     const statusClass=row.kind==='unchanged'?'unchanged':row.kind==='change'?'issue':'warning';
-    const statusDetail=row.issue ? `<small class="billing-status-detail">${eh(row.issue)}</small>` : '';
+    const explicitHelp=row.requiresExplicitSelection && canSelect ? '<small class="billing-explicit-help"><i class="bi bi-hand-index-thumb me-1"></i>Podés seleccionar esta fila y aplicar solamente este importe.</small>' : '';
+    const statusDetail=row.issue ? `<small class="billing-status-detail">${eh(row.issue)}</small>${explicitHelp}` : explicitHelp;
     const fileBilling=row.fileSubtotal==null?'—':formatCurrency(row.fileSubtotal);
+    const actionLabel=row.kind==='review' ? 'Usar esta fila' : 'Actualizar';
     return `<tr class="billing-import-row is-${ea(row.kind)}">
-      <td class="price-import-check-col">${canSelect?`<input class="form-check-input" type="checkbox" data-billing-import-select="${ea(row.rowKey)}" ${checked?'checked':''}>`:''}</td>
+      <td class="price-import-check-col">${canSelect?`<input class="form-check-input" type="checkbox" title="Seleccionar esta fila" data-billing-import-select="${ea(row.rowKey)}" ${checked?'checked':''}>`:''}</td>
       <td>${billingMatchSelect(row)}</td>
       <td><strong>${eh(fileBilling)}</strong><small>Base sin IVA</small></td>
       <td>${row.currentBilling==null?'—':billingValueChangeHtml(row.currentBilling,row.fileSubtotal)}</td>
@@ -5053,7 +5064,7 @@
       <td>${row.currentLimit==null?'—':`${billingValueChangeHtml(row.currentLimit,row.fileLimit)}<small>${eh(formatPercent(row.limitPercent))} se mantiene</small>`}</td>
       <td>${row.currentSeven==null?'—':billingValueChangeHtml(row.currentSeven,row.fileSeven)}</td>
       <td><span class="price-import-status is-${statusClass}">${eh(row.statusLabel||'Revisar')}</span>${statusDetail}</td>
-      <td>${row.canUpdate && row.serviceId && row.kind!=='unchanged'?`<button class="btn btn-sm btn-outline-primary fw-bold" type="button" data-billing-import-update="${ea(row.rowKey)}">Actualizar</button>`:''}</td>
+      <td>${row.canUpdate && row.serviceId && row.kind!=='unchanged'?`<button class="btn btn-sm ${row.kind==='review'?'btn-warning':'btn-outline-primary'} fw-bold" type="button" data-billing-import-update="${ea(row.rowKey)}">${eh(actionLabel)}</button>`:''}</td>
     </tr>`;
   }
 
@@ -5065,7 +5076,7 @@
       const mapping=S.billingImportComparison?.mapping;
       if (mapping) {
         S.billingImportComparison=buildBillingImportComparison(mapping);
-        const validKeys=new Set(S.billingImportComparison.rows.filter((r)=>r.kind==='change'&&r.canUpdate).map((r)=>r.rowKey));
+        const validKeys=new Set(S.billingImportComparison.rows.filter(isBillingSelectableRow).map((r)=>r.rowKey));
         S.billingImportSelected=new Set([...S.billingImportSelected].filter((key)=>validKeys.has(key)));
         renderBillingImportResults();
       }
@@ -5074,7 +5085,17 @@
     const checkbox=event.target.closest('[data-billing-import-select]');
     if (!checkbox) return;
     const key=checkbox.dataset.billingImportSelect;
-    if (checkbox.checked) S.billingImportSelected.add(key); else S.billingImportSelected.delete(key);
+    const row=S.billingImportComparison?.rows.find((item)=>item.rowKey===key);
+    if (checkbox.checked) {
+      // Si dos filas del Excel apuntan al mismo servicio, solo una puede quedar
+      // seleccionada a la vez. La última elección del administrador prevalece.
+      if (row?.serviceId) {
+        S.billingImportComparison.rows.forEach((other)=>{
+          if (other.rowKey!==key && other.serviceId===row.serviceId) S.billingImportSelected.delete(other.rowKey);
+        });
+      }
+      S.billingImportSelected.add(key);
+    } else S.billingImportSelected.delete(key);
     renderBillingImportResults();
   }
 
@@ -5083,23 +5104,26 @@
     if (!button) return;
     const row=S.billingImportComparison?.rows.find((item)=>item.rowKey===button.dataset.billingImportUpdate);
     if (!row || !row.canUpdate || !row.serviceId) return;
+    if (row.kind==='review' && !confirm(`Esta fila requiere revisión porque hay otra fila del Excel vinculada al mismo servicio.\n\nSe actualizará SOLO ${row.serviceName} usando el subtotal de esta fila: ${formatCurrency(row.fileSubtotal)}.\n\n¿Confirmás que esta es la fila correcta?`)) return;
     if (row.fileSubtotal===0 && row.currentBilling!==0 && !confirm(`El Excel informa $0 de subtotal para ${row.serviceName}. ¿Querés reemplazar igualmente la facturación actual?`)) return;
     await applyBillingUpdates([row],button);
   }
 
   function toggleVisibleBillingImportSelections() {
+    // “Seleccionar todo” continúa siendo conservador: incluye diferencias seguras.
+    // Las filas amarillas/revisión deben ser elegidas expresamente una por una.
     const rows=filteredBillingImportRows().filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0);
     rows.forEach((row)=>{ if (E.billingImportSelectAll.checked) S.billingImportSelected.add(row.rowKey); else S.billingImportSelected.delete(row.rowKey); });
     renderBillingImportResults();
   }
 
   function updateBillingImportSelectionControls(visibleRows) {
-    const changes=visibleRows.filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0);
-    const selectedVisible=changes.filter((row)=>S.billingImportSelected.has(row.rowKey)).length;
-    E.billingImportSelectAll.disabled=changes.length===0;
-    E.billingImportSelectAll.checked=changes.length>0 && selectedVisible===changes.length;
-    E.billingImportSelectAll.indeterminate=selectedVisible>0 && selectedVisible<changes.length;
-    const totalSelected=S.billingImportComparison.rows.filter((row)=>row.kind==='change'&&row.canUpdate&&S.billingImportSelected.has(row.rowKey)).length;
+    const safeVisible=visibleRows.filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0);
+    const selectedVisible=safeVisible.filter((row)=>S.billingImportSelected.has(row.rowKey)).length;
+    E.billingImportSelectAll.disabled=safeVisible.length===0;
+    E.billingImportSelectAll.checked=safeVisible.length>0 && selectedVisible===safeVisible.length;
+    E.billingImportSelectAll.indeterminate=selectedVisible>0 && selectedVisible<safeVisible.length;
+    const totalSelected=S.billingImportComparison.rows.filter((row)=>isBillingSelectableRow(row)&&S.billingImportSelected.has(row.rowKey)).length;
     const allChanges=S.billingImportComparison.rows.filter((row)=>row.kind==='change'&&row.canUpdate&&row.fileSubtotal>0).length;
     E.billingImportApplyButton.disabled=totalSelected===0;
     E.billingImportApplyButton.innerHTML=`<i class="bi bi-check2-square me-2"></i>Actualizar seleccionados (${totalSelected})`;
@@ -5108,9 +5132,17 @@
   }
 
   async function applySelectedBillingUpdates() {
-    const rows=S.billingImportComparison?.rows.filter((row)=>row.kind==='change'&&row.canUpdate&&S.billingImportSelected.has(row.rowKey)) || [];
+    const rows=S.billingImportComparison?.rows.filter((row)=>isBillingSelectableRow(row)&&S.billingImportSelected.has(row.rowKey)) || [];
     if (!rows.length) { toast('Seleccioná al menos un ajuste.', 'error'); return; }
-    if (!confirm(`Se actualizará la facturación mensual de ${rows.length} servicio${rows.length===1?'':'s'}. Los porcentajes de límite operativo no cambiarán. ¿Continuar?`)) return;
+    const duplicateTargets=new Map();
+    rows.forEach((row)=>{ if (!duplicateTargets.has(row.serviceId)) duplicateTargets.set(row.serviceId,[]); duplicateTargets.get(row.serviceId).push(row); });
+    const repeated=[...duplicateTargets.values()].filter((items)=>items.length>1);
+    if (repeated.length) { toast('Hay más de una fila seleccionada para el mismo servicio. Dejá una sola por servicio.', 'error'); return; }
+    const reviewCount=rows.filter((row)=>row.kind==='review').length;
+    const zeroCount=rows.filter((row)=>row.fileSubtotal===0 && row.currentBilling!==0).length;
+    const warning=reviewCount ? `\n\n${reviewCount} fila${reviewCount===1?' requiere':'s requieren'} revisión y fueron seleccionadas manualmente.` : '';
+    const zeroWarning=zeroCount ? `\n${zeroCount} fila${zeroCount===1?' tiene':'s tienen'} subtotal $0.` : '';
+    if (!confirm(`Se actualizará la facturación mensual de ${rows.length} servicio${rows.length===1?'':'s'}. Los porcentajes de límite operativo no cambiarán.${warning}${zeroWarning}\n\n¿Continuar?`)) return;
     await applyBillingUpdates(rows,E.billingImportApplyButton);
   }
 

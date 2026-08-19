@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pedidos-cleanit-20260819-v5-sticky-scroll';
+const CACHE_NAME = 'pedidos-cleanit-20260819-v6-billing-row-select';
 const CORE = ['./','./index.html','./styles.css','./app.js','./config.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/icon-180.png'];
 self.addEventListener('install', (event) => {
   self.skipWaiting();

@@ -235,3 +235,10 @@
   .ci-hscroll-dock{--ci-hscroll-top:62px;height:24px}
 }
 
+
+/* Selección explícita de filas ambiguas en importación de facturación */
+.billing-explicit-help{display:block;margin-top:7px!important;padding:6px 8px;border-radius:8px;background:#fff7db;color:#7a5500!important;font-weight:800;line-height:1.25;max-width:230px;white-space:normal!important}
+.billing-import-row.is-review .price-import-check-col{background:#fff8e5!important}
+.billing-import-row.is-review .price-import-check-col .form-check-input{width:1.15rem;height:1.15rem;border-color:#d59b00;cursor:pointer}
+.billing-import-row.is-review .btn-warning{white-space:nowrap;color:#664700;background:#ffd76a;border-color:#e8b83c;font-weight:900}
+.billing-import-row.is-review .btn-warning:hover{background:#f3c34e;border-color:#d7a72d;color:#4f3900}
