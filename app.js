@@ -93,7 +93,8 @@
     invoiceOcrCurrentPage: 0,
     invoiceOcrTotalPages: 0,
     invoiceOcrAutoAttempts: new Set(),
-    invoiceOcrRunning: false
+    invoiceOcrRunning: false,
+    orderPdfSelected: new Set()
   };
 
   const E = {};
@@ -224,6 +225,10 @@
     E.ordersServiceFilter.addEventListener('change', renderOrders);
     E.ordersStatusFilter.addEventListener('change', renderOrders);
     E.ordersPriorityFilter.addEventListener('change', renderOrders);
+    E.ordersTableBody.addEventListener('change', handleOrderPdfSelectionChange);
+    E.ordersPdfSelectAll.addEventListener('change', toggleVisibleOrderPdfSelections);
+    E.generateOrdersPdfButton.addEventListener('click', generateSelectedOrdersPdf);
+    E.clearOrdersPdfSelectionButton.addEventListener('click', clearOrderPdfSelection);
     E.applyCurrentBillingToOpenOrdersButton.addEventListener('click', applyCurrentBillingToAllOpenOrders);
     E.selectInvoiceFilesButton.addEventListener('click', () => E.invoicePdfInput.click());
     E.invoiceDropZone.addEventListener('click', () => E.invoicePdfInput.click());
@@ -1480,14 +1485,13 @@
     }).join('') || '<div class="empty-inline">No hay pedidos abiertos.</div>';
   }
 
-  function renderOrders() {
-    renderOrdersBillingChangeAlert();
+  function filteredOrdersForView() {
     const query = normalize(E.ordersSearch.value);
     const serviceId = E.ordersServiceFilter.value;
     const status = E.ordersStatusFilter.value;
     const priority = E.ordersPriorityFilter.value;
 
-    const filtered = S.orders.filter((order) => {
+    return S.orders.filter((order) => {
       const service = serviceById(order.service_id);
       const haystack = normalize(`${order.order_code} ${order.reporter_name} ${service?.name || ''}`);
       return (!query || haystack.includes(query)) &&
@@ -1495,10 +1499,19 @@
         (!status || order.status === status) &&
         (!priority || order.priority === priority);
     });
+  }
+
+  function renderOrders() {
+    renderOrdersBillingChangeAlert();
+    const existingIds = new Set(S.orders.map((order) => order.id));
+    [...S.orderPdfSelected].forEach((id) => { if (!existingIds.has(id)) S.orderPdfSelected.delete(id); });
+    const filtered = filteredOrdersForView();
 
     E.ordersTableBody.innerHTML = filtered.map((order) => {
       const service = serviceById(order.service_id);
-      return `<tr class="${order.priority === 'urgente' && !['entregado', 'cancelado'].includes(order.status) ? 'order-row-urgent' : ''}">
+      const selected = S.orderPdfSelected.has(order.id);
+      return `<tr class="${order.priority === 'urgente' && !['entregado', 'cancelado'].includes(order.status) ? 'order-row-urgent ' : ''}${selected ? 'order-row-pdf-selected' : ''}">
+        <td class="orders-pdf-check-col"><input class="form-check-input order-pdf-checkbox" type="checkbox" data-order-pdf-select="${ea(order.id)}" ${selected ? 'checked' : ''} aria-label="Incluir ${ea(order.order_code)} en el PDF"></td>
         <td><div class="order-code">${eh(order.order_code)}</div><div class="order-date">${dtf.format(new Date(order.created_at))}</div></td>
         <td><div class="order-service">${eh(service?.name || 'Servicio eliminado')}</div><div class="table-subtitle">${eh(service?.address || '')}</div></td>
         <td>${eh(order.reporter_name)}</td>
@@ -1507,7 +1520,268 @@
         <td><span class="status-badge ${ea(order.status)}">${eh(STATUS_LABELS[order.status] || order.status)}</span></td>
         <td><div class="action-group"><button class="btn btn-outline-primary" type="button" title="Ver pedido" data-order-open="${ea(order.id)}"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary" type="button" title="Copiar" data-order-copy="${ea(order.id)}"><i class="bi bi-copy"></i></button>${isFullAdmin() ? `<button class="btn btn-outline-danger" type="button" title="Eliminar" data-order-delete="${ea(order.id)}"><i class="bi bi-trash3"></i></button>` : ''}</div></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="7"><div class="empty-inline">No hay pedidos que coincidan con los filtros.</div></td></tr>';
+    }).join('') || '<tr><td colspan="8"><div class="empty-inline">No hay pedidos que coincidan con los filtros.</div></td></tr>';
+
+    renderOrdersPdfToolbar(filtered);
+  }
+
+  function renderOrdersPdfToolbar(filtered = filteredOrdersForView()) {
+    if (!E.ordersPdfToolbar) return;
+    const selectedCount = S.orderPdfSelected.size;
+    E.ordersPdfToolbar.classList.remove('d-none');
+    E.ordersPdfSelectedCount.textContent = String(selectedCount);
+    E.generateOrdersPdfButton.disabled = selectedCount === 0;
+    E.clearOrdersPdfSelectionButton.classList.toggle('d-none', selectedCount === 0);
+    E.ordersPdfSelectionText.textContent = selectedCount
+      ? `${selectedCount} ${selectedCount === 1 ? 'pedido seleccionado' : 'pedidos seleccionados'} para generar en un único PDF.`
+      : 'Marcá los pedidos que querés incluir. Cada pedido comienza en una página nueva.';
+
+    const visibleIds = filtered.map((order) => order.id);
+    const visibleSelected = visibleIds.filter((id) => S.orderPdfSelected.has(id)).length;
+    E.ordersPdfSelectAll.checked = visibleIds.length > 0 && visibleSelected === visibleIds.length;
+    E.ordersPdfSelectAll.indeterminate = visibleSelected > 0 && visibleSelected < visibleIds.length;
+    E.ordersPdfSelectAll.disabled = visibleIds.length === 0;
+  }
+
+  function handleOrderPdfSelectionChange(event) {
+    const checkbox = event.target.closest('[data-order-pdf-select]');
+    if (!checkbox) return;
+    const id = checkbox.dataset.orderPdfSelect;
+    if (checkbox.checked) S.orderPdfSelected.add(id);
+    else S.orderPdfSelected.delete(id);
+    const row = checkbox.closest('tr');
+    if (row) row.classList.toggle('order-row-pdf-selected', checkbox.checked);
+    renderOrdersPdfToolbar();
+  }
+
+  function toggleVisibleOrderPdfSelections() {
+    const filtered = filteredOrdersForView();
+    const shouldSelect = E.ordersPdfSelectAll.checked;
+    filtered.forEach((order) => {
+      if (shouldSelect) S.orderPdfSelected.add(order.id);
+      else S.orderPdfSelected.delete(order.id);
+    });
+    renderOrders();
+  }
+
+  function clearOrderPdfSelection() {
+    S.orderPdfSelected.clear();
+    renderOrders();
+  }
+
+  function pdfSafeText(value) {
+    return String(value ?? '')
+      .replace(/[•·]/g, '-')
+      .replace(/[→⇒]/g, '->')
+      .replace(/[–—]/g, '-')
+      .replace(/−/g, '-')
+      .replace(/\u00a0/g, ' ');
+  }
+
+  function pdfMoney(value) {
+    return pdfSafeText(formatCurrency(number(value)));
+  }
+
+  function generateSelectedOrdersPdf() {
+    if (!S.orderPdfSelected.size) {
+      toast('Seleccioná al menos un pedido.', 'error');
+      return;
+    }
+    if (!window.jspdf?.jsPDF) {
+      toast('No se pudo cargar el generador de PDF. Revisá la conexión y volvé a intentar.', 'error');
+      return;
+    }
+
+    const selected = S.orders
+      .filter((order) => S.orderPdfSelected.has(order.id))
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    if (!selected.length) return;
+
+    buttonBusy(E.generateOrdersPdfButton, true, 'Generando PDF...');
+    try {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const marginX = 14;
+      const top = 14;
+      const bottom = 14;
+      const contentW = pageW - marginX * 2;
+      let y = top;
+      let pageStarted = false;
+      let currentOrderCode = '';
+      let continuation = false;
+
+      const setFont = (style = 'normal', size = 10) => { doc.setFont('helvetica', style); doc.setFontSize(size); };
+      const line = (x1, y1, x2, y2) => { doc.setDrawColor(220); doc.line(x1, y1, x2, y2); };
+      const addFooter = () => {
+        const p = doc.internal.getNumberOfPages();
+        setFont('normal', 7.5);
+        doc.setTextColor(125);
+        doc.text(`Clean It - Pedido para proveedor - Página ${p}`, marginX, pageH - 6);
+        doc.text(pdfSafeText(new Date().toLocaleString('es-AR')), pageW - marginX, pageH - 6, { align: 'right' });
+        doc.setTextColor(0);
+      };
+      const startPage = (order, isContinuation = false) => {
+        if (pageStarted) {
+          addFooter();
+          doc.addPage();
+        }
+        pageStarted = true;
+        continuation = isContinuation;
+        currentOrderCode = order.order_code;
+        y = top;
+        doc.setFillColor(13, 110, 253);
+        doc.roundedRect(marginX, y, 13, 13, 2.5, 2.5, 'F');
+        setFont('bold', 8.5);
+        doc.setTextColor(255);
+        doc.text('CI', marginX + 6.5, y + 8.6, { align: 'center' });
+        doc.setTextColor(0);
+        setFont('bold', 15);
+        doc.text(pdfSafeText(`PEDIDO ${order.order_code}${isContinuation ? ' - CONTINUACIÓN' : ''}`), marginX + 18, y + 5.2);
+        setFont('normal', 8.5);
+        doc.setTextColor(105);
+        doc.text('Clean It - Solicitud de insumos', marginX + 18, y + 10.5);
+        doc.setTextColor(0);
+        y += 18;
+        line(marginX, y, pageW - marginX, y);
+        y += 5;
+      };
+      const ensureSpace = (needed, order, repeatItemsHeader = false) => {
+        if (y + needed <= pageH - bottom - 7) return;
+        startPage(order, true);
+        if (repeatItemsHeader) drawItemsHeader();
+      };
+      const drawLabelValue = (label, value, x, yy, width) => {
+        setFont('bold', 7.5);
+        doc.setTextColor(105);
+        doc.text(pdfSafeText(label).toUpperCase(), x, yy);
+        setFont('bold', 9.5);
+        doc.setTextColor(25);
+        const rows = doc.splitTextToSize(pdfSafeText(value || '-'), width);
+        doc.text(rows, x, yy + 4.5);
+        doc.setTextColor(0);
+        return rows.length;
+      };
+      const drawItemsHeader = () => {
+        doc.setFillColor(244, 247, 251);
+        doc.rect(marginX, y, contentW, 8, 'F');
+        setFont('bold', 7.4);
+        doc.setTextColor(90);
+        doc.text('CANT.', marginX + 2, y + 5.1);
+        doc.text('SKU', marginX + 20, y + 5.1);
+        doc.text('INSUMO', marginX + 54, y + 5.1);
+        doc.text('PRECIO', marginX + 142, y + 5.1, { align: 'right' });
+        doc.text('IMPORTE', pageW - marginX - 2, y + 5.1, { align: 'right' });
+        doc.setTextColor(0);
+        y += 8;
+      };
+      const drawOrderSummary = (order) => {
+        const service = serviceById(order.service_id);
+        const colW = (contentW - 6) / 2;
+        const leftX = marginX;
+        const rightX = marginX + colW + 6;
+        const rowsA = drawLabelValue('Servicio', service?.name || 'Servicio', leftX, y, colW);
+        const rowsB = drawLabelValue('Operario responsable', order.reporter_name, rightX, y, colW);
+        y += Math.max(rowsA, rowsB) * 4.2 + 8;
+        const rowsC = drawLabelValue('Dirección', service?.address || '-', leftX, y, colW);
+        const rowsD = drawLabelValue('Fecha', dtf.format(new Date(order.created_at)), rightX, y, colW);
+        y += Math.max(rowsC, rowsD) * 4.2 + 8;
+        const mode = order.pickup_at_naon === true
+          ? `Retiro en Naón (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)} descuento)`
+          : (order.pickup_at_naon === false ? 'Entrega directa al servicio (sin descuento)' : 'Pendiente de definir');
+        const rowsE = drawLabelValue('Modalidad', mode, leftX, y, colW);
+        const rowsF = drawLabelValue('Prioridad / Estado', `${PRIORITY_LABELS[order.priority] || order.priority} / ${STATUS_LABELS[order.status] || order.status}`, rightX, y, colW);
+        y += Math.max(rowsE, rowsF) * 4.2 + 8;
+      };
+
+      selected.forEach((order) => {
+        startPage(order, false);
+        drawOrderSummary(order);
+        ensureSpace(18, order);
+        setFont('bold', 10.5);
+        doc.text('INSUMOS', marginX, y);
+        y += 4;
+        drawItemsHeader();
+
+        const items = itemsForOrder(order.id);
+        items.forEach((item) => {
+          const qtyText = `${formatQty(item.quantity)} ${item.unit || 'unidad'}`;
+          const skuText = item.item_sku || '-';
+          const nameLines = doc.splitTextToSize(pdfSafeText(item.item_name || 'Insumo'), 78);
+          const noteLines = item.notes ? doc.splitTextToSize(pdfSafeText(`Obs.: ${item.notes}`), 78) : [];
+          const priceText = order.pickup_at_naon === true
+            ? `${pdfMoney(orderItemBaseUnitPrice(item))} lista\n${pdfMoney(item.unit_price)} Naón`
+            : `${pdfMoney(item.unit_price)} c/u`;
+          const priceLines = String(priceText).split('\n');
+          const rowLines = Math.max(1, nameLines.length + noteLines.length, priceLines.length);
+          const rowH = Math.max(10, 4.2 * rowLines + 4);
+          ensureSpace(rowH, order, true);
+          setFont('normal', 8.2);
+          doc.text(pdfSafeText(qtyText), marginX + 2, y + 5);
+          doc.text(pdfSafeText(skuText), marginX + 20, y + 5, { maxWidth: 31 });
+          setFont('bold', 8.2);
+          doc.text(nameLines, marginX + 54, y + 5);
+          if (noteLines.length) {
+            setFont('normal', 7.3);
+            doc.setTextColor(100);
+            doc.text(noteLines, marginX + 54, y + 5 + nameLines.length * 4.2);
+            doc.setTextColor(0);
+          }
+          setFont('normal', 7.8);
+          doc.text(priceLines.map(pdfSafeText), marginX + 142, y + 5, { align: 'right' });
+          setFont('bold', 8.2);
+          doc.text(pdfMoney(item.line_total), pageW - marginX - 2, y + 5, { align: 'right' });
+          line(marginX, y + rowH, pageW - marginX, y + rowH);
+          y += rowH;
+        });
+
+        const summaryLines = [];
+        if (order.pickup_at_naon === true) {
+          summaryLines.push(['Subtotal sin descuento', order.gross_total_amount || order.total_amount]);
+          summaryLines.push([`Descuento Naón (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)})`, -Math.abs(number(order.discount_amount))]);
+        }
+        summaryLines.push(['TOTAL', order.total_amount]);
+        const summaryHeight = summaryLines.length * 7 + 9;
+        ensureSpace(summaryHeight + (order.notes ? 18 : 0) + 20, order);
+        y += 5;
+        summaryLines.forEach(([label, amount]) => {
+          setFont(label === 'TOTAL' ? 'bold' : 'normal', label === 'TOTAL' ? 11 : 8.5);
+          doc.text(pdfSafeText(label), pageW - marginX - 72, y + 4);
+          doc.text(pdfMoney(amount), pageW - marginX, y + 4, { align: 'right' });
+          y += 7;
+        });
+
+        if (number(order.monthly_billing_snapshot) > 0) {
+          setFont('normal', 7.8);
+          doc.setTextColor(100);
+          doc.text(pdfSafeText(`Control presupuestario: tope ${formatPercent(order.budget_limit_percent_snapshot)} = ${formatCurrency(order.budget_limit_amount_snapshot)} | ${budgetStatusText(order.budget_status)}`), marginX, y + 3, { maxWidth: contentW });
+          doc.setTextColor(0);
+          y += 8;
+        }
+        if (order.notes) {
+          setFont('bold', 8);
+          doc.text('OBSERVACIÓN', marginX, y + 3);
+          y += 6;
+          setFont('normal', 8.3);
+          const note = doc.splitTextToSize(pdfSafeText(order.notes), contentW);
+          doc.text(note, marginX, y + 2);
+          y += note.length * 4.2 + 4;
+        }
+      });
+
+      if (pageStarted) addFooter();
+      const stamp = localDateKey(new Date()).replaceAll('-', '');
+      const filename = `Pedidos_CleanIt_${stamp}_${selected.length}${selected.length === 1 ? '_pedido' : '_pedidos'}.pdf`;
+      doc.save(filename);
+      toast(`PDF generado con ${selected.length} ${selected.length === 1 ? 'pedido' : 'pedidos'}.`, 'success');
+    } catch (error) {
+      console.error(error);
+      toast(error.message || 'No se pudo generar el PDF.', 'error');
+    } finally {
+      buttonBusy(E.generateOrdersPdfButton, false);
+      renderOrdersPdfToolbar();
+    }
   }
 
   function openOrder(orderId) {

@@ -242,3 +242,36 @@
 .billing-import-row.is-review .price-import-check-col .form-check-input{width:1.15rem;height:1.15rem;border-color:#d59b00;cursor:pointer}
 .billing-import-row.is-review .btn-warning{white-space:nowrap;color:#664700;background:#ffd76a;border-color:#e8b83c;font-weight:900}
 .billing-import-row.is-review .btn-warning:hover{background:#f3c34e;border-color:#d7a72d;color:#4f3900}
+
+/* PDF múltiple de pedidos -------------------------------------------------- */
+.orders-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #dfe6f1;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 37, 70, .06);
+}
+.orders-pdf-toolbar-copy { min-width: 0; }
+.orders-pdf-toolbar-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #14213d;
+  margin-bottom: 2px;
+}
+.orders-pdf-toolbar-title i { color: #dc3545; font-size: 1.05rem; }
+.orders-pdf-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.orders-pdf-check-col { width: 46px; min-width: 46px; text-align: center; }
+.order-pdf-checkbox { width: 1.12rem; height: 1.12rem; cursor: pointer; }
+.order-row-pdf-selected > td { background: #eef5ff !important; }
+.order-row-pdf-selected > td:first-child { box-shadow: inset 4px 0 0 #0d6efd; }
+#generateOrdersPdfButton .badge { color: #b02a37 !important; }
+@media (max-width: 767.98px) {
+  .orders-pdf-toolbar { align-items: stretch; flex-direction: column; }
+  .orders-pdf-toolbar-actions { width: 100%; }
+  .orders-pdf-toolbar-actions .btn { flex: 1 1 auto; }
+}
