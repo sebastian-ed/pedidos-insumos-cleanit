@@ -544,7 +544,7 @@
   }
 
   function publicServiceHaystack(service) {
-    return normalize(`${service.name || ''} ${service.address || ''} ${service.zone || ''} ${service.description || ''}`);
+    return normalize(`${service.name || ''} ${service.address || ''} ${service.zone || ''} ${service.frequency || ''} ${service.description || ''}`);
   }
 
   function populatePublicServiceSelect() {
@@ -716,9 +716,9 @@
     E.operatorServiceName.textContent = service.name || 'Servicio';
     E.operatorServiceAddress.textContent = service.address || 'Dirección no informada';
     E.operatorReporter.textContent = S.orderReporterName || 'Operario no informado';
-    const description = String(service.description || '').trim();
-    E.operatorServiceDescription.classList.toggle('d-none', !description);
-    E.operatorServiceDescription.querySelector('span').textContent = description;
+    const frequency = String(service.frequency || '').trim();
+    E.operatorServiceDescription.classList.toggle('d-none', !frequency);
+    E.operatorServiceDescription.querySelector('span').textContent = frequency;
     renderOperatorMetrics();
     renderOperatorGrid();
   }
@@ -1131,7 +1131,7 @@
         : (result.budget_status === 'sobre_limite' ? ` · Excepción: supera el límite de ${formatPercent(result.budget_limit_percent)}` : '');
       E.successOrderCode.textContent = result.order_code;
       E.successOrderSummary.textContent = `${service.name} · ${summary}${budgetNote}`;
-      S.lastSuccessText = `Pedido ${result.order_code}\nServicio: ${service.name}\nOperario responsable: ${reporter}\nCargado por: ${authenticatedReporterName()}\n${summary}${budgetNote}\nFecha: ${dtf.format(new Date(result.created_at))}`;
+      S.lastSuccessText = `Pedido ${result.order_code}\nServicio: ${service.name}${service.frequency ? `\nFrecuencia: ${service.frequency}` : ''}\nOperario responsable: ${reporter}\nCargado por: ${authenticatedReporterName()}\n${summary}${budgetNote}\nFecha: ${dtf.format(new Date(result.created_at))}`;
 
       S.draft.clear();
       S.extras = [];
@@ -1663,16 +1663,30 @@
         doc.setTextColor(0);
         return rows.length;
       };
+      const itemCols = {
+        qty: { x: marginX, w: 20 },
+        sku: { x: marginX + 20, w: 34 },
+        name: { x: marginX + 54, w: 66 },
+        price: { x: marginX + 120, w: 31 },
+        amount: { x: marginX + 151, w: 31 }
+      };
+      const cellPad = 2;
+      const drawItemColumnGuides = (topY, height) => {
+        doc.setDrawColor(235);
+        [itemCols.sku.x, itemCols.name.x, itemCols.price.x, itemCols.amount.x].forEach((xx) => doc.line(xx, topY, xx, topY + height));
+        doc.setDrawColor(220);
+      };
       const drawItemsHeader = () => {
         doc.setFillColor(244, 247, 251);
         doc.rect(marginX, y, contentW, 8, 'F');
-        setFont('bold', 7.4);
+        drawItemColumnGuides(y, 8);
+        setFont('bold', 7.2);
         doc.setTextColor(90);
-        doc.text('CANT.', marginX + 2, y + 5.1);
-        doc.text('SKU', marginX + 20, y + 5.1);
-        doc.text('INSUMO', marginX + 54, y + 5.1);
-        doc.text('PRECIO', marginX + 142, y + 5.1, { align: 'right' });
-        doc.text('IMPORTE', pageW - marginX - 2, y + 5.1, { align: 'right' });
+        doc.text('CANT.', itemCols.qty.x + cellPad, y + 5.1);
+        doc.text('SKU', itemCols.sku.x + cellPad, y + 5.1);
+        doc.text('INSUMO', itemCols.name.x + cellPad, y + 5.1);
+        doc.text('PRECIO', itemCols.price.x + itemCols.price.w - cellPad, y + 5.1, { align: 'right' });
+        doc.text('IMPORTE', itemCols.amount.x + itemCols.amount.w - cellPad, y + 5.1, { align: 'right' });
         doc.setTextColor(0);
         y += 8;
       };
@@ -1685,14 +1699,16 @@
         const rowsB = drawLabelValue('Operario responsable', order.reporter_name, rightX, y, colW);
         y += Math.max(rowsA, rowsB) * 4.2 + 8;
         const rowsC = drawLabelValue('Dirección', service?.address || '-', leftX, y, colW);
-        const rowsD = drawLabelValue('Fecha', dtf.format(new Date(order.created_at)), rightX, y, colW);
+        const rowsD = drawLabelValue('Frecuencia', service?.frequency || 'No informada', rightX, y, colW);
         y += Math.max(rowsC, rowsD) * 4.2 + 8;
+        const rowsE = drawLabelValue('Fecha', dtf.format(new Date(order.created_at)), leftX, y, colW);
+        const rowsF = drawLabelValue('Prioridad / Estado', `${PRIORITY_LABELS[order.priority] || order.priority} / ${STATUS_LABELS[order.status] || order.status}`, rightX, y, colW);
+        y += Math.max(rowsE, rowsF) * 4.2 + 8;
         const mode = order.pickup_at_naon === true
           ? `Retiro en Naón (${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)} descuento)`
           : (order.pickup_at_naon === false ? 'Entrega directa al servicio (sin descuento)' : 'Pendiente de definir');
-        const rowsE = drawLabelValue('Modalidad', mode, leftX, y, colW);
-        const rowsF = drawLabelValue('Prioridad / Estado', `${PRIORITY_LABELS[order.priority] || order.priority} / ${STATUS_LABELS[order.status] || order.status}`, rightX, y, colW);
-        y += Math.max(rowsE, rowsF) * 4.2 + 8;
+        const rowsG = drawLabelValue('Modalidad', mode, leftX, y, contentW);
+        y += rowsG * 4.2 + 8;
       };
 
       selected.forEach((order) => {
@@ -1706,32 +1722,53 @@
 
         const items = itemsForOrder(order.id);
         items.forEach((item) => {
-          const qtyText = `${formatQty(item.quantity)} ${item.unit || 'unidad'}`;
-          const skuText = item.item_sku || '-';
-          const nameLines = doc.splitTextToSize(pdfSafeText(item.item_name || 'Insumo'), 78);
-          const noteLines = item.notes ? doc.splitTextToSize(pdfSafeText(`Obs.: ${item.notes}`), 78) : [];
-          const priceText = order.pickup_at_naon === true
-            ? `${pdfMoney(orderItemBaseUnitPrice(item))} lista\n${pdfMoney(item.unit_price)} Naón`
-            : `${pdfMoney(item.unit_price)} c/u`;
-          const priceLines = String(priceText).split('\n');
-          const rowLines = Math.max(1, nameLines.length + noteLines.length, priceLines.length);
-          const rowH = Math.max(10, 4.2 * rowLines + 4);
+          const qtyValue = pdfSafeText(formatQty(item.quantity));
+          const unitLines = doc.splitTextToSize(pdfSafeText(item.unit || 'unidad'), itemCols.qty.w - cellPad * 2);
+          const skuLines = doc.splitTextToSize(pdfSafeText(item.item_sku || '-'), itemCols.sku.w - cellPad * 2);
+          const nameLines = doc.splitTextToSize(pdfSafeText(item.item_name || 'Insumo'), itemCols.name.w - cellPad * 2);
+          const noteLines = item.notes ? doc.splitTextToSize(pdfSafeText(`Obs.: ${item.notes}`), itemCols.name.w - cellPad * 2) : [];
+          const priceLines = order.pickup_at_naon === true
+            ? [
+                pdfSafeText(`${pdfMoney(orderItemBaseUnitPrice(item))} lista`),
+                pdfSafeText(`${pdfMoney(item.unit_price)} Naón`)
+              ]
+            : [pdfSafeText(pdfMoney(item.unit_price)), 'c/u'];
+          const qtyLineCount = 1 + unitLines.length;
+          const nameLineCount = nameLines.length + noteLines.length;
+          const rowLines = Math.max(1, qtyLineCount, skuLines.length, nameLineCount, priceLines.length);
+          const rowH = Math.max(12, rowLines * 4 + 4);
           ensureSpace(rowH, order, true);
-          setFont('normal', 8.2);
-          doc.text(pdfSafeText(qtyText), marginX + 2, y + 5);
-          doc.text(pdfSafeText(skuText), marginX + 20, y + 5, { maxWidth: 31 });
-          setFont('bold', 8.2);
-          doc.text(nameLines, marginX + 54, y + 5);
-          if (noteLines.length) {
-            setFont('normal', 7.3);
+
+          drawItemColumnGuides(y, rowH);
+
+          setFont('bold', 8.1);
+          doc.text(qtyValue, itemCols.qty.x + cellPad, y + 5);
+          if (unitLines.length) {
+            setFont('normal', 6.9);
             doc.setTextColor(100);
-            doc.text(noteLines, marginX + 54, y + 5 + nameLines.length * 4.2);
+            doc.text(unitLines, itemCols.qty.x + cellPad, y + 9);
             doc.setTextColor(0);
           }
-          setFont('normal', 7.8);
-          doc.text(priceLines.map(pdfSafeText), marginX + 142, y + 5, { align: 'right' });
-          setFont('bold', 8.2);
-          doc.text(pdfMoney(item.line_total), pageW - marginX - 2, y + 5, { align: 'right' });
+
+          setFont('normal', 7.1);
+          doc.text(skuLines, itemCols.sku.x + cellPad, y + 5);
+
+          setFont('bold', 7.8);
+          doc.text(nameLines, itemCols.name.x + cellPad, y + 5);
+          if (noteLines.length) {
+            setFont('normal', 6.9);
+            doc.setTextColor(100);
+            doc.text(noteLines, itemCols.name.x + cellPad, y + 5 + nameLines.length * 4);
+            doc.setTextColor(0);
+          }
+
+          setFont('normal', 7.2);
+          doc.text(priceLines, itemCols.price.x + itemCols.price.w - cellPad, y + 5, { align: 'right' });
+
+          setFont('bold', 7.8);
+          const amountLines = doc.splitTextToSize(pdfMoney(item.line_total), itemCols.amount.w - cellPad * 2);
+          doc.text(amountLines, itemCols.amount.x + itemCols.amount.w - cellPad, y + 5, { align: 'right' });
+
           line(marginX, y + rowH, pageW - marginX, y + rowH);
           y += rowH;
         });
@@ -1804,6 +1841,8 @@
       : (order.pickup_at_naon === false ? 'Entrega directa al servicio · sin descuento' : 'Pendiente de definir por Operaciones');
     const detailMeta = [
       ['Servicio', service?.name || 'Servicio eliminado'],
+      ['Dirección', service?.address || 'No informada'],
+      ['Frecuencia', service?.frequency || 'No informada'],
       ['Operario responsable', order.reporter_name],
       ['Cargado por', creator?.full_name || creator?.email || 'Usuario no disponible'],
       ['Fecha', dtf.format(new Date(order.created_at))],
@@ -2245,6 +2284,7 @@
       `PEDIDO ${order.order_code}`,
       `Servicio: ${service?.name || 'Servicio'}`,
       service?.address ? `Dirección: ${service.address}` : null,
+      service?.frequency ? `Frecuencia: ${service.frequency}` : `Frecuencia: No informada`,
       `Operario responsable: ${order.reporter_name}`,
       `Fecha: ${dtf.format(new Date(order.created_at))}`,
       `Prioridad: ${PRIORITY_LABELS[order.priority] || order.priority}`,
@@ -5670,7 +5710,7 @@
     const query = normalize(E.adminServiceSearch.value);
     const duplicateCuits=duplicateServiceCuitGroups();
     renderServiceDuplicateCuitAlert(duplicateCuits);
-    const filtered = S.services.filter((service) => !query || normalize(`${service.name} ${service.cuit || ''} ${formatCuit(service.cuit || '')} ${service.zone || ''} ${service.address || ''} ${service.supervisor || ''}`).includes(query));
+    const filtered = S.services.filter((service) => !query || normalize(`${service.name} ${service.cuit || ''} ${formatCuit(service.cuit || '')} ${service.zone || ''} ${service.address || ''} ${service.frequency || ''} ${service.supervisor || ''}`).includes(query));
     const activeMaterials = S.materials.filter((material) => material.active !== false);
 
     E.servicesTableBody.innerHTML = filtered.map((service) => {
@@ -5689,7 +5729,7 @@
         <td>${eh(service.zone || '—')}</td>
         <td><strong>${eh(formatCurrency(service.monthly_billing))}</strong></td>
         <td><div class="service-material-count">${eh(formatPercent(service.budget_limit_percent || 5))}</div><div class="table-subtitle">${eh(formatCurrency(limitAmount))}</div></td>
-        <td><div class="service-description-preview">${eh(service.description || '—')}</div></td>
+        <td><div class="service-description-preview">${eh(service.frequency || '—')}</div></td>
         <td>${eh(service.supervisor || '—')}</td>
         <td><div class="service-material-count">${visibleCount} de ${activeMaterials.length}</div><div class="table-subtitle">${hiddenCount ? `${hiddenCount} oculto${hiddenCount === 1 ? '' : 's'}` : 'Catálogo completo'}</div></td>
         <td>${orderCount}</td>
@@ -5814,6 +5854,7 @@
     E.serviceSupervisor.value = service?.supervisor || '';
     E.serviceBilling.value = formatMoneyInput(service?.monthly_billing || 0);
     E.serviceBudgetPercent.value = formatInputQty(service?.budget_limit_percent || 5);
+    E.serviceFrequency.value = service?.frequency || '';
     E.serviceDescription.value = service?.description || '';
     E.serviceNotes.value = service?.notes || '';
     E.serviceActive.checked = service ? service.active !== false : true;
@@ -5876,6 +5917,7 @@
         supervisor: E.serviceSupervisor.value.trim() || null,
         monthly_billing: clampMoney(E.serviceBilling.value),
         budget_limit_percent: Math.round(budgetPercent * 100) / 100,
+        frequency: E.serviceFrequency.value.trim() || null,
         description: E.serviceDescription.value.trim() || null,
         notes: E.serviceNotes.value.trim() || null,
         active: E.serviceActive.checked
@@ -5889,9 +5931,12 @@
     } catch (error) {
       console.error(error);
       const message=String(error?.message || '');
-      toast((message.includes('cuit') && (message.includes('column') || message.includes('schema cache')))
-        ? 'Falta instalar el CUIT en la base. Ejecutá actualizar-cuit-servicios.sql en Supabase.'
-        : (message || 'No se pudo guardar el servicio.'), 'error');
+      const missingColumn = message.includes('column') || message.includes('schema cache');
+      toast((message.includes('frequency') && missingColumn)
+        ? 'Falta instalar la frecuencia en la base. Ejecutá actualizar-frecuencia-servicios.sql en Supabase.'
+        : ((message.includes('cuit') && missingColumn)
+          ? 'Falta instalar el CUIT en la base.'
+          : (message || 'No se pudo guardar el servicio.')), 'error');
     } finally {
       buttonBusy(E.saveServiceButton, false);
     }
