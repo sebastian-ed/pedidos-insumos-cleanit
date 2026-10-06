@@ -94,7 +94,8 @@
     invoiceOcrTotalPages: 0,
     invoiceOcrAutoAttempts: new Set(),
     invoiceOcrRunning: false,
-    orderPdfSelected: new Set()
+    orderPdfSelected: new Set(),
+    orderStatusTimelineByOrder: new Map()
   };
 
   const E = {};
@@ -1821,6 +1822,71 @@
     }
   }
 
+  function orderStatusHistory(orderId) {
+    const cached = S.orderStatusTimelineByOrder.get(orderId);
+    const source = Array.isArray(cached) ? cached : S.history.filter((entry) => entry.order_id === orderId);
+    return source
+      .filter((entry) => !entry.old_status || entry.old_status !== entry.new_status)
+      .slice()
+      .sort((a, b) => new Date(a.changed_at) - new Date(b.changed_at));
+  }
+
+  function latestOrderStatusEvent(order) {
+    const events = orderStatusHistory(order.id);
+    return events.length ? events[events.length - 1] : null;
+  }
+
+  async function loadOrderStatusTimeline(orderId) {
+    if (!S.sb || !orderId) return;
+    try {
+      const { data, error } = await S.sb
+        .from('order_status_history')
+        .select('*')
+        .eq('order_id', orderId)
+        .order('changed_at', { ascending: true });
+      if (error) throw error;
+      S.orderStatusTimelineByOrder.set(orderId, data || []);
+      if (S.selectedOrderId === orderId) {
+        const current = S.orders.find((item) => item.id === orderId);
+        if (current) renderOrderDetail(current);
+      }
+    } catch (error) {
+      console.warn('No se pudo cargar el historial completo de estados del pedido.', error);
+    }
+  }
+
+  function renderOrderStatusTimeline(order) {
+    if (!E.orderDetailStatusHistory) return;
+    const events = orderStatusHistory(order.id);
+    if (!events.length) {
+      E.orderDetailStatusHistory.innerHTML = `<div class="order-status-timeline-card"><div class="order-status-timeline-head"><div><div class="eyebrow">Trazabilidad</div><h6 class="fw-black mb-0">Historial de estados</h6></div></div><div class="order-status-timeline-empty">Todavía no hay cambios de estado registrados para este pedido.</div></div>`;
+      return;
+    }
+
+    const rows = events.slice().reverse().map((entry, index) => {
+      const profile = S.profiles.find((item) => item.id === entry.changed_by);
+      const userName = profile?.full_name || profile?.email || 'Sistema';
+      const initial = !entry.old_status;
+      const title = initial
+        ? `Pedido creado en ${STATUS_LABELS[entry.new_status] || entry.new_status}`
+        : `${STATUS_LABELS[entry.old_status] || entry.old_status} → ${STATUS_LABELS[entry.new_status] || entry.new_status}`;
+      return `<div class="order-status-timeline-row${index === 0 ? ' is-current' : ''}">
+        <div class="order-status-timeline-marker"><span></span></div>
+        <div class="order-status-timeline-content">
+          <div class="order-status-timeline-title">${eh(title)}</div>
+          <div class="order-status-timeline-meta"><i class="bi bi-clock me-1"></i>${eh(dtf.format(new Date(entry.changed_at)))} · ${eh(userName)}</div>
+          ${entry.notes ? `<div class="order-status-timeline-note">${eh(entry.notes)}</div>` : ''}
+        </div>
+        <span class="status-badge ${ea(entry.new_status)}">${eh(STATUS_LABELS[entry.new_status] || entry.new_status)}</span>
+      </div>`;
+    }).join('');
+
+    E.orderDetailStatusHistory.innerHTML = `<div class="order-status-timeline-card">
+      <div class="order-status-timeline-head"><div><div class="eyebrow">Trazabilidad</div><h6 class="fw-black mb-0">Historial de estados</h6></div><span class="order-status-timeline-count">${events.length} ${events.length === 1 ? 'registro' : 'registros'}</span></div>
+      <div class="order-status-timeline-list">${rows}</div>
+    </div>`;
+  }
+
   function openOrder(orderId) {
     const order = S.orders.find((item) => item.id === orderId);
     if (!order) return;
@@ -1828,6 +1894,7 @@
     resetOrderEditState();
     renderOrderDetail(order);
     M.orderDetail.show();
+    loadOrderStatusTimeline(orderId);
   }
 
   function renderOrderDetail(order) {
@@ -1839,15 +1906,18 @@
     const deliveryMode = order.pickup_at_naon === true
       ? `Retiro en Naón · ${formatPercent(order.discount_percent_snapshot || NAON_DISCOUNT_PERCENT)} aplicado`
       : (order.pickup_at_naon === false ? 'Entrega directa al servicio · sin descuento' : 'Pendiente de definir por Operaciones');
+    const latestStatusEvent = latestOrderStatusEvent(order);
+    const latestStatusDate = latestStatusEvent?.changed_at || order.created_at;
     const detailMeta = [
       ['Servicio', service?.name || 'Servicio eliminado'],
       ['Dirección', service?.address || 'No informada'],
       ['Frecuencia', service?.frequency || 'No informada'],
       ['Operario responsable', order.reporter_name],
       ['Cargado por', creator?.full_name || creator?.email || 'Usuario no disponible'],
-      ['Fecha', dtf.format(new Date(order.created_at))],
+      ['Fecha de creación', dtf.format(new Date(order.created_at))],
       ['Prioridad', PRIORITY_LABELS[order.priority] || order.priority],
       ['Estado', STATUS_LABELS[order.status] || order.status],
+      ['Último cambio de estado', dtf.format(new Date(latestStatusDate))],
       ['Contenido', `${order.total_items} insumos · ${formatQty(order.total_units)} unidades`],
       ['Modalidad', deliveryMode]
     ];
@@ -1859,6 +1929,7 @@
     renderOrderBillingReferenceAlert(order);
     E.orderDetailBudgetOverview.innerHTML = orderBudgetOverview(order);
     E.orderDetailMeta.innerHTML = detailMeta.map(([label, value]) => `<div class="order-meta-card"><div class="order-meta-label">${eh(label)}</div><div class="order-meta-value">${eh(value)}</div></div>`).join('');
+    renderOrderStatusTimeline(order);
 
     E.orderDetailItems.innerHTML = items.map((item) => {
       const basePrice = orderItemBaseUnitPrice(item);
@@ -2239,7 +2310,7 @@
     if (!order) return;
     const nextStatus = E.orderDetailStatus.value;
     if (nextStatus === order.status) {
-      M.orderDetail.hide();
+      toast('El pedido ya está en ese estado.', 'info');
       return;
     }
 
@@ -2251,9 +2322,12 @@
         p_notes: null
       });
       if (error) throw error;
-      M.orderDetail.hide();
       await refreshAdmin(false);
-      toast('Estado actualizado.', 'success');
+      S.orderStatusTimelineByOrder.delete(order.id);
+      await loadOrderStatusTimeline(order.id);
+      const updatedOrder = S.orders.find((item) => item.id === order.id);
+      if (updatedOrder) renderOrderDetail(updatedOrder);
+      toast(`Estado actualizado a ${STATUS_LABELS[nextStatus] || nextStatus}. Fecha y hora registradas.`, 'success');
     } catch (error) {
       console.error(error);
       toast(error.message || 'No se pudo actualizar el estado.', 'error');
@@ -6323,7 +6397,7 @@
       const userName = profile?.full_name || profile?.email || 'Sistema';
       const reference = order?.order_code || 'Pedido eliminado';
       const context = service?.name || '—';
-      const detail = entry.notes || '';
+      const detail = entry.notes || (isEdit ? 'Contenido del pedido modificado' : 'Cambio de estado del pedido');
       return {
         type: 'order',
         timestamp: entry.changed_at,

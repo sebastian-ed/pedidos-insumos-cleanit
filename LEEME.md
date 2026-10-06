@@ -2,41 +2,30 @@
 
 ## Cambio incluido
 
-- Se agregó **Frecuencia del servicio** como campo independiente.
-- Ejemplo: `Lunes a viernes de 8 a 16 hs.`
-- Se muestra en:
-  - Servicios.
-  - Vista de carga del supervisor.
-  - Detalle del pedido (botón del ojo).
-  - Texto del botón Copiar.
-  - PDF generado para el proveedor.
-- La descripción del servicio queda como campo separado.
+Se agregó trazabilidad visible de los cambios de estado del pedido.
 
-## Paso obligatorio en Supabase
+Cuando un pedido pasa, por ejemplo, de **Pendiente** a **En preparación**, **Enviado**, **Entregado** o **Cancelado**:
 
-Ejecutar una sola vez en **Supabase > SQL Editor**:
+- la fecha y hora siguen quedando registradas en `order_status_history`;
+- el movimiento aparece en **Historial** con estado anterior, estado nuevo, fecha/hora y usuario;
+- dentro del botón del **ojo** aparece **Último cambio de estado**;
+- dentro del mismo detalle aparece un bloque **Historial de estados** con toda la secuencia del pedido, fecha/hora y usuario que realizó cada cambio;
+- después de guardar un estado, el modal permanece abierto y actualiza la trazabilidad inmediatamente.
 
-`actualizar-frecuencia-servicios.sql`
+## Supabase
 
-La migración conserva los datos anteriores: si antes se había escrito una frecuencia dentro de `Descripción o frecuencia`, la copia al nuevo campo `frequency` cuando todavía está vacío.
+**No hay que ejecutar ningún SQL nuevo para esta actualización.**
+
+La aplicación ya utiliza la tabla `order_status_history` y el trigger de auditoría instalados en las versiones anteriores.
 
 ## Publicar
 
-Reemplazar los archivos de la aplicación y luego:
+Reemplazar los archivos de la aplicación y ejecutar:
 
 ```powershell
 git add .
-git commit -m "Agregar frecuencia por servicio"
+git commit -m "Registrar fechas de cambios de estado"
 git push origin main
 ```
 
-Cuando GitHub Pages termine el deploy, hacer `Ctrl + Shift + R` una vez.
-
-## Paquete depurado
-
-Se eliminaron del ZIP las migraciones SQL históricas, instructivos viejos, respaldos de seeds y archivos de migraciones anteriores. Se conserva únicamente:
-
-- la aplicación actual;
-- assets e iconos;
-- el analizador de facturas vigente de Supabase Edge Functions;
-- la única migración SQL necesaria para este cambio.
+Cuando termine el deploy de GitHub Pages, hacer `Ctrl + Shift + R` una vez. Si la aplicación está instalada como PWA, cerrarla y volver a abrirla para tomar la nueva versión del Service Worker.
