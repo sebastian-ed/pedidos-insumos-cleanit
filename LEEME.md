@@ -18,3 +18,8 @@ Los archivos de la app pueden subirse normalmente al repositorio y publicarse po
 ## Conciliación IVA múltiple
 
 La sección Facturas → Conciliación IVA permite cargar varias facturas manualmente, asociarlas a pedidos, calcular el neto sin IVA y copiar un resumen completo. El borrador manual se guarda localmente en el navegador. Esta mejora no requiere SQL adicional.
+
+
+## Exportación de conciliación IVA
+
+La conciliación múltiple de Facturas permite ahora exportar el lote actual en PDF y XLSX. El PDF incluye resumen y detalle por factura; el XLSX contiene las hojas `Conciliación` y `Resumen`. No requiere SQL adicional.

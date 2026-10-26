@@ -270,6 +270,8 @@
     E.invoiceVatDefaultRate.addEventListener('input', handleInvoiceVatDefaultRateChange);
     E.invoiceVatBatchAddButton.addEventListener('click', () => addInvoiceVatBatchRow());
     E.invoiceVatBatchCopyButton.addEventListener('click', copyInvoiceVatBatchSummary);
+    E.invoiceVatBatchPdfButton.addEventListener('click', exportInvoiceVatBatchPdf);
+    E.invoiceVatBatchXlsxButton.addEventListener('click', exportInvoiceVatBatchXlsx);
     E.invoiceVatBatchClearButton.addEventListener('click', clearInvoiceVatBatch);
     E.invoiceVatBatchPasteToggleButton.addEventListener('click', toggleInvoiceVatBatchPaste);
     E.invoiceVatBatchPasteApplyButton.addEventListener('click', importInvoiceVatBatchPaste);
@@ -2809,6 +2811,277 @@
     });
     lines.push('', `TOTAL CON IVA\t${formatCurrency(grossTotal)}`, `TOTAL SIN IVA\t${formatCurrency(netTotal)}`, `TOTAL PEDIDOS VINCULADOS\t${formatCurrency(orderTotal)}`, `DIFERENCIA TOTAL\t${diffTotal > 0 ? '+' : ''}${formatCurrency(diffTotal)}`, `FACTURAS VINCULADAS\t${linked} de ${usable.length}`);
     await copyText(lines.join('\n'));
+  }
+
+  function invoiceVatBatchExportRows() {
+    return S.invoiceVatBatchRows
+      .filter((row) => parseInvoiceMoneyInput(row.gross) != null || row.invoiceNumber || row.orderId)
+      .map((row, index) => {
+        const { gross, rate, net, vat, order, result } = invoiceVatBatchMetrics(row);
+        const service = order ? serviceById(order.service_id) : null;
+        const orderAmount = order ? number(order.total_amount) : null;
+        const diffPercent = orderAmount && result.diff != null ? (result.diff / orderAmount) * 100 : null;
+        const statusText = result.status === 'ok'
+          ? 'Coincide'
+          : result.status === 'over'
+            ? 'Factura mayor'
+            : result.status === 'under'
+              ? 'Factura menor'
+              : 'Sin comparar';
+        return {
+          index: index + 1,
+          invoiceNumber: row.invoiceNumber || 'Sin número',
+          invoiceDate: row.invoiceDate || '',
+          vatRate: rate,
+          gross,
+          vat,
+          net,
+          orderCode: order?.order_code || '',
+          serviceName: service?.name || '',
+          orderAmount,
+          difference: result.diff,
+          differencePercent: diffPercent,
+          status: statusText
+        };
+      });
+  }
+
+  function invoiceVatBatchExportSummary(rows) {
+    const valid = rows.filter((row) => row.gross != null);
+    const linked = rows.filter((row) => row.orderCode && row.net != null);
+    const grossTotal = valid.reduce((sum, row) => sum + number(row.gross), 0);
+    const vatTotal = valid.reduce((sum, row) => sum + number(row.vat), 0);
+    const netTotal = valid.reduce((sum, row) => sum + number(row.net), 0);
+    const orderTotal = linked.reduce((sum, row) => sum + number(row.orderAmount), 0);
+    const differenceTotal = linked.reduce((sum, row) => sum + number(row.difference), 0);
+    const okCount = linked.filter((row) => row.status === 'Coincide').length;
+    const differenceCount = linked.filter((row) => ['Factura mayor','Factura menor'].includes(row.status)).length;
+    return {
+      invoices: valid.length,
+      linked: linked.length,
+      unlinked: valid.length - linked.length,
+      grossTotal,
+      vatTotal,
+      netTotal,
+      orderTotal,
+      differenceTotal,
+      okCount,
+      differenceCount
+    };
+  }
+
+  function exportInvoiceVatBatchXlsx() {
+    const rows = invoiceVatBatchExportRows();
+    if (!rows.length) return toast('No hay facturas para exportar.', 'error');
+    if (!window.XLSX) return toast('No se pudo cargar el generador de Excel. Revisá la conexión y volvé a intentar.', 'error');
+
+    buttonBusy(E.invoiceVatBatchXlsxButton, true, 'Generando XLSX...');
+    try {
+      const summary = invoiceVatBatchExportSummary(rows);
+      const detail = rows.map((row) => ({
+        'N°': row.index,
+        'Factura': row.invoiceNumber,
+        'Fecha': row.invoiceDate,
+        'IVA %': row.vatRate,
+        'Importe con IVA': row.gross,
+        'IVA incluido': row.vat,
+        'Importe sin IVA': row.net,
+        'Pedido': row.orderCode,
+        'Servicio': row.serviceName,
+        'Valor pedido': row.orderAmount,
+        'Diferencia': row.difference,
+        'Diferencia %': row.differencePercent,
+        'Resultado': row.status
+      }));
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(detail);
+      ws['!cols'] = [
+        { wch: 5 }, { wch: 22 }, { wch: 13 }, { wch: 10 }, { wch: 18 }, { wch: 18 },
+        { wch: 18 }, { wch: 16 }, { wch: 34 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 18 }
+      ];
+      const moneyColumns = ['E','F','G','J','K'];
+      moneyColumns.forEach((col) => {
+        for (let r = 2; r <= detail.length + 1; r += 1) {
+          const cell = ws[`${col}${r}`];
+          if (cell && typeof cell.v === 'number') cell.z = '$ #,##0.00';
+        }
+      });
+      for (let r = 2; r <= detail.length + 1; r += 1) {
+        const vatCell = ws[`D${r}`];
+        if (vatCell && typeof vatCell.v === 'number') vatCell.z = '0.00';
+        const pctCell = ws[`L${r}`];
+        if (pctCell && typeof pctCell.v === 'number') pctCell.z = '0.00';
+      }
+      XLSX.utils.book_append_sheet(wb, ws, 'Conciliación');
+
+      const summaryData = [
+        ['CONCILIACIÓN IVA · FACTURAS VS PEDIDOS', ''],
+        ['Generado', new Date().toLocaleString('es-AR')],
+        ['', ''],
+        ['Facturas con importe', summary.invoices],
+        ['Facturas vinculadas', summary.linked],
+        ['Facturas sin pedido', summary.unlinked],
+        ['Coinciden', summary.okCount],
+        ['Con diferencia', summary.differenceCount],
+        ['', ''],
+        ['Total con IVA', summary.grossTotal],
+        ['IVA incluido', summary.vatTotal],
+        ['Total sin IVA', summary.netTotal],
+        ['Total pedidos vinculados', summary.orderTotal],
+        ['Diferencia total', summary.differenceTotal]
+      ];
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+      wsSummary['!cols'] = [{ wch: 30 }, { wch: 24 }];
+      [10,11,12,13,14].forEach((r) => {
+        const cell = wsSummary[`B${r}`];
+        if (cell && typeof cell.v === 'number') cell.z = '$ #,##0.00';
+      });
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen');
+
+      const stamp = localDateKey(new Date()).replaceAll('-', '');
+      XLSX.writeFile(wb, `Conciliacion_IVA_CleanIt_${stamp}.xlsx`);
+      toast(`Excel generado con ${rows.length} ${rows.length === 1 ? 'factura' : 'facturas'}.`, 'success');
+    } catch (error) {
+      console.error(error);
+      toast(error.message || 'No se pudo generar el Excel.', 'error');
+    } finally {
+      buttonBusy(E.invoiceVatBatchXlsxButton, false);
+    }
+  }
+
+  function exportInvoiceVatBatchPdf() {
+    const rows = invoiceVatBatchExportRows();
+    if (!rows.length) return toast('No hay facturas para exportar.', 'error');
+    if (!window.jspdf?.jsPDF) return toast('No se pudo cargar el generador de PDF. Revisá la conexión y volvé a intentar.', 'error');
+
+    buttonBusy(E.invoiceVatBatchPdfButton, true, 'Generando PDF...');
+    try {
+      const summary = invoiceVatBatchExportSummary(rows);
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const marginX = 10;
+      const bottom = 10;
+      const contentW = pageW - marginX * 2;
+      let y = 10;
+      let page = 1;
+
+      const setFont = (style = 'normal', size = 8) => { doc.setFont('helvetica', style); doc.setFontSize(size); };
+      const footer = () => {
+        setFont('normal', 6.8);
+        doc.setTextColor(120);
+        doc.text(`Clean It · Conciliación IVA · Página ${page}`, marginX, pageH - 5);
+        doc.text(pdfSafeText(new Date().toLocaleString('es-AR')), pageW - marginX, pageH - 5, { align: 'right' });
+        doc.setTextColor(0);
+      };
+      const startPage = (continuation = false) => {
+        if (page > 1) y = 10;
+        doc.setFillColor(13, 110, 253);
+        doc.roundedRect(marginX, y, 11, 11, 2, 2, 'F');
+        setFont('bold', 7.5);
+        doc.setTextColor(255);
+        doc.text('CI', marginX + 5.5, y + 7.3, { align: 'center' });
+        doc.setTextColor(0);
+        setFont('bold', 15);
+        doc.text(`CONCILIACIÓN IVA${continuation ? ' · CONTINUACIÓN' : ''}`, marginX + 15, y + 4.5);
+        setFont('normal', 7.5);
+        doc.setTextColor(105);
+        doc.text('Facturas del proveedor vs. pedidos Clean It · comparación sobre valores sin IVA', marginX + 15, y + 9.2);
+        doc.setTextColor(0);
+        y += 16;
+      };
+      const addNewPage = () => {
+        footer();
+        doc.addPage();
+        page += 1;
+        startPage(true);
+        drawHeader();
+      };
+
+      const cols = [
+        { key: 'invoice', label: 'FACTURA', x: marginX, w: 36, align: 'left' },
+        { key: 'date', label: 'FECHA', x: marginX + 36, w: 20, align: 'left' },
+        { key: 'gross', label: 'CON IVA', x: marginX + 56, w: 31, align: 'right' },
+        { key: 'net', label: 'SIN IVA', x: marginX + 87, w: 31, align: 'right' },
+        { key: 'order', label: 'PEDIDO / SERVICIO', x: marginX + 118, w: 62, align: 'left' },
+        { key: 'orderAmount', label: 'VALOR PEDIDO', x: marginX + 180, w: 32, align: 'right' },
+        { key: 'difference', label: 'DIFERENCIA', x: marginX + 212, w: 31, align: 'right' },
+        { key: 'status', label: 'RESULTADO', x: marginX + 243, w: contentW - 243, align: 'left' }
+      ];
+      const drawHeader = () => {
+        doc.setFillColor(244, 247, 251);
+        doc.rect(marginX, y, contentW, 8, 'F');
+        setFont('bold', 6.7);
+        doc.setTextColor(85);
+        cols.forEach((col) => {
+          const tx = col.align === 'right' ? col.x + col.w - 2 : col.x + 2;
+          doc.text(col.label, tx, y + 5.2, { align: col.align === 'right' ? 'right' : 'left' });
+        });
+        doc.setTextColor(0);
+        y += 8;
+      };
+
+      startPage(false);
+      setFont('bold', 8.5);
+      doc.text(`Facturas: ${summary.invoices}`, marginX, y);
+      doc.text(`Vinculadas: ${summary.linked}`, marginX + 34, y);
+      doc.text(`Coinciden: ${summary.okCount}`, marginX + 72, y);
+      doc.text(`Con diferencia: ${summary.differenceCount}`, marginX + 108, y);
+      y += 6;
+      setFont('normal', 8);
+      doc.text(`Total con IVA: ${pdfMoney(summary.grossTotal)}`, marginX, y);
+      doc.text(`Total sin IVA: ${pdfMoney(summary.netTotal)}`, marginX + 58, y);
+      doc.text(`Pedidos: ${pdfMoney(summary.orderTotal)}`, marginX + 119, y);
+      doc.text(`Diferencia total: ${summary.differenceTotal > 0 ? '+' : ''}${pdfMoney(summary.differenceTotal)}`, marginX + 174, y);
+      y += 8;
+      drawHeader();
+
+      rows.forEach((row) => {
+        const orderText = row.orderCode ? `${row.orderCode}${row.serviceName ? `\n${row.serviceName}` : ''}` : 'Sin pedido';
+        const grossText = row.gross == null ? '—' : `${pdfMoney(row.gross)}\nIVA ${formatPercent(row.vatRate)}`;
+        const netText = row.net == null ? '—' : pdfMoney(row.net);
+        const orderAmountText = row.orderAmount == null ? '—' : pdfMoney(row.orderAmount);
+        const diffText = row.difference == null ? '—' : `${row.difference > 0 ? '+' : ''}${pdfMoney(row.difference)}${row.differencePercent == null ? '' : `\n${row.differencePercent.toLocaleString('es-AR', { maximumFractionDigits: 2 })}%`}`;
+        const values = [row.invoiceNumber, row.invoiceDate || '—', grossText, netText, orderText, orderAmountText, diffText, row.status];
+        const lineArrays = values.map((value, i) => doc.splitTextToSize(pdfSafeText(value), cols[i].w - 4));
+        const maxLines = Math.max(...lineArrays.map((arr) => arr.length));
+        const rowH = Math.max(10, maxLines * 3.8 + 4);
+        if (y + rowH > pageH - bottom - 7) addNewPage();
+        doc.setDrawColor(232);
+        cols.slice(1).forEach((col) => doc.line(col.x, y, col.x, y + rowH));
+        setFont('normal', 7.2);
+        lineArrays.forEach((lines, i) => {
+          const col = cols[i];
+          const align = col.align === 'right' ? 'right' : 'left';
+          const tx = align === 'right' ? col.x + col.w - 2 : col.x + 2;
+          if (i === 7) {
+            if (row.status === 'Coincide') doc.setTextColor(20, 120, 70);
+            else if (row.status === 'Sin comparar') doc.setTextColor(100);
+            else doc.setTextColor(190, 55, 55);
+            doc.setFont('helvetica', 'bold');
+          } else {
+            doc.setTextColor(25);
+            doc.setFont('helvetica', i === 0 || i === 3 ? 'bold' : 'normal');
+          }
+          doc.text(lines, tx, y + 4.8, { align });
+        });
+        doc.setTextColor(0);
+        doc.setDrawColor(220);
+        doc.line(marginX, y + rowH, pageW - marginX, y + rowH);
+        y += rowH;
+      });
+
+      footer();
+      const stamp = localDateKey(new Date()).replaceAll('-', '');
+      doc.save(`Conciliacion_IVA_CleanIt_${stamp}.pdf`);
+      toast(`PDF generado con ${rows.length} ${rows.length === 1 ? 'factura' : 'facturas'}.`, 'success');
+    } catch (error) {
+      console.error(error);
+      toast(error.message || 'No se pudo generar el PDF.', 'error');
+    } finally {
+      buttonBusy(E.invoiceVatBatchPdfButton, false);
+    }
   }
 
   function handleInvoiceVatDefaultRateChange() {
