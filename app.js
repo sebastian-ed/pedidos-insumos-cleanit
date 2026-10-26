@@ -100,6 +100,7 @@
     invoiceOcrTotalPages: 0,
     invoiceOcrAutoAttempts: new Set(),
     invoiceOcrRunning: false,
+    invoiceVatDefaultRate: 21,
     orderPdfSelected: new Set(),
     orderStatusTimelineByOrder: new Map()
   };
@@ -128,6 +129,7 @@
     M.orderSuccess = new bootstrap.Modal(E.orderSuccessModal);
     M.orderDetail = new bootstrap.Modal(E.orderDetailModal);
     M.invoiceDetail = new bootstrap.Modal(E.invoiceDetailModal);
+    M.invoiceVatReconciliation = new bootstrap.Modal(E.invoiceVatReconciliationModal);
     M.service = new bootstrap.Modal(E.serviceModal);
     M.serviceMaterials = new bootstrap.Modal(E.serviceMaterialsModal);
     M.material = new bootstrap.Modal(E.materialModal);
@@ -257,6 +259,15 @@
     E.invoicePdfInput.addEventListener('change', () => processInvoiceFiles(E.invoicePdfInput.files || []));
     E.invoiceSearch.addEventListener('input', renderInvoices);
     E.invoiceStatusFilter.addEventListener('change', renderInvoices);
+    E.openInvoiceVatReconciliationButton.addEventListener('click', openInvoiceVatReconciliation);
+    E.invoiceVatGrossInput.addEventListener('input', renderInvoiceVatCalculator);
+    E.invoiceVatRateInput.addEventListener('input', renderInvoiceVatCalculator);
+    E.invoiceVatCalculatorOrderSelect.addEventListener('change', renderInvoiceVatCalculator);
+    E.copyInvoiceVatCalculationButton.addEventListener('click', copyInvoiceVatCalculation);
+    E.resetInvoiceVatCalculatorButton.addEventListener('click', resetInvoiceVatCalculator);
+    E.invoiceVatDefaultRate.addEventListener('input', handleInvoiceVatDefaultRateChange);
+    E.invoiceVatReconciliationBody.addEventListener('change', handleInvoiceVatTableChange);
+    E.invoiceVatReconciliationBody.addEventListener('click', handleInvoiceVatTableClick);
     E.refreshInvoicesButton.addEventListener('click', refreshInvoicesData);
     E.saveInvoiceMatchButton.addEventListener('click', saveInvoiceManualMatch);
     E.openInvoicePdfButton.addEventListener('click', openSelectedInvoicePdf);
@@ -2426,6 +2437,207 @@
     return lines.join('\n');
   }
 
+
+  // ---------------------------------------------------------------------------
+  // Conciliación IVA de facturas vs. pedidos
+  // ---------------------------------------------------------------------------
+
+  function parseInvoiceMoneyInput(value) {
+    const raw = String(value ?? '').trim().replace(/\s/g, '').replace(/\$/g, '');
+    if (!raw) return null;
+    let normalized = raw;
+    const comma = normalized.lastIndexOf(',');
+    const dot = normalized.lastIndexOf('.');
+    if (comma >= 0 && dot >= 0) {
+      if (comma > dot) normalized = normalized.replace(/\./g, '').replace(',', '.');
+      else normalized = normalized.replace(/,/g, '');
+    } else if (comma >= 0) {
+      normalized = normalized.replace(/\./g, '').replace(',', '.');
+    } else if ((normalized.match(/\./g) || []).length > 1) {
+      const parts = normalized.split('.');
+      const decimals = parts.pop();
+      normalized = `${parts.join('')}.${decimals}`;
+    }
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function invoiceNetValue(invoice, vatRate = 21) {
+    const subtotal = nullableNumber(invoice?.subtotal);
+    const total = nullableNumber(invoice?.total_amount);
+    if (subtotal != null && subtotal >= 0 && (total == null || subtotal <= total + 0.01)) {
+      return { net: subtotal, source: 'pdf', gross: total };
+    }
+    if (total == null) return { net: null, source: 'missing', gross: null };
+    const rate = Math.max(0, number(vatRate));
+    return { net: rate > 0 ? total / (1 + rate / 100) : total, source: 'calculated', gross: total };
+  }
+
+  function invoiceVatDifferenceStatus(orderAmount, netAmount) {
+    if (netAmount == null || orderAmount == null) return { status: 'partial', diff: null };
+    const diff = netAmount - orderAmount;
+    const tolerance = Math.max(1, moneyTolerance(orderAmount));
+    if (Math.abs(diff) <= tolerance) return { status: 'ok', diff };
+    return { status: diff > 0 ? 'over' : 'under', diff };
+  }
+
+  function invoiceVatStatusBadge(result) {
+    if (result.status === 'ok') return '<span class="badge text-bg-success">Coincide</span>';
+    if (result.status === 'over') return '<span class="badge text-bg-danger">Factura mayor</span>';
+    if (result.status === 'under') return '<span class="badge text-bg-warning">Factura menor</span>';
+    return '<span class="badge text-bg-secondary">Sin comparar</span>';
+  }
+
+  function openInvoiceVatReconciliation() {
+    if (!isFullAdmin()) return;
+    S.invoiceVatDefaultRate = Math.max(0, number(E.invoiceVatDefaultRate?.value || 21)) || 21;
+    populateInvoiceVatOrderSelect(E.invoiceVatCalculatorOrderSelect, '');
+    renderInvoiceVatCalculator();
+    renderInvoiceVatReconciliation();
+    M.invoiceVatReconciliation.show();
+  }
+
+  function populateInvoiceVatOrderSelect(select, selectedId = '') {
+    if (!select) return;
+    const orders = [...S.orders].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    select.innerHTML = `<option value="">Sin pedido</option>${orders.map((order) => {
+      const service = serviceById(order.service_id);
+      const label = `${order.order_code} · ${service?.name || 'Servicio'} · ${formatCurrency(order.total_amount)}`;
+      return `<option value="${ea(order.id)}">${eh(label)}</option>`;
+    }).join('')}`;
+    select.value = selectedId || '';
+  }
+
+  function renderInvoiceVatCalculator() {
+    if (!E.invoiceVatCalculatorResults) return;
+    const gross = parseInvoiceMoneyInput(E.invoiceVatGrossInput.value);
+    const rate = Math.max(0, number(E.invoiceVatRateInput.value));
+    const net = gross == null ? null : (rate > 0 ? gross / (1 + rate / 100) : gross);
+    const vat = gross == null || net == null ? null : gross - net;
+    const order = S.orders.find((item) => item.id === E.invoiceVatCalculatorOrderSelect.value) || null;
+    const compare = order && net != null ? invoiceVatDifferenceStatus(number(order.total_amount), net) : { status: 'partial', diff: null };
+    const diffText = compare.diff == null ? '—' : `${compare.diff > 0 ? '+' : ''}${formatCurrency(compare.diff)}`;
+    E.invoiceVatCalculatorResults.innerHTML = `
+      <div class="invoice-vat-result-card"><span>Con IVA</span><strong>${gross == null ? '—' : eh(formatCurrency(gross))}</strong></div>
+      <div class="invoice-vat-result-card is-primary"><span>Sin IVA</span><strong>${net == null ? '—' : eh(formatCurrency(net))}</strong><small>Base comparable con el pedido</small></div>
+      <div class="invoice-vat-result-card"><span>IVA incluido</span><strong>${vat == null ? '—' : eh(formatCurrency(vat))}</strong><small>${eh(formatPercent(rate))}</small></div>
+      <div class="invoice-vat-result-card ${compare.status === 'ok' ? 'is-success' : (compare.status === 'partial' ? '' : 'is-danger')}"><span>${order ? `Pedido ${eh(order.order_code)}` : 'Comparación'}</span><strong>${order ? eh(formatCurrency(order.total_amount)) : 'Elegí un pedido'}</strong><small>${order && net != null ? `Diferencia: ${eh(diffText)}${number(order.total_amount) > 0 ? ` · ${eh(((compare.diff / number(order.total_amount)) * 100).toLocaleString('es-AR', { maximumFractionDigits: 2 }))}%` : ''}` : 'Opcional'}</small>${order && net != null ? `<div class="mt-2">${invoiceVatStatusBadge(compare)}</div>` : ''}</div>`;
+  }
+
+  async function copyInvoiceVatCalculation() {
+    const gross = nullableNumber(E.invoiceVatGrossInput.value);
+    if (gross == null) return toast('Ingresá el importe de la factura.', 'error');
+    const rate = Math.max(0, number(E.invoiceVatRateInput.value));
+    const net = rate > 0 ? gross / (1 + rate / 100) : gross;
+    const vat = gross - net;
+    const order = S.orders.find((item) => item.id === E.invoiceVatCalculatorOrderSelect.value) || null;
+    const lines = [`Factura con IVA: ${formatCurrency(gross)}`, `IVA (${formatPercent(rate)}): ${formatCurrency(vat)}`, `Importe sin IVA: ${formatCurrency(net)}`];
+    if (order) {
+      const diff = net - number(order.total_amount);
+      lines.push(`Pedido ${order.order_code}: ${formatCurrency(order.total_amount)}`, `Diferencia: ${diff > 0 ? '+' : ''}${formatCurrency(diff)}`);
+    }
+    await copyText(lines.join('\n'));
+  }
+
+  function resetInvoiceVatCalculator() {
+    E.invoiceVatGrossInput.value = '';
+    E.invoiceVatRateInput.value = '21';
+    E.invoiceVatCalculatorOrderSelect.value = '';
+    renderInvoiceVatCalculator();
+  }
+
+  function handleInvoiceVatDefaultRateChange() {
+    S.invoiceVatDefaultRate = Math.max(0, number(E.invoiceVatDefaultRate.value));
+    renderInvoiceVatReconciliation();
+  }
+
+  function renderInvoiceVatReconciliation() {
+    if (!E.invoiceVatReconciliationBody) return;
+    const rate = Math.max(0, number(E.invoiceVatDefaultRate.value || S.invoiceVatDefaultRate || 21));
+    E.invoiceVatEmptyState.classList.toggle('d-none', S.invoices.length > 0);
+    E.invoiceVatReconciliationBody.innerHTML = S.invoices.map((invoice) => {
+      const { net, source, gross } = invoiceNetValue(invoice, rate);
+      const order = S.orders.find((item) => item.id === invoice.matched_order_id) || null;
+      const result = order ? invoiceVatDifferenceStatus(number(order.total_amount), net) : { status: 'partial', diff: null };
+      const difference = result.diff == null ? '—' : `${result.diff > 0 ? '+' : ''}${formatCurrency(result.diff)}`;
+      const options = `<option value="">Sin pedido</option>${[...S.orders].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).map((candidate) => {
+        const service = serviceById(candidate.service_id);
+        return `<option value="${ea(candidate.id)}" ${candidate.id === invoice.matched_order_id ? 'selected' : ''}>${eh(candidate.order_code)} · ${eh(service?.name || 'Servicio')} · ${eh(formatCurrency(candidate.total_amount))}</option>`;
+      }).join('')}`;
+      const sourceLabel = source === 'pdf' ? 'Subtotal leído' : (source === 'calculated' ? `Calculado al ${formatPercent(rate)}` : 'No disponible');
+      const invoiceDate = invoice.invoice_date ? new Intl.DateTimeFormat('es-AR').format(new Date(`${invoice.invoice_date}T12:00:00`)) : 'No detectada';
+      return `<tr data-invoice-vat-row="${ea(invoice.id)}">
+        <td><strong>${eh(invoice.invoice_number || invoice.file_name)}</strong><div class="table-subtitle">${eh(invoice.supplier_name || 'Proveedor')}</div></td>
+        <td>${eh(invoiceDate)}</td>
+        <td><strong>${gross == null ? 'No leído' : eh(formatCurrency(gross))}</strong></td>
+        <td><strong class="text-primary">${net == null ? 'No leído' : eh(formatCurrency(net))}</strong><div class="table-subtitle">${eh(sourceLabel)}</div></td>
+        <td><select class="form-select form-select-sm invoice-vat-order-select" data-invoice-vat-order="${ea(invoice.id)}">${options}</select></td>
+        <td><strong>${order ? eh(formatCurrency(order.total_amount)) : '—'}</strong></td>
+        <td><strong class="${result.status === 'ok' ? 'text-success' : (result.status === 'partial' ? 'text-secondary' : 'text-danger')}">${eh(difference)}</strong></td>
+        <td>${invoiceVatStatusBadge(result)}</td>
+        <td><button class="btn btn-outline-primary btn-sm fw-bold" type="button" data-invoice-vat-save="${ea(invoice.id)}"><i class="bi bi-link-45deg me-1"></i>Vincular</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  function handleInvoiceVatTableChange(event) {
+    const select = event.target.closest('[data-invoice-vat-order]');
+    if (!select) return;
+    const invoiceId = select.dataset.invoiceVatOrder;
+    const row = select.closest('[data-invoice-vat-row]');
+    const invoice = invoiceById(invoiceId);
+    if (!invoice || !row) return;
+    const rate = Math.max(0, number(E.invoiceVatDefaultRate.value || 21));
+    const { net } = invoiceNetValue(invoice, rate);
+    const order = S.orders.find((item) => item.id === select.value) || null;
+    const result = order ? invoiceVatDifferenceStatus(number(order.total_amount), net) : { status: 'partial', diff: null };
+    const cells = row.querySelectorAll('td');
+    if (cells[5]) cells[5].innerHTML = `<strong>${order ? eh(formatCurrency(order.total_amount)) : '—'}</strong>`;
+    if (cells[6]) cells[6].innerHTML = `<strong class="${result.status === 'ok' ? 'text-success' : (result.status === 'partial' ? 'text-secondary' : 'text-danger')}">${result.diff == null ? '—' : eh(`${result.diff > 0 ? '+' : ''}${formatCurrency(result.diff)}`)}</strong>`;
+    if (cells[7]) cells[7].innerHTML = invoiceVatStatusBadge(result);
+  }
+
+  async function handleInvoiceVatTableClick(event) {
+    const button = event.target.closest('[data-invoice-vat-save]');
+    if (!button) return;
+    const invoiceId = button.dataset.invoiceVatSave;
+    const row = button.closest('[data-invoice-vat-row]');
+    const select = row?.querySelector('[data-invoice-vat-order]');
+    if (!select) return;
+    await saveInvoiceVatMatch(invoiceId, select.value || null, button);
+  }
+
+  async function saveInvoiceVatMatch(invoiceId, orderId, button) {
+    const invoice = invoiceById(invoiceId);
+    if (!invoice) return;
+    buttonBusy(button, true, 'Guardando...');
+    try {
+      let comparison;
+      let status;
+      if (orderId) {
+        const order = S.orders.find((item) => item.id === orderId);
+        if (!order) throw new Error('El pedido seleccionado ya no existe.');
+        comparison = compareInvoiceAgainstOrder(invoice, order);
+        status = comparison.status;
+      } else {
+        status = invoice.extracted_text?.trim() ? 'sin_match' : 'sin_lectura';
+        comparison = emptyInvoiceComparison(status);
+        Object.assign(comparison, invoiceExtractionMetaFrom(invoice));
+      }
+      const update = { matched_order_id: orderId, match_method: orderId ? 'manual' : 'sin_match', match_score: orderId ? 100 : 0, comparison_status: status, comparison_summary: comparison, reviewed: false };
+      const { data, error } = await S.sb.from('supplier_invoices').update(update).eq('id', invoice.id).select('*').single();
+      if (error) throw error;
+      replaceInvoiceState(data);
+      renderInvoices();
+      renderInvoiceVatReconciliation();
+      toast(orderId ? 'Factura vinculada al pedido.' : 'Vinculación eliminada.', 'success');
+    } catch (error) {
+      console.error(error);
+      toast(error.message || 'No se pudo vincular la factura.', 'error');
+    } finally {
+      buttonBusy(button, false);
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Control de facturas de proveedor

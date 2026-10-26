@@ -42,3 +42,15 @@ git push origin main
 ```
 
 Después del deploy de GitHub Pages, hacer `Ctrl + Shift + R`. Si la app está instalada como PWA, cerrarla completamente y volver a abrirla.
+
+
+## Conciliación IVA de facturas
+
+En **Facturas → Conciliación IVA** podés:
+- ingresar manualmente un importe con IVA y obtener el neto sin IVA;
+- elegir la alícuota (21% por defecto);
+- contrastar el neto contra cualquier pedido;
+- revisar las facturas PDF ya cargadas con fecha, número, total con IVA, neto sin IVA y diferencia contra el pedido;
+- vincular una factura al pedido correcto desde la misma pantalla.
+
+No requiere SQL nuevo: utiliza la tabla de facturas existente.

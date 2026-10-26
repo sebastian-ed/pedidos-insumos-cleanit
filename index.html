@@ -294,7 +294,7 @@
         </section>
 
         <section id="adminInvoices" class="admin-panel d-none">
-          <div class="panel-heading"><div><span class="eyebrow">Control de proveedores</span><h1>Facturas</h1><p>Adjuntá los PDF y compará automáticamente lo facturado contra cada pedido.</p></div><div class="d-flex flex-wrap gap-2"><button id="refreshInvoicesButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-arrow-clockwise me-2"></i>Actualizar</button><button id="selectInvoiceFilesButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-file-earmark-pdf me-2"></i>Cargar facturas</button><input id="invoicePdfInput" class="d-none" type="file" accept="application/pdf,.pdf" multiple></div></div>
+          <div class="panel-heading"><div><span class="eyebrow">Control de proveedores</span><h1>Facturas</h1><p>Adjuntá los PDF y compará automáticamente lo facturado contra cada pedido.</p></div><div class="d-flex flex-wrap gap-2"><button id="openInvoiceVatReconciliationButton" class="btn btn-outline-success fw-bold" type="button"><i class="bi bi-calculator me-2"></i>Conciliación IVA</button><button id="refreshInvoicesButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-arrow-clockwise me-2"></i>Actualizar</button><button id="selectInvoiceFilesButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-file-earmark-pdf me-2"></i>Cargar facturas</button><input id="invoicePdfInput" class="d-none" type="file" accept="application/pdf,.pdf" multiple></div></div>
           <div class="alert alert-info invoice-scope-note"><i class="bi bi-shield-check me-2"></i>La app valida <strong>pedido vs. factura</strong>: SKU, cantidades, precios e importe total. Los PDF quedan privados. Los PDF escaneados se leen automáticamente con OCR; la primera lectura puede tardar unos minutos.</div>
           <div id="invoiceDropZone" class="invoice-drop-zone mb-4" tabindex="0" role="button" aria-label="Adjuntar facturas PDF">
             <div class="invoice-drop-icon"><i class="bi bi-cloud-arrow-up"></i></div>
@@ -500,6 +500,38 @@
             <button id="saveOrderChangesButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-check2-circle me-2"></i>Guardar pedido</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="invoiceVatReconciliationModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div><div class="eyebrow">Control de proveedor</div><h5 class="modal-title fw-black">Conciliación IVA · Factura vs. pedido</h5><p class="text-secondary small mb-0 mt-1">Convertí importes con IVA a netos sin IVA y comparalos contra tus pedidos.</p></div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-info invoice-vat-note"><i class="bi bi-info-circle-fill me-2"></i>Los pedidos de la app están expresados <strong>sin IVA</strong>. La alícuota predeterminada es 21%; podés cambiarla para una factura particular.</div>
+
+          <section class="section-card mb-4 invoice-vat-calculator">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-3"><div><span class="eyebrow">Calculadora rápida</span><h6 class="fw-black mb-1">Sacar IVA y contrastar un pedido</h6><p class="text-secondary small mb-0">No modifica ningún dato. Sirve para un control puntual.</p></div><button id="resetInvoiceVatCalculatorButton" class="btn btn-light btn-sm" type="button"><i class="bi bi-arrow-counterclockwise me-1"></i>Limpiar</button></div>
+            <div class="row g-3 align-items-end">
+              <div class="col-md-4 col-xl-3"><label for="invoiceVatGrossInput" class="form-label">Importe factura con IVA</label><input id="invoiceVatGrossInput" class="form-control form-control-lg" type="text" inputmode="decimal" placeholder="Ej. 100.376,70"></div>
+              <div class="col-md-3 col-xl-2"><label for="invoiceVatRateInput" class="form-label">IVA %</label><input id="invoiceVatRateInput" class="form-control form-control-lg" type="number" min="0" max="100" step="0.01" value="21"></div>
+              <div class="col-md-5 col-xl-5"><label for="invoiceVatCalculatorOrderSelect" class="form-label">Pedido para contrastar <span class="text-secondary fw-normal">(opcional)</span></label><select id="invoiceVatCalculatorOrderSelect" class="form-select form-select-lg"><option value="">Sin pedido</option></select></div>
+              <div class="col-xl-2"><button id="copyInvoiceVatCalculationButton" class="btn btn-outline-primary w-100 fw-bold" type="button"><i class="bi bi-copy me-2"></i>Copiar</button></div>
+            </div>
+            <div id="invoiceVatCalculatorResults" class="invoice-vat-results mt-4"></div>
+          </section>
+
+          <section class="section-card p-0 overflow-hidden">
+            <div class="invoice-table-heading"><div><span class="eyebrow">Facturas cargadas</span><h6 class="fw-black mb-1">Conciliación rápida</h6><p class="text-secondary small mb-0">Asigná la factura al pedido correcto y compará el neto sin IVA.</p></div><div class="d-flex align-items-end gap-2"><div><label for="invoiceVatDefaultRate" class="form-label mb-1">IVA por defecto</label><div class="input-group input-group-sm"><input id="invoiceVatDefaultRate" class="form-control" type="number" min="0" max="100" step="0.01" value="21"><span class="input-group-text">%</span></div></div></div></div>
+            <div class="table-responsive"><table class="table admin-table align-middle invoice-vat-table mb-0"><thead><tr><th>Factura</th><th>Fecha</th><th>Con IVA</th><th>Sin IVA</th><th>Pedido</th><th>Valor pedido</th><th>Diferencia</th><th>Resultado</th><th></th></tr></thead><tbody id="invoiceVatReconciliationBody"></tbody></table></div>
+          </section>
+          <div id="invoiceVatEmptyState" class="empty-state d-none mt-3"><i class="bi bi-receipt"></i><strong>No hay facturas cargadas</strong><span>Cargá los PDF desde la sección Facturas y volvé a abrir esta conciliación.</span></div>
+        </div>
+        <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button></div>
       </div>
     </div>
   </div>
@@ -788,8 +820,8 @@
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
-  <!-- Build: PDF múltiple de pedidos + facturas IA + PWA + facturación + scroll sticky 2026-08-26-v1 -->
+  <!-- Build: conciliación IVA + rangos de consumo + facturas IA + PWA 2026-10-26-v1 -->
   <script src="config.js"></script>
-  <script src="app.js?v=20261026-consumption-range2"></script>
+  <script src="app.js?v=20261026-invoice-vat1"></script>
 </body>
 </html>
