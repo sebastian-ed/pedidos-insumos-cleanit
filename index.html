@@ -508,7 +508,7 @@
     <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
-          <div><div class="eyebrow">Control de proveedor</div><h5 class="modal-title fw-black">Conciliación IVA · Factura vs. pedido</h5><p class="text-secondary small mb-0 mt-1">Convertí importes con IVA a netos sin IVA y comparalos contra tus pedidos.</p></div>
+          <div><div class="eyebrow">Control de proveedor</div><h5 class="modal-title fw-black">Conciliación IVA · Factura vs. pedido</h5><p class="text-secondary small mb-0 mt-1">Convertí importes con IVA a netos sin IVA y conciliá una o varias facturas contra tus pedidos.</p></div>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
         <div class="modal-body">
@@ -523,6 +523,25 @@
               <div class="col-xl-2"><button id="copyInvoiceVatCalculationButton" class="btn btn-outline-primary w-100 fw-bold" type="button"><i class="bi bi-copy me-2"></i>Copiar</button></div>
             </div>
             <div id="invoiceVatCalculatorResults" class="invoice-vat-results mt-4"></div>
+          </section>
+
+          <section class="section-card mb-4 invoice-vat-batch-section">
+            <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 align-items-xl-center mb-3">
+              <div><span class="eyebrow">Conciliación múltiple</span><h6 class="fw-black mb-1">Varias facturas contra varios pedidos</h6><p class="text-secondary small mb-0">Cargá tu listado, asigná cada factura al pedido correspondiente y controlá todas las diferencias de una sola vez. El borrador queda guardado en este navegador.</p></div>
+              <div class="d-flex flex-wrap gap-2">
+                <button id="invoiceVatBatchPasteToggleButton" class="btn btn-outline-secondary btn-sm fw-bold" type="button"><i class="bi bi-clipboard-data me-1"></i>Pegar listado</button>
+                <button id="invoiceVatBatchAddButton" class="btn btn-outline-primary btn-sm fw-bold" type="button"><i class="bi bi-plus-lg me-1"></i>Agregar factura</button>
+                <button id="invoiceVatBatchCopyButton" class="btn btn-primary btn-sm fw-bold" type="button"><i class="bi bi-copy me-1"></i>Copiar conciliación</button>
+                <button id="invoiceVatBatchClearButton" class="btn btn-light btn-sm fw-bold" type="button"><i class="bi bi-trash3 me-1"></i>Limpiar</button>
+              </div>
+            </div>
+            <div id="invoiceVatBatchPastePanel" class="invoice-vat-batch-paste d-none mb-3">
+              <label for="invoiceVatBatchPasteInput" class="form-label fw-bold">Pegá filas desde Excel</label>
+              <textarea id="invoiceVatBatchPasteInput" class="form-control" rows="5" placeholder="0016-00005501	100.376,70&#10;0016-00005502	06/10/2026	85.910,40"></textarea>
+              <div class="d-flex flex-column flex-md-row justify-content-between gap-2 align-items-md-center mt-2"><small class="text-secondary">Formato admitido: <strong>N° factura + importe</strong> o <strong>N° factura + fecha + importe</strong>. Podés pegar columnas de Excel directamente.</small><button id="invoiceVatBatchPasteApplyButton" class="btn btn-outline-primary btn-sm fw-bold" type="button">Agregar filas</button></div>
+            </div>
+            <div id="invoiceVatBatchSummary" class="invoice-vat-batch-summary mb-3"></div>
+            <div class="table-responsive invoice-vat-batch-table-wrap"><table class="table admin-table align-middle invoice-vat-batch-table mb-0"><thead><tr><th>#</th><th>N° factura</th><th>Fecha</th><th>Con IVA</th><th>IVA</th><th>Sin IVA</th><th>Pedido</th><th>Valor pedido</th><th>Diferencia</th><th>Resultado</th><th></th></tr></thead><tbody id="invoiceVatBatchBody"></tbody></table></div>
           </section>
 
           <section class="section-card p-0 overflow-hidden">
@@ -820,7 +839,7 @@
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
-  <!-- Build: conciliación IVA + rangos de consumo + facturas IA + PWA 2026-10-26-v1 -->
+  <!-- Build: conciliación IVA múltiple + rangos de consumo + facturas IA + PWA 2026-10-26-v2 -->
   <script src="config.js"></script>
   <script src="app.js?v=20261026-invoice-vat1"></script>
 </body>

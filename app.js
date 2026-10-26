@@ -101,6 +101,8 @@
     invoiceOcrAutoAttempts: new Set(),
     invoiceOcrRunning: false,
     invoiceVatDefaultRate: 21,
+    invoiceVatBatchRows: [],
+    invoiceVatBatchLoaded: false,
     orderPdfSelected: new Set(),
     orderStatusTimelineByOrder: new Map()
   };
@@ -266,6 +268,14 @@
     E.copyInvoiceVatCalculationButton.addEventListener('click', copyInvoiceVatCalculation);
     E.resetInvoiceVatCalculatorButton.addEventListener('click', resetInvoiceVatCalculator);
     E.invoiceVatDefaultRate.addEventListener('input', handleInvoiceVatDefaultRateChange);
+    E.invoiceVatBatchAddButton.addEventListener('click', () => addInvoiceVatBatchRow());
+    E.invoiceVatBatchCopyButton.addEventListener('click', copyInvoiceVatBatchSummary);
+    E.invoiceVatBatchClearButton.addEventListener('click', clearInvoiceVatBatch);
+    E.invoiceVatBatchPasteToggleButton.addEventListener('click', toggleInvoiceVatBatchPaste);
+    E.invoiceVatBatchPasteApplyButton.addEventListener('click', importInvoiceVatBatchPaste);
+    E.invoiceVatBatchBody.addEventListener('input', handleInvoiceVatBatchInput);
+    E.invoiceVatBatchBody.addEventListener('change', handleInvoiceVatBatchInput);
+    E.invoiceVatBatchBody.addEventListener('click', handleInvoiceVatBatchClick);
     E.invoiceVatReconciliationBody.addEventListener('change', handleInvoiceVatTableChange);
     E.invoiceVatReconciliationBody.addEventListener('click', handleInvoiceVatTableClick);
     E.refreshInvoicesButton.addEventListener('click', refreshInvoicesData);
@@ -2492,7 +2502,9 @@
     if (!isFullAdmin()) return;
     S.invoiceVatDefaultRate = Math.max(0, number(E.invoiceVatDefaultRate?.value || 21)) || 21;
     populateInvoiceVatOrderSelect(E.invoiceVatCalculatorOrderSelect, '');
+    loadInvoiceVatBatchDraft();
     renderInvoiceVatCalculator();
+    renderInvoiceVatBatch();
     renderInvoiceVatReconciliation();
     M.invoiceVatReconciliation.show();
   }
@@ -2525,7 +2537,7 @@
   }
 
   async function copyInvoiceVatCalculation() {
-    const gross = nullableNumber(E.invoiceVatGrossInput.value);
+    const gross = parseInvoiceMoneyInput(E.invoiceVatGrossInput.value);
     if (gross == null) return toast('Ingresá el importe de la factura.', 'error');
     const rate = Math.max(0, number(E.invoiceVatRateInput.value));
     const net = rate > 0 ? gross / (1 + rate / 100) : gross;
@@ -2544,6 +2556,259 @@
     E.invoiceVatRateInput.value = '21';
     E.invoiceVatCalculatorOrderSelect.value = '';
     renderInvoiceVatCalculator();
+  }
+
+  const INVOICE_VAT_BATCH_STORAGE_KEY = 'cleanit_invoice_vat_batch_v1';
+
+  function invoiceVatBatchNewId() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    return `vat-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  }
+
+  function invoiceVatBatchDefaultRow(seed = {}) {
+    return {
+      id: seed.id || invoiceVatBatchNewId(),
+      invoiceNumber: String(seed.invoiceNumber || ''),
+      invoiceDate: String(seed.invoiceDate || ''),
+      gross: seed.gross == null ? '' : String(seed.gross),
+      vatRate: seed.vatRate == null ? String(S.invoiceVatDefaultRate || 21) : String(seed.vatRate),
+      orderId: String(seed.orderId || '')
+    };
+  }
+
+  function loadInvoiceVatBatchDraft() {
+    if (S.invoiceVatBatchLoaded) return;
+    S.invoiceVatBatchLoaded = true;
+    try {
+      const raw = localStorage.getItem(INVOICE_VAT_BATCH_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) S.invoiceVatBatchRows = parsed.map((row) => invoiceVatBatchDefaultRow(row));
+    } catch (error) {
+      console.warn('No se pudo recuperar la conciliación IVA guardada.', error);
+      S.invoiceVatBatchRows = [];
+    }
+    if (!S.invoiceVatBatchRows.length) S.invoiceVatBatchRows = [invoiceVatBatchDefaultRow()];
+  }
+
+  function saveInvoiceVatBatchDraft() {
+    try {
+      localStorage.setItem(INVOICE_VAT_BATCH_STORAGE_KEY, JSON.stringify(S.invoiceVatBatchRows));
+    } catch (error) {
+      console.warn('No se pudo guardar la conciliación IVA localmente.', error);
+    }
+  }
+
+  function invoiceVatBatchOrderOptions(selectedId = '') {
+    const orders = [...S.orders].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    return `<option value="">Sin pedido</option>${orders.map((order) => {
+      const service = serviceById(order.service_id);
+      const selected = order.id === selectedId ? ' selected' : '';
+      return `<option value="${ea(order.id)}"${selected}>${eh(order.order_code)} · ${eh(service?.name || 'Servicio')} · ${eh(formatCurrency(order.total_amount))}</option>`;
+    }).join('')}`;
+  }
+
+  function invoiceVatBatchMetrics(row) {
+    const gross = parseInvoiceMoneyInput(row.gross);
+    const rate = Math.max(0, number(row.vatRate));
+    const net = gross == null ? null : (rate > 0 ? gross / (1 + rate / 100) : gross);
+    const vat = gross == null || net == null ? null : gross - net;
+    const order = S.orders.find((item) => item.id === row.orderId) || null;
+    const result = order && net != null ? invoiceVatDifferenceStatus(number(order.total_amount), net) : { status: 'partial', diff: null };
+    return { gross, rate, net, vat, order, result };
+  }
+
+  function renderInvoiceVatBatch() {
+    if (!E.invoiceVatBatchBody) return;
+    if (!S.invoiceVatBatchLoaded) loadInvoiceVatBatchDraft();
+    E.invoiceVatBatchBody.innerHTML = S.invoiceVatBatchRows.map((row, index) => {
+      const { gross, net, order, result } = invoiceVatBatchMetrics(row);
+      const diff = result.diff == null ? '—' : `${result.diff > 0 ? '+' : ''}${formatCurrency(result.diff)}`;
+      return `<tr data-invoice-vat-batch-row="${ea(row.id)}">
+        <td class="invoice-vat-batch-index">${index + 1}</td>
+        <td><input class="form-control form-control-sm" data-vat-batch-field="invoiceNumber" value="${ea(row.invoiceNumber)}" placeholder="Ej. 0016-00005501"></td>
+        <td><input class="form-control form-control-sm" data-vat-batch-field="invoiceDate" type="date" value="${ea(row.invoiceDate)}"></td>
+        <td><input class="form-control form-control-sm text-end" data-vat-batch-field="gross" inputmode="decimal" value="${ea(row.gross)}" placeholder="100.376,70"><div class="table-subtitle">${gross == null ? 'Ingresá el total' : `IVA incl.: ${eh(formatCurrency(gross))}`}</div></td>
+        <td><div class="input-group input-group-sm"><input class="form-control text-end" data-vat-batch-field="vatRate" type="number" min="0" max="100" step="0.01" value="${ea(row.vatRate)}"><span class="input-group-text">%</span></div></td>
+        <td><strong class="text-primary">${net == null ? '—' : eh(formatCurrency(net))}</strong><div class="table-subtitle">Base sin IVA</div></td>
+        <td><select class="form-select form-select-sm" data-vat-batch-field="orderId">${invoiceVatBatchOrderOptions(row.orderId)}</select></td>
+        <td><strong>${order ? eh(formatCurrency(order.total_amount)) : '—'}</strong></td>
+        <td><strong class="${result.status === 'ok' ? 'text-success' : (result.status === 'partial' ? 'text-secondary' : 'text-danger')}">${eh(diff)}</strong>${order && net != null && number(order.total_amount) > 0 ? `<div class="table-subtitle">${eh(((result.diff / number(order.total_amount)) * 100).toLocaleString('es-AR', { maximumFractionDigits: 2 }))}%</div>` : ''}</td>
+        <td>${invoiceVatStatusBadge(result)}</td>
+        <td><button class="btn btn-outline-danger btn-sm" type="button" data-vat-batch-delete="${ea(row.id)}" title="Quitar fila"><i class="bi bi-trash3"></i></button></td>
+      </tr>`;
+    }).join('');
+    renderInvoiceVatBatchSummary();
+  }
+
+  function renderInvoiceVatBatchSummary() {
+    if (!E.invoiceVatBatchSummary) return;
+    const metrics = S.invoiceVatBatchRows.map(invoiceVatBatchMetrics);
+    const valid = metrics.filter((item) => item.gross != null);
+    const linked = valid.filter((item) => item.order && item.net != null);
+    const grossTotal = valid.reduce((sum, item) => sum + number(item.gross), 0);
+    const netTotal = valid.reduce((sum, item) => sum + number(item.net), 0);
+    const orderTotal = linked.reduce((sum, item) => sum + number(item.order.total_amount), 0);
+    const diffTotal = linked.reduce((sum, item) => sum + number(item.result.diff), 0);
+    const okCount = linked.filter((item) => item.result.status === 'ok').length;
+    const diffCount = linked.filter((item) => ['over','under'].includes(item.result.status)).length;
+    const unlinkedCount = valid.length - linked.length;
+    E.invoiceVatBatchSummary.innerHTML = `
+      <div class="invoice-vat-batch-kpi"><span>Facturas</span><strong>${valid.length}</strong><small>${linked.length} vinculadas · ${unlinkedCount} sin pedido</small></div>
+      <div class="invoice-vat-batch-kpi"><span>Total con IVA</span><strong>${eh(formatCurrency(grossTotal))}</strong><small>Importes ingresados</small></div>
+      <div class="invoice-vat-batch-kpi is-primary"><span>Total sin IVA</span><strong>${eh(formatCurrency(netTotal))}</strong><small>Base comparable</small></div>
+      <div class="invoice-vat-batch-kpi"><span>Pedidos vinculados</span><strong>${eh(formatCurrency(orderTotal))}</strong><small>${linked.length} pedido${linked.length === 1 ? '' : 's'}</small></div>
+      <div class="invoice-vat-batch-kpi ${Math.abs(diffTotal) <= Math.max(1, moneyTolerance(orderTotal)) ? 'is-success' : 'is-danger'}"><span>Diferencia total</span><strong>${diffTotal > 0 ? '+' : ''}${eh(formatCurrency(diffTotal))}</strong><small>${okCount} coinciden · ${diffCount} con diferencia</small></div>`;
+  }
+
+  function addInvoiceVatBatchRow(seed = {}) {
+    if (!S.invoiceVatBatchLoaded) loadInvoiceVatBatchDraft();
+    S.invoiceVatBatchRows.push(invoiceVatBatchDefaultRow(seed));
+    saveInvoiceVatBatchDraft();
+    renderInvoiceVatBatch();
+    setTimeout(() => {
+      const rows = E.invoiceVatBatchBody.querySelectorAll('[data-invoice-vat-batch-row]');
+      const last = rows[rows.length - 1];
+      last?.querySelector('[data-vat-batch-field="invoiceNumber"]')?.focus();
+    }, 0);
+  }
+
+  function handleInvoiceVatBatchInput(event) {
+    const field = event.target.closest('[data-vat-batch-field]');
+    if (!field) return;
+    const tr = field.closest('[data-invoice-vat-batch-row]');
+    const row = S.invoiceVatBatchRows.find((item) => item.id === tr?.dataset.invoiceVatBatchRow);
+    if (!row) return;
+    row[field.dataset.vatBatchField] = field.value;
+    saveInvoiceVatBatchDraft();
+    // Para evitar perder el cursor, los inputs de texto se recalculan sin reconstruir toda la tabla.
+    if (event.type === 'change' || field.dataset.vatBatchField === 'orderId') {
+      renderInvoiceVatBatch();
+    } else {
+      updateInvoiceVatBatchComputedCells(tr, row);
+      renderInvoiceVatBatchSummary();
+    }
+  }
+
+  function updateInvoiceVatBatchComputedCells(tr, row) {
+    if (!tr) return;
+    const { net, order, result } = invoiceVatBatchMetrics(row);
+    const cells = tr.querySelectorAll('td');
+    if (cells[5]) cells[5].innerHTML = `<strong class="text-primary">${net == null ? '—' : eh(formatCurrency(net))}</strong><div class="table-subtitle">Base sin IVA</div>`;
+    if (cells[7]) cells[7].innerHTML = `<strong>${order ? eh(formatCurrency(order.total_amount)) : '—'}</strong>`;
+    if (cells[8]) {
+      const diff = result.diff == null ? '—' : `${result.diff > 0 ? '+' : ''}${formatCurrency(result.diff)}`;
+      cells[8].innerHTML = `<strong class="${result.status === 'ok' ? 'text-success' : (result.status === 'partial' ? 'text-secondary' : 'text-danger')}">${eh(diff)}</strong>${order && net != null && number(order.total_amount) > 0 ? `<div class="table-subtitle">${eh(((result.diff / number(order.total_amount)) * 100).toLocaleString('es-AR', { maximumFractionDigits: 2 }))}%</div>` : ''}`;
+    }
+    if (cells[9]) cells[9].innerHTML = invoiceVatStatusBadge(result);
+  }
+
+  function handleInvoiceVatBatchClick(event) {
+    const deleteButton = event.target.closest('[data-vat-batch-delete]');
+    if (!deleteButton) return;
+    const id = deleteButton.dataset.vatBatchDelete;
+    S.invoiceVatBatchRows = S.invoiceVatBatchRows.filter((row) => row.id !== id);
+    if (!S.invoiceVatBatchRows.length) S.invoiceVatBatchRows = [invoiceVatBatchDefaultRow()];
+    saveInvoiceVatBatchDraft();
+    renderInvoiceVatBatch();
+  }
+
+  function clearInvoiceVatBatch() {
+    const hasData = S.invoiceVatBatchRows.some((row) => row.invoiceNumber || row.gross || row.orderId);
+    if (hasData && !confirm('¿Limpiar toda la conciliación múltiple?')) return;
+    S.invoiceVatBatchRows = [invoiceVatBatchDefaultRow()];
+    saveInvoiceVatBatchDraft();
+    renderInvoiceVatBatch();
+    E.invoiceVatBatchPastePanel.classList.add('d-none');
+    E.invoiceVatBatchPasteInput.value = '';
+  }
+
+  function toggleInvoiceVatBatchPaste() {
+    E.invoiceVatBatchPastePanel.classList.toggle('d-none');
+    if (!E.invoiceVatBatchPastePanel.classList.contains('d-none')) E.invoiceVatBatchPasteInput.focus();
+  }
+
+  function normalizeInvoiceVatBatchDate(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+    const m = text.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+    if (!m) return '';
+    const day = m[1].padStart(2, '0');
+    const month = m[2].padStart(2, '0');
+    const year = m[3].length === 2 ? `20${m[3]}` : m[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  function importInvoiceVatBatchPaste() {
+    const text = E.invoiceVatBatchPasteInput.value.trim();
+    if (!text) return toast('Pegá primero el listado de facturas.', 'error');
+    const imported = [];
+    text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).forEach((line) => {
+      if (/factura/i.test(line) && /(importe|total|monto)/i.test(line)) return;
+      let parts;
+      if (line.includes('\t')) parts = line.split('\t');
+      else if (line.includes(';')) parts = line.split(';');
+      else if (line.includes('|')) parts = line.split('|');
+      else parts = line.split(/\s{2,}/);
+      parts = parts.map((part) => part.trim()).filter((part) => part !== '');
+      if (parts.length < 2) return;
+      const invoiceNumber = parts[0];
+      let invoiceDate = '';
+      let grossText = '';
+      if (parts.length >= 3 && normalizeInvoiceVatBatchDate(parts[1])) {
+        invoiceDate = normalizeInvoiceVatBatchDate(parts[1]);
+        grossText = parts.slice(2).join(' ');
+      } else {
+        grossText = parts.slice(1).join(' ');
+      }
+      const gross = parseInvoiceMoneyInput(grossText);
+      if (gross == null) return;
+      imported.push(invoiceVatBatchDefaultRow({ invoiceNumber, invoiceDate, gross: grossText, vatRate: S.invoiceVatDefaultRate || 21 }));
+    });
+    if (!imported.length) return toast('No pude interpretar filas. Usá columnas: N° factura + importe, separadas por tabulación o punto y coma.', 'error');
+    const existingHasData = S.invoiceVatBatchRows.some((row) => row.invoiceNumber || row.gross || row.orderId);
+    S.invoiceVatBatchRows = existingHasData ? [...S.invoiceVatBatchRows, ...imported] : imported;
+    saveInvoiceVatBatchDraft();
+    renderInvoiceVatBatch();
+    E.invoiceVatBatchPasteInput.value = '';
+    E.invoiceVatBatchPastePanel.classList.add('d-none');
+    toast(`${imported.length} factura${imported.length === 1 ? '' : 's'} agregada${imported.length === 1 ? '' : 's'} al lote.`, 'success');
+  }
+
+  async function copyInvoiceVatBatchSummary() {
+    const usable = S.invoiceVatBatchRows.filter((row) => parseInvoiceMoneyInput(row.gross) != null || row.invoiceNumber || row.orderId);
+    if (!usable.length) return toast('No hay facturas para copiar.', 'error');
+    const header = ['Factura','Fecha','Con IVA','IVA','Sin IVA','Pedido','Valor pedido','Diferencia','Resultado'];
+    const lines = ['CONCILIACIÓN IVA · FACTURAS VS PEDIDOS', header.join('\t')];
+    let grossTotal = 0;
+    let netTotal = 0;
+    let orderTotal = 0;
+    let diffTotal = 0;
+    let linked = 0;
+    usable.forEach((row) => {
+      const { gross, rate, net, order, result } = invoiceVatBatchMetrics(row);
+      if (gross != null) grossTotal += gross;
+      if (net != null) netTotal += net;
+      if (order && net != null) {
+        linked += 1;
+        orderTotal += number(order.total_amount);
+        diffTotal += number(result.diff);
+      }
+      const statusText = result.status === 'ok' ? 'Coincide' : result.status === 'over' ? 'Factura mayor' : result.status === 'under' ? 'Factura menor' : 'Sin comparar';
+      lines.push([
+        row.invoiceNumber || 'Sin número',
+        row.invoiceDate || '',
+        gross == null ? '' : formatCurrency(gross),
+        formatPercent(rate),
+        net == null ? '' : formatCurrency(net),
+        order?.order_code || 'Sin pedido',
+        order ? formatCurrency(order.total_amount) : '',
+        result.diff == null ? '' : `${result.diff > 0 ? '+' : ''}${formatCurrency(result.diff)}`,
+        statusText
+      ].join('\t'));
+    });
+    lines.push('', `TOTAL CON IVA\t${formatCurrency(grossTotal)}`, `TOTAL SIN IVA\t${formatCurrency(netTotal)}`, `TOTAL PEDIDOS VINCULADOS\t${formatCurrency(orderTotal)}`, `DIFERENCIA TOTAL\t${diffTotal > 0 ? '+' : ''}${formatCurrency(diffTotal)}`, `FACTURAS VINCULADAS\t${linked} de ${usable.length}`);
+    await copyText(lines.join('\n'));
   }
 
   function handleInvoiceVatDefaultRateChange() {

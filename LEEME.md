@@ -13,3 +13,8 @@ Después no hace falta ninguna otra migración de consumos.
 
 ## Publicación
 Los archivos de la app pueden subirse normalmente al repositorio y publicarse por GitHub Pages.
+
+
+## Conciliación IVA múltiple
+
+La sección Facturas → Conciliación IVA permite cargar varias facturas manualmente, asociarlas a pedidos, calcular el neto sin IVA y copiar un resumen completo. El borrador manual se guarda localmente en el navegador. Esta mejora no requiere SQL adicional.

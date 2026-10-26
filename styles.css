@@ -300,3 +300,21 @@
 
 /* Conciliación IVA */
 .invoice-vat-note{border-radius:16px;background:#f5fbf7;border-color:#bfe3cc;color:#22543a}.invoice-vat-calculator{background:linear-gradient(145deg,#fff,#f8fbff)}.invoice-vat-results{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.invoice-vat-result-card{padding:15px 16px;border:1px solid var(--ci-border);border-radius:15px;background:#fff;min-width:0}.invoice-vat-result-card span,.invoice-vat-result-card strong,.invoice-vat-result-card small{display:block}.invoice-vat-result-card span{color:var(--ci-muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;font-weight:900}.invoice-vat-result-card strong{margin-top:4px;color:#172033;font-size:1.14rem;font-weight:950;white-space:nowrap}.invoice-vat-result-card small{margin-top:3px;color:var(--ci-muted);font-size:.67rem}.invoice-vat-result-card.is-primary{border-color:#a8c9ff;background:#f6f9ff}.invoice-vat-result-card.is-primary strong{color:#0d6efd}.invoice-vat-result-card.is-success{border-color:#a9dfc0;background:#fbfffd}.invoice-vat-result-card.is-success strong{color:#137547}.invoice-vat-result-card.is-danger{border-color:#f1b7bd;background:#fffafb}.invoice-vat-result-card.is-danger strong{color:#b42335}.invoice-vat-table{min-width:1320px}.invoice-vat-table .form-select{min-width:290px}.invoice-vat-table td{vertical-align:middle}.invoice-vat-table .badge{white-space:nowrap}@media(max-width:991.98px){.invoice-vat-results{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:575.98px){.invoice-vat-results{grid-template-columns:1fr}}
+
+
+/* Conciliación IVA múltiple */
+.invoice-vat-batch-section{background:linear-gradient(145deg,#fff,#fbfcff)}
+.invoice-vat-batch-paste{border:1px dashed #a9bdd8;border-radius:14px;padding:14px;background:#f8fbff}
+.invoice-vat-batch-summary{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.invoice-vat-batch-kpi{border:1px solid var(--ci-border);border-radius:14px;padding:12px 14px;background:#fff;min-width:0}
+.invoice-vat-batch-kpi span,.invoice-vat-batch-kpi strong,.invoice-vat-batch-kpi small{display:block}
+.invoice-vat-batch-kpi span{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;font-weight:900;color:var(--ci-muted)}
+.invoice-vat-batch-kpi strong{margin-top:4px;font-size:1rem;font-weight:950;color:#172033;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.invoice-vat-batch-kpi small{margin-top:3px;font-size:.66rem;color:var(--ci-muted)}
+.invoice-vat-batch-kpi.is-primary{border-color:#a8c9ff;background:#f6f9ff}.invoice-vat-batch-kpi.is-primary strong{color:#0d6efd}
+.invoice-vat-batch-kpi.is-success{border-color:#a9dfc0;background:#fbfffd}.invoice-vat-batch-kpi.is-success strong{color:#137547}
+.invoice-vat-batch-kpi.is-danger{border-color:#f1b7bd;background:#fffafb}.invoice-vat-batch-kpi.is-danger strong{color:#b42335}
+.invoice-vat-batch-table{min-width:1650px}.invoice-vat-batch-table th:nth-child(1),.invoice-vat-batch-table td:nth-child(1){width:44px;text-align:center}.invoice-vat-batch-table th:nth-child(2){min-width:180px}.invoice-vat-batch-table th:nth-child(3){min-width:145px}.invoice-vat-batch-table th:nth-child(4){min-width:160px}.invoice-vat-batch-table th:nth-child(5){min-width:110px}.invoice-vat-batch-table th:nth-child(6){min-width:145px}.invoice-vat-batch-table th:nth-child(7){min-width:360px}.invoice-vat-batch-table th:nth-child(8),.invoice-vat-batch-table th:nth-child(9){min-width:145px}.invoice-vat-batch-table .form-select{min-width:340px}.invoice-vat-batch-index{font-weight:900;color:var(--ci-muted)}
+@media(max-width:1199.98px){.invoice-vat-batch-summary{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:767.98px){.invoice-vat-batch-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:575.98px){.invoice-vat-batch-summary{grid-template-columns:1fr}}
