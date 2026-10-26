@@ -15,12 +15,12 @@ begin
   p_months:=greatest(3,least(coalesce(p_months,12),60));
   return query
   with delivered_items as (
-    select o.service_id,s.name service_name,o.id order_id,date_trunc('month',coalesce(o.closed_at,o.updated_at,o.created_at))::date consumption_month,coalesce(o.closed_at,o.updated_at,o.created_at) consumed_at,
+    select o.service_id,s.name service_name,o.id order_id,date_trunc('month',coalesce((select max(h.changed_at) from public.order_status_history h where h.order_id=o.id and h.new_status='entregado'),o.updated_at,o.created_at))::date consumption_month,coalesce((select max(h.changed_at) from public.order_status_history h where h.order_id=o.id and h.new_status='entregado'),o.updated_at,o.created_at) consumed_at,
       case when oi.material_id is not null then 'material:'||oi.material_id::text when nullif(btrim(coalesce(oi.item_sku,'')),'') is not null then 'sku:'||lower(btrim(oi.item_sku)) else 'custom:'||md5(lower(btrim(oi.item_name))||'|'||lower(btrim(coalesce(oi.unit,'unidad')))) end material_key,
       oi.material_id,oi.item_name,oi.item_sku,coalesce(nullif(btrim(oi.unit),''),'unidad') unit,oi.quantity,oi.line_total
     from public.orders o join public.services s on s.id=o.service_id join public.order_items oi on oi.order_id=o.id
     where o.status='entregado' and (p_service_id is null or o.service_id=p_service_id)
-      and date_trunc('month',coalesce(o.closed_at,o.updated_at,o.created_at))::date between (p_until_month-make_interval(months=>p_months-1))::date and p_until_month
+      and date_trunc('month',coalesce((select max(h.changed_at) from public.order_status_history h where h.order_id=o.id and h.new_status='entregado'),o.updated_at,o.created_at))::date between (p_until_month-make_interval(months=>p_months-1))::date and p_until_month
   ), dimensions as (
     select distinct on(service_id,material_key) service_id,service_name,material_key,material_id,item_name,item_sku,unit from delivered_items order by service_id,material_key,consumed_at desc,order_id desc
   ), monthly as (
@@ -38,11 +38,11 @@ begin
   if not public.is_admin() then raise exception 'Acceso restringido a administradores.'; end if;
   if p_from_date is null or p_to_date is null or p_from_date>p_to_date then raise exception 'Rango de fechas inválido.'; end if;
   with delivered as (
-    select o.service_id,s.name service_name,o.id order_id,coalesce(o.closed_at,o.updated_at,o.created_at) consumed_at,
+    select o.service_id,s.name service_name,o.id order_id,coalesce((select max(h.changed_at) from public.order_status_history h where h.order_id=o.id and h.new_status='entregado'),o.updated_at,o.created_at) consumed_at,
       case when oi.material_id is not null then 'material:'||oi.material_id::text when nullif(btrim(coalesce(oi.item_sku,'')),'') is not null then 'sku:'||lower(btrim(oi.item_sku)) else 'custom:'||md5(lower(btrim(oi.item_name))||'|'||lower(btrim(coalesce(oi.unit,'unidad')))) end material_key,
       oi.material_id,oi.item_name,oi.item_sku,coalesce(nullif(btrim(oi.unit),''),'unidad') unit,oi.quantity,oi.line_total
     from public.orders o join public.services s on s.id=o.service_id join public.order_items oi on oi.order_id=o.id
-    where o.status='entregado' and (p_service_id is null or o.service_id=p_service_id) and coalesce(o.closed_at,o.updated_at,o.created_at)::date between p_from_date and p_to_date
+    where o.status='entregado' and (p_service_id is null or o.service_id=p_service_id) and coalesce((select max(h.changed_at) from public.order_status_history h where h.order_id=o.id and h.new_status='entregado'),o.updated_at,o.created_at)::date between p_from_date and p_to_date
   ), dims as (
     select distinct on(service_id,material_key) service_id,service_name,material_key,material_id,item_name,item_sku,unit from delivered order by service_id,material_key,consumed_at desc,order_id desc
   ), services as (
@@ -66,7 +66,7 @@ begin
   if not public.is_admin() then raise exception 'Acceso restringido a administradores.'; end if;
   end_month:=date_trunc('month',current_date)::date;
   if coalesce(p_months,24)<=0 then
-    select min(date_trunc('month',coalesce(o.closed_at,o.updated_at,o.created_at))::date) into first_month from public.orders o where o.status='entregado' and o.service_id=p_service_id;
+    select min(date_trunc('month',coalesce((select max(h.changed_at) from public.order_status_history h where h.order_id=o.id and h.new_status='entregado'),o.updated_at,o.created_at))::date) into first_month from public.orders o where o.status='entregado' and o.service_id=p_service_id;
     start_month:=coalesce(first_month,end_month);
   else
     start_month:=(end_month-make_interval(months=>greatest(1,p_months)-1))::date;
@@ -74,10 +74,10 @@ begin
   return query
   with months as (select generate_series(start_month,end_month,interval '1 month')::date m),
   delivered as (
-    select o.id order_id,date_trunc('month',coalesce(o.closed_at,o.updated_at,o.created_at))::date m,
+    select o.id order_id,date_trunc('month',coalesce((select max(h.changed_at) from public.order_status_history h where h.order_id=o.id and h.new_status='entregado'),o.updated_at,o.created_at))::date m,
       case when oi.material_id is not null then 'material:'||oi.material_id::text when nullif(btrim(coalesce(oi.item_sku,'')),'') is not null then 'sku:'||lower(btrim(oi.item_sku)) else 'custom:'||md5(lower(btrim(oi.item_name))||'|'||lower(btrim(coalesce(oi.unit,'unidad')))) end material_key,oi.line_total
     from public.orders o join public.order_items oi on oi.order_id=o.id
-    where o.status='entregado' and o.service_id=p_service_id and date_trunc('month',coalesce(o.closed_at,o.updated_at,o.created_at))::date between start_month and end_month
+    where o.status='entregado' and o.service_id=p_service_id and date_trunc('month',coalesce((select max(h.changed_at) from public.order_status_history h where h.order_id=o.id and h.new_status='entregado'),o.updated_at,o.created_at))::date between start_month and end_month
   ), agg as (select d.m,sum(d.line_total)::numeric amount,count(distinct d.order_id)::bigint orders,count(distinct d.material_key)::bigint products from delivered d group by d.m)
   select m.m,coalesce(a.amount,0)::numeric,coalesce(a.orders,0)::bigint,coalesce(a.products,0)::bigint from months m left join agg a on a.m=m.m order by m.m;
 end;$$;

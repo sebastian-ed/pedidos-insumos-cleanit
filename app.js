@@ -6432,7 +6432,7 @@
         if(servicesResult.error)throw servicesResult.error;if(productsResult.error)throw productsResult.error;
         S.consumptionServiceRows=servicesResult.data||[];S.consumptionRows=productsResult.data||[];
         const analyticsResult=await S.sb.rpc('admin_consumption_analytics',{p_until_month:`${month}-01`,p_months:12,p_service_id:serviceId});
-        if(analyticsResult.error){console.warn('Analítica avanzada:',analyticsResult.error);S.consumptionAnalyticsRows=[];E.consumptionAnalyticsNotice.textContent='Para ver tendencias y alertas avanzadas, ejecutá actualizar-rangos-historico-consumos.sql en Supabase.';E.consumptionAnalyticsNotice.classList.remove('d-none');}
+        if(analyticsResult.error){console.warn('Analítica avanzada:',analyticsResult.error);S.consumptionAnalyticsRows=[];const detail=String(analyticsResult.error.message||analyticsResult.error.details||'Error desconocido');E.consumptionAnalyticsNotice.textContent=`No se pudo cargar la analítica avanzada: ${detail}`;E.consumptionAnalyticsNotice.classList.remove('d-none');}
         else{S.consumptionAnalyticsRows=analyticsResult.data||[];E.consumptionAnalyticsNotice.classList.add('d-none');}
       } else {
         const {start,end}=consumptionRangeValues();
@@ -6720,7 +6720,7 @@
   }
 
   function buildConsumptionDecisionSummary(analytics, selectedServiceId, hasAdvanced) {
-    if (!hasAdvanced) return '<strong>Analítica avanzada pendiente.</strong> Las tablas de consumo siguen disponibles; ejecutá la migración incluida para activar tendencias y alertas de 12 meses.';
+    if (!hasAdvanced) return '<strong>Analítica avanzada no disponible.</strong> El detalle mensual sigue funcionando. Revisá el aviso superior para ver el error técnico exacto.';
     if (analytics.currentTotal <= 0) return '<strong>Sin consumo confirmado en el mes.</strong> No hay pedidos entregados para analizar.';
     const pieces=[];
     if (analytics.vsPrevious3 != null) pieces.push(`El gasto está <strong>${Math.abs(analytics.vsPrevious3).toLocaleString('es-AR',{maximumFractionDigits:1})}% ${analytics.vsPrevious3>=0?'por encima':'por debajo'}</strong> del promedio reciente.`);

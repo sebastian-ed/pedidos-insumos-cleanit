@@ -54,3 +54,8 @@ En **Facturas → Conciliación IVA** podés:
 - vincular una factura al pedido correcto desde la misma pantalla.
 
 No requiere SQL nuevo: utiliza la tabla de facturas existente.
+
+
+## Corrección analítica de consumos
+
+Si la app muestra que la analítica avanzada no está disponible, ejecutar `corregir-analitica-consumos.sql` en Supabase > SQL Editor. Esta versión usa la fecha real del cambio a estado **Entregado** desde `order_status_history` y no depende de una columna `closed_at`.
