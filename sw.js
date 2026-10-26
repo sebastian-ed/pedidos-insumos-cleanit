@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pedidos-cleanit-20261026-v11-consumption-analytics';
+const CACHE_NAME = 'cleanit-pedidos-20261026-consumption-range2';
 const CORE = ['./','./index.html','./styles.css','./app.js','./config.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/icon-180.png'];
 self.addEventListener('install', (event) => {
   self.skipWaiting();

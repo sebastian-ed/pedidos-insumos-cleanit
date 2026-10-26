@@ -61,6 +61,11 @@
     consumptionRows: [],
     consumptionServiceRows: [],
     consumptionAnalyticsRows: [],
+    consumptionRangeRows: [],
+    consumptionRangeServiceRows: [],
+    consumptionRangeMonthlyRows: [],
+    consumptionMode: 'month',
+    consumptionServiceHistoryId: null,
     consumptionLoadedKey: '',
     consumptionLoading: false,
     consumptionHistoryContext: null,
@@ -130,8 +135,10 @@
     M.billingImport = new bootstrap.Modal(E.billingImportModal);
     M.user = new bootstrap.Modal(E.userModal);
     M.consumptionHistory = new bootstrap.Modal(E.consumptionHistoryModal);
+    M.consumptionServiceHistory = new bootstrap.Modal(E.consumptionServiceHistoryModal);
     M.toast = new bootstrap.Toast(E.appToast, { delay: 3200 });
     if (E.consumptionMonth) E.consumptionMonth.value = monthInputValue(new Date());
+    initializeConsumptionPeriodControls();
 
     bindEvents();
     setupPwa();
@@ -264,12 +271,17 @@
     E.invoiceReadingTotal.addEventListener('input', () => { S.invoiceReadingTotalDraft = E.invoiceReadingTotal.value; });
     E.invoiceReadingItems.addEventListener('click', handleInvoiceReadingClick);
     E.invoiceDetailModal.addEventListener('hidden.bs.modal', resetInvoiceDetailState);
+    E.consumptionPeriodMode.addEventListener('change', handleConsumptionPeriodModeChange);
     E.consumptionMonth.addEventListener('change', () => loadConsumptionReport(true));
+    E.consumptionRangeStart.addEventListener('change', () => loadConsumptionReport(true));
+    E.consumptionRangeEnd.addEventListener('change', () => loadConsumptionReport(true));
+    E.consumptionRangeQuickButtons.addEventListener('click', handleConsumptionQuickRange);
     E.consumptionServiceFilter.addEventListener('change', () => loadConsumptionReport(true));
     E.consumptionSearch.addEventListener('input', renderConsumption);
     E.refreshConsumptionButton.addEventListener('click', () => loadConsumptionReport(true));
     E.exportConsumptionButton.addEventListener('click', exportConsumptionCsv);
     E.adminConsumption.addEventListener('click', handleConsumptionInsightClick);
+    E.consumptionServiceHistoryMonths.addEventListener('change', loadConsumptionServiceHistory);
     E.materialsSearch.addEventListener('input', renderMaterials);
     E.materialsStatusFilter.addEventListener('change', renderMaterials);
     E.adminServiceSearch.addEventListener('input', renderServices);
@@ -6108,137 +6120,206 @@
   }
 
 
+  function initializeConsumptionPeriodControls() {
+    if (!E.consumptionPeriodMode) return;
+    E.consumptionPeriodMode.value = 'month';
+    const today = new Date();
+    E.consumptionRangeEnd.value = dateInputValue(today);
+    E.consumptionRangeStart.value = dateInputValue(new Date(today.getFullYear(), today.getMonth() - 2, 1));
+    updateConsumptionPeriodControls();
+  }
+
+  function dateInputValue(value) {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  function getConsumptionMode() {
+    return E.consumptionPeriodMode?.value === 'range' ? 'range' : 'month';
+  }
+
+  function updateConsumptionPeriodControls() {
+    const range = getConsumptionMode() === 'range';
+    E.consumptionMonthWrap?.classList.toggle('d-none', range);
+    E.consumptionRangeWrap?.classList.toggle('d-none', !range);
+    E.consumptionRangeQuickButtons?.classList.toggle('d-none', !range);
+    S.consumptionMode = range ? 'range' : 'month';
+  }
+
+  function handleConsumptionPeriodModeChange() {
+    updateConsumptionPeriodControls();
+    S.consumptionLoadedKey = '';
+    loadConsumptionReport(true);
+  }
+
+  function handleConsumptionQuickRange(event) {
+    const button = event.target.closest('[data-consumption-quick-months]');
+    if (!button) return;
+    const months = Math.max(1, number(button.dataset.consumptionQuickMonths));
+    const end = new Date();
+    const start = new Date(end.getFullYear(), end.getMonth() - months + 1, 1);
+    E.consumptionRangeStart.value = dateInputValue(start);
+    E.consumptionRangeEnd.value = dateInputValue(end);
+    E.consumptionRangeQuickButtons.querySelectorAll('button').forEach((node)=>node.classList.toggle('active', node===button));
+    loadConsumptionReport(true);
+  }
+
+  function consumptionRangeValues() {
+    const start = E.consumptionRangeStart.value;
+    const end = E.consumptionRangeEnd.value;
+    if (!start || !end) throw new Error('Seleccioná la fecha desde y hasta para analizar el rango.');
+    if (start > end) throw new Error('La fecha inicial no puede ser posterior a la fecha final.');
+    return { start, end };
+  }
+
+  function consumptionPeriodLabel() {
+    if (getConsumptionMode() === 'month') return monthLabel(E.consumptionMonth.value || monthInputValue(new Date()));
+    const {start,end}=consumptionRangeValues();
+    const fmt=new Intl.DateTimeFormat('es-AR',{day:'2-digit',month:'short',year:'numeric'});
+    return `${fmt.format(new Date(`${start}T12:00:00`))} al ${fmt.format(new Date(`${end}T12:00:00`))}`;
+  }
+
+  function consumptionRangeMonthKeys() {
+    const {start,end}=consumptionRangeValues();
+    const a=new Date(`${start}T12:00:00`); const b=new Date(`${end}T12:00:00`);
+    const keys=[]; let d=new Date(a.getFullYear(),a.getMonth(),15); const last=new Date(b.getFullYear(),b.getMonth(),15);
+    while(d<=last){keys.push(monthInputValue(d));d=new Date(d.getFullYear(),d.getMonth()+1,15);if(keys.length>240)break;}
+    return keys;
+  }
+
   async function loadConsumptionReport(force = false) {
     if (!isFullAdmin() || S.mode !== 'admin') return;
-
-    const month = E.consumptionMonth.value || monthInputValue(new Date());
-    E.consumptionMonth.value = month;
+    const mode = getConsumptionMode();
     const serviceId = E.consumptionServiceFilter.value || null;
-    const key = `${month}|${serviceId || 'all'}`;
-
-    if (!force && S.consumptionLoadedKey === key) {
-      renderConsumption();
-      return;
+    let key='';
+    if (mode === 'month') {
+      const month = E.consumptionMonth.value || monthInputValue(new Date());
+      E.consumptionMonth.value = month;
+      key = `month|${month}|${serviceId || 'all'}`;
+    } else {
+      let range;
+      try { range=consumptionRangeValues(); }
+      catch(error){E.consumptionError.textContent=error.message;E.consumptionError.classList.remove('d-none');return;}
+      key = `range|${range.start}|${range.end}|${serviceId || 'all'}`;
     }
+    if (!force && S.consumptionLoadedKey === key) { renderConsumption(); return; }
     if (S.consumptionLoading) return;
 
     S.consumptionLoading = true;
-    E.consumptionError.classList.add('d-none');
-    E.consumptionError.textContent = '';
-    buttonBusy(E.refreshConsumptionButton, true, 'Actualizando...');
-    renderConsumptionLoading();
-
+    E.consumptionError.classList.add('d-none'); E.consumptionError.textContent='';
+    buttonBusy(E.refreshConsumptionButton, true, 'Actualizando...'); renderConsumptionLoading();
     try {
-      const parameters = { p_month: `${month}-01`, p_service_id: serviceId };
-      const [servicesResult, productsResult] = await Promise.all([
-        S.sb.rpc('admin_consumption_service_summary', parameters),
-        S.sb.rpc('admin_consumption_report', parameters)
-      ]);
-      if (servicesResult.error) throw servicesResult.error;
-      if (productsResult.error) throw productsResult.error;
-
-      S.consumptionServiceRows = servicesResult.data || [];
-      S.consumptionRows = productsResult.data || [];
-      const analyticsResult = await S.sb.rpc('admin_consumption_analytics', {
-        p_until_month: `${month}-01`,
-        p_months: 12,
-        p_service_id: serviceId
-      });
-      if (analyticsResult.error) {
-        console.warn('Analítica avanzada de consumos no disponible:', analyticsResult.error);
-        S.consumptionAnalyticsRows = [];
-        if (E.consumptionAnalyticsNotice) {
-          E.consumptionAnalyticsNotice.textContent = 'Para ver tendencias de 12 meses y alertas avanzadas, ejecutá actualizar-analitica-consumos.sql en Supabase.';
-          E.consumptionAnalyticsNotice.classList.remove('d-none');
-        }
+      if (mode === 'month') {
+        const month=E.consumptionMonth.value;
+        const parameters={p_month:`${month}-01`,p_service_id:serviceId};
+        const [servicesResult,productsResult]=await Promise.all([
+          S.sb.rpc('admin_consumption_service_summary',parameters),
+          S.sb.rpc('admin_consumption_report',parameters)
+        ]);
+        if(servicesResult.error)throw servicesResult.error;if(productsResult.error)throw productsResult.error;
+        S.consumptionServiceRows=servicesResult.data||[];S.consumptionRows=productsResult.data||[];
+        const analyticsResult=await S.sb.rpc('admin_consumption_analytics',{p_until_month:`${month}-01`,p_months:12,p_service_id:serviceId});
+        if(analyticsResult.error){console.warn('Analítica avanzada:',analyticsResult.error);S.consumptionAnalyticsRows=[];E.consumptionAnalyticsNotice.textContent='Para ver tendencias y alertas avanzadas, ejecutá actualizar-rangos-historico-consumos.sql en Supabase.';E.consumptionAnalyticsNotice.classList.remove('d-none');}
+        else{S.consumptionAnalyticsRows=analyticsResult.data||[];E.consumptionAnalyticsNotice.classList.add('d-none');}
       } else {
-        S.consumptionAnalyticsRows = analyticsResult.data || [];
-        if (E.consumptionAnalyticsNotice) E.consumptionAnalyticsNotice.classList.add('d-none');
+        const {start,end}=consumptionRangeValues();
+        const rangeResult=await S.sb.rpc('admin_consumption_range_bundle',{p_from_date:start,p_to_date:end,p_service_id:serviceId});
+        if(rangeResult.error)throw rangeResult.error;
+        const payload=rangeResult.data||{};
+        S.consumptionRangeServiceRows=Array.isArray(payload.services)?payload.services:[];
+        S.consumptionRangeRows=Array.isArray(payload.products)?payload.products:[];
+        S.consumptionRangeMonthlyRows=Array.isArray(payload.monthly)?payload.monthly:[];
+        S.consumptionAnalyticsRows=S.consumptionRangeMonthlyRows;
+        E.consumptionAnalyticsNotice.classList.add('d-none');
       }
-      S.consumptionLoadedKey = key;
-    } catch (error) {
-      console.error(error);
-      S.consumptionServiceRows = [];
-      S.consumptionRows = [];
-      S.consumptionAnalyticsRows = [];
-      S.consumptionLoadedKey = '';
-      E.consumptionError.textContent = consumptionErrorMessage(error);
-      E.consumptionError.classList.remove('d-none');
-    } finally {
-      S.consumptionLoading = false;
-      buttonBusy(E.refreshConsumptionButton, false);
-      renderConsumption();
-    }
+      S.consumptionLoadedKey=key;
+    } catch(error) {
+      console.error(error);S.consumptionServiceRows=[];S.consumptionRows=[];S.consumptionAnalyticsRows=[];S.consumptionRangeRows=[];S.consumptionRangeServiceRows=[];S.consumptionRangeMonthlyRows=[];S.consumptionLoadedKey='';
+      E.consumptionError.textContent=consumptionErrorMessage(error);E.consumptionError.classList.remove('d-none');
+    } finally {S.consumptionLoading=false;buttonBusy(E.refreshConsumptionButton,false);renderConsumption();}
   }
 
   function renderConsumptionLoading() {
-    E.consumptionServiceTableBody.innerHTML = '<tr class="consumption-loading-row"><td colspan="9"><span class="spinner-border spinner-border-sm me-2"></span>Calculando consumo por servicio...</td></tr>';
-    E.consumptionProductsTableBody.innerHTML = '<tr class="consumption-loading-row"><td colspan="9"><span class="spinner-border spinner-border-sm me-2"></span>Consolidando productos e histórico...</td></tr>';
+    E.consumptionServiceTableBody.innerHTML='<tr class="consumption-loading-row"><td colspan="10"><span class="spinner-border spinner-border-sm me-2"></span>Calculando consumo por servicio...</td></tr>';
+    E.consumptionProductsTableBody.innerHTML='<tr class="consumption-loading-row"><td colspan="9"><span class="spinner-border spinner-border-sm me-2"></span>Consolidando productos e histórico...</td></tr>';
   }
 
   function renderConsumption() {
-    if (!E.adminConsumption || S.tab !== 'consumption') return;
-    if (S.consumptionLoading) return;
-
-    const month = E.consumptionMonth.value || monthInputValue(new Date());
-    const selectedServiceId = E.consumptionServiceFilter.value || '';
-    const monthText = monthLabel(month);
-    const productRows = filteredConsumptionRows();
-    const visibleServiceRows = S.consumptionServiceRows.filter((row) => {
-      if (selectedServiceId) return row.service_id === selectedServiceId;
-      return number(row.historical_orders) > 0 || number(row.month_orders) > 0;
-    });
-
-    const activeServices = visibleServiceRows.filter((row) => number(row.month_orders) > 0);
-    const currentProducts = S.consumptionRows.filter((row) => number(row.month_quantity) > 0);
-    const deliveredOrders = activeServices.reduce((sum, row) => sum + number(row.month_orders), 0);
-    const monthAmount = activeServices.reduce((sum, row) => sum + number(row.month_amount), 0);
-
-    E.consumptionKpiServices.textContent = String(activeServices.length);
-    E.consumptionKpiProducts.textContent = String(currentProducts.length);
-    E.consumptionKpiOrders.textContent = formatQty(deliveredOrders);
-    E.consumptionKpiAmount.textContent = formatCurrency(monthAmount);
-    E.consumptionKpiServicesFoot.textContent = `Consumo confirmado en ${monthText}`;
-    renderConsumptionIntelligence(month, selectedServiceId);
-    E.consumptionServiceCount.textContent = `${visibleServiceRows.length} ${visibleServiceRows.length === 1 ? 'servicio' : 'servicios'}`;
-    E.consumptionProductCount.textContent = `${productRows.length} ${productRows.length === 1 ? 'registro' : 'registros'}`;
-    E.consumptionResultsCaption.textContent = `Cantidades de ${monthText}, promedio de los tres meses anteriores e histórico acumulado.`;
-
-    E.consumptionServiceTableBody.innerHTML = visibleServiceRows.map((row) => {
-      const signal = consumptionSignal(row.month_amount, row.avg_previous_3_amount, row.previous_3_months_with_activity);
-      const variation = consumptionVariation(row.month_amount, row.avg_previous_3_amount, row.previous_3_months_with_activity);
-      const meter = consumptionMeter(row.month_amount, row.avg_previous_3_amount, signal);
-      return `<tr>
-        <td><div class="consumption-service-name">${eh(row.service_name)}</div><span class="consumption-subvalue">${row.last_consumption_at ? `Último consumo: ${eh(dtf.format(new Date(row.last_consumption_at)))}` : 'Sin entregas registradas'}</span></td>
-        <td><span class="consumption-value">${formatQty(row.month_orders)}</span></td>
-        <td><span class="consumption-value">${formatQty(row.month_products)}</span></td>
-        <td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span>${meter}</td>
-        <td><span class="consumption-value">${eh(formatCurrency(row.previous_month_amount))}</span></td>
-        <td><span class="consumption-value">${eh(formatCurrency(row.avg_previous_3_amount))}</span><span class="consumption-subvalue">Incluye meses sin consumo</span></td>
-        <td>${consumptionVariationBadge(variation)}</td>
-        <td><span class="consumption-value">${eh(formatCurrency(row.historical_amount))}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos entregados</span></td>
-        <td>${consumptionSignalBadge(signal)}</td>
-      </tr>`;
-    }).join('') || '<tr><td colspan="9"><div class="consumption-empty">No hay pedidos entregados para construir un resumen de consumo.</div></td></tr>';
-
-    E.consumptionProductsTableBody.innerHTML = productRows.map((row) => {
-      const signal = consumptionSignal(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
-      const variation = consumptionVariation(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
-      const meter = consumptionMeter(row.month_quantity, row.avg_previous_3_quantity, signal);
-      const sku = row.item_sku ? `SKU ${row.item_sku} · ` : '';
-      return `<tr>
-        <td class="consumption-product-cell"><strong>${eh(row.item_name)}</strong><small>${eh(row.service_name)} · ${eh(sku)}${eh(row.unit || 'unidad')}</small></td>
-        <td><span class="consumption-value">${formatQty(row.month_quantity)} ${eh(row.unit || 'unidad')}</span><span class="consumption-subvalue">${formatQty(row.month_orders)} pedidos</span>${meter}</td>
-        <td><span class="consumption-value">${formatQty(row.previous_month_quantity)} ${eh(row.unit || 'unidad')}</span></td>
-        <td><span class="consumption-value">${formatQty(row.avg_previous_3_quantity)} ${eh(row.unit || 'unidad')}</span><span class="consumption-subvalue">Promedio calendario</span></td>
-        <td>${consumptionVariationBadge(variation)}</td>
-        <td><span class="consumption-value">${formatQty(row.historical_quantity)} ${eh(row.unit || 'unidad')}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos · ${eh(formatCurrency(row.historical_amount))}</span></td>
-        <td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span></td>
-        <td>${consumptionSignalBadge(signal)}</td>
-        <td><button class="btn btn-outline-primary btn-sm consumption-history-button" type="button" data-consumption-service="${ea(row.service_id)}" data-consumption-history="${ea(row.material_key)}"><i class="bi bi-bar-chart-line me-1"></i>Histórico</button></td>
-      </tr>`;
-    }).join('') || '<tr><td colspan="9"><div class="consumption-empty">No hay consumos que coincidan con los filtros. Los pedidos deben estar marcados como Entregados.</div></td></tr>';
+    if (!E.adminConsumption || S.tab !== 'consumption' || S.consumptionLoading) return;
+    if (getConsumptionMode()==='range') { renderConsumptionRange(); return; }
+    renderConsumptionMonth();
   }
+
+  function renderConsumptionMonth() {
+    const month=E.consumptionMonth.value||monthInputValue(new Date());const selectedServiceId=E.consumptionServiceFilter.value||'';const monthText=monthLabel(month);const productRows=filteredConsumptionRows();
+    const visibleServiceRows=S.consumptionServiceRows.filter((row)=>selectedServiceId?row.service_id===selectedServiceId:number(row.historical_orders)>0||number(row.month_orders)>0);
+    const activeServices=visibleServiceRows.filter((row)=>number(row.month_orders)>0);const currentProducts=S.consumptionRows.filter((row)=>number(row.month_quantity)>0);const deliveredOrders=activeServices.reduce((sum,row)=>sum+number(row.month_orders),0);const monthAmount=activeServices.reduce((sum,row)=>sum+number(row.month_amount),0);
+    E.consumptionKpiServices.textContent=String(activeServices.length);E.consumptionKpiProducts.textContent=String(currentProducts.length);E.consumptionKpiOrders.textContent=formatQty(deliveredOrders);E.consumptionKpiAmount.textContent=formatCurrency(monthAmount);E.consumptionKpiServicesFoot.textContent=`Consumo confirmado en ${monthText}`;
+    setConsumptionLabels(false);renderConsumptionIntelligence(month,selectedServiceId);E.consumptionServiceCount.textContent=`${visibleServiceRows.length} ${visibleServiceRows.length===1?'servicio':'servicios'}`;E.consumptionProductCount.textContent=`${productRows.length} ${productRows.length===1?'registro':'registros'}`;E.consumptionResultsCaption.textContent=`Cantidades de ${monthText}, promedio de los tres meses anteriores e histórico acumulado.`;
+    E.consumptionServiceTableBody.innerHTML=visibleServiceRows.map((row)=>{const signal=consumptionSignal(row.month_amount,row.avg_previous_3_amount,row.previous_3_months_with_activity);const variation=consumptionVariation(row.month_amount,row.avg_previous_3_amount,row.previous_3_months_with_activity);const meter=consumptionMeter(row.month_amount,row.avg_previous_3_amount,signal);return `<tr><td><div class="consumption-service-name">${eh(row.service_name)}</div><span class="consumption-subvalue">${row.last_consumption_at?`Último consumo: ${eh(dtf.format(new Date(row.last_consumption_at)))}`:'Sin entregas registradas'}</span></td><td><span class="consumption-value">${formatQty(row.month_orders)}</span></td><td><span class="consumption-value">${formatQty(row.month_products)}</span></td><td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span>${meter}</td><td><span class="consumption-value">${eh(formatCurrency(row.previous_month_amount))}</span></td><td><span class="consumption-value">${eh(formatCurrency(row.avg_previous_3_amount))}</span><span class="consumption-subvalue">Incluye meses sin consumo</span></td><td>${consumptionVariationBadge(variation)}</td><td><span class="consumption-value">${eh(formatCurrency(row.historical_amount))}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos entregados</span></td><td>${consumptionSignalBadge(signal)}</td><td>${serviceHistoryButton(row.service_id)}</td></tr>`;}).join('')||'<tr><td colspan="10"><div class="consumption-empty">No hay pedidos entregados para construir un resumen de consumo.</div></td></tr>';
+    E.consumptionProductsTableBody.innerHTML=productRows.map((row)=>{const signal=consumptionSignal(row.month_quantity,row.avg_previous_3_quantity,row.previous_3_months_with_activity);const variation=consumptionVariation(row.month_quantity,row.avg_previous_3_quantity,row.previous_3_months_with_activity);const meter=consumptionMeter(row.month_quantity,row.avg_previous_3_quantity,signal);const sku=row.item_sku?`SKU ${row.item_sku} · `:'';return `<tr><td class="consumption-product-cell"><strong>${eh(row.item_name)}</strong><small>${eh(row.service_name)} · ${eh(sku)}${eh(row.unit||'unidad')}</small></td><td><span class="consumption-value">${formatQty(row.month_quantity)} ${eh(row.unit||'unidad')}</span><span class="consumption-subvalue">${formatQty(row.month_orders)} pedidos</span>${meter}</td><td><span class="consumption-value">${formatQty(row.previous_month_quantity)} ${eh(row.unit||'unidad')}</span></td><td><span class="consumption-value">${formatQty(row.avg_previous_3_quantity)} ${eh(row.unit||'unidad')}</span><span class="consumption-subvalue">Promedio calendario</span></td><td>${consumptionVariationBadge(variation)}</td><td><span class="consumption-value">${formatQty(row.historical_quantity)} ${eh(row.unit||'unidad')}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos · ${eh(formatCurrency(row.historical_amount))}</span></td><td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span></td><td>${consumptionSignalBadge(signal)}</td><td><button class="btn btn-outline-primary btn-sm consumption-history-button" type="button" data-consumption-service="${ea(row.service_id)}" data-consumption-history="${ea(row.material_key)}"><i class="bi bi-bar-chart-line me-1"></i>Histórico</button></td></tr>`;}).join('')||'<tr><td colspan="9"><div class="consumption-empty">No hay consumos que coincidan con los filtros. Los pedidos deben estar marcados como Entregados.</div></td></tr>';
+  }
+
+  function setConsumptionLabels(range) {
+    E.consumptionInsightTotalLabel.textContent=range?'Gasto del período':'Gasto del mes';
+    E.consumptionInsightComparisonLabel.textContent=range?'Promedio mensual':'Vs. promedio 3 meses';
+    E.consumptionTrendTitle.textContent=range?'Evolución dentro del rango':'Evolución de 12 meses';
+    E.consumptionTrendDescription.textContent=range?'Gasto mes a mes dentro del período seleccionado.':'Valor mensual confirmado para detectar tendencia y estacionalidad.';
+    E.consumptionTopServicesDescription.textContent=range?'Ranking acumulado del rango seleccionado.':'Ranking del mes seleccionado.';
+    E.consumptionRecurringBadge.textContent=range?'Rango seleccionado':'Últimos 6 meses';
+    const headers=E.consumptionServiceTable.querySelectorAll('thead th');
+    const names=range?['Servicio','Pedidos','Insumos','Gasto período','Primer mes','Promedio mensual','Inicio → fin','Meses activos','Señal',''] : ['Servicio','Pedidos','Insumos','Mes','Mes anterior','Promedio 3 meses','Variación','Histórico','Señal',''];
+    headers.forEach((th,i)=>{if(names[i]!==undefined)th.textContent=names[i];});
+    const pheaders=E.consumptionProductsTable.querySelectorAll('thead th');
+    const pnames=range?['Servicio e insumo','Cantidad período','Primer mes','Promedio mensual','Inicio → fin','Meses activos','Valor período','Señal',''] : ['Servicio e insumo','Mes seleccionado','Mes anterior','Promedio 3 meses','Variación','Histórico','Valor del mes','Señal',''];
+    pheaders.forEach((th,i)=>{if(pnames[i]!==undefined)th.textContent=pnames[i];});
+  }
+
+  function rangeMonthlyMap() {
+    const map=new Map();
+    S.consumptionRangeMonthlyRows.forEach((row)=>{const key=`${row.service_id}|${row.material_key}`;if(!map.has(key))map.set(key,new Map());map.get(key).set(String(row.consumption_month).slice(0,7),row);});
+    return map;
+  }
+
+  function rangeServiceMonthlyMap() {
+    const map=new Map();S.consumptionRangeMonthlyRows.forEach((row)=>{const month=String(row.consumption_month).slice(0,7);if(!map.has(row.service_id))map.set(row.service_id,new Map());const m=map.get(row.service_id);m.set(month,number(m.get(month))+number(row.amount));});return map;
+  }
+
+  function rangeStats(monthMap, keys, field='amount') {
+    const values=keys.map((key)=>number(monthMap?.get(key)?.[field] ?? monthMap?.get(key)));
+    const active=values.filter((v)=>v>0);const first=values[0]||0;const last=values[values.length-1]||0;const avg=values.length?values.reduce((a,b)=>a+b,0)/values.length:0;const variation=first>0?(last-first)/first*100:null;
+    return {values,activeMonths:active.length,first,last,avg,variation,max:Math.max(0,...values)};
+  }
+
+  function renderConsumptionRange() {
+    const period=consumptionPeriodLabel();const keys=consumptionRangeMonthKeys();const selectedServiceId=E.consumptionServiceFilter.value||'';const serviceMonthly=rangeServiceMonthlyMap();const productMonthly=rangeMonthlyMap();const query=normalize(E.consumptionSearch?.value);
+    const services=S.consumptionRangeServiceRows.filter((row)=>!selectedServiceId||row.service_id===selectedServiceId);
+    const products=S.consumptionRangeRows.filter((row)=>(!selectedServiceId||row.service_id===selectedServiceId)&&(!query||normalize(`${row.item_name} ${row.item_sku||''} ${row.service_name} ${row.unit||''}`).includes(query)));
+    const totalAmount=services.reduce((sum,row)=>sum+number(row.range_amount),0);const totalOrders=services.reduce((sum,row)=>sum+number(row.range_orders),0);
+    E.consumptionKpiServices.textContent=String(services.filter((r)=>number(r.range_orders)>0).length);E.consumptionKpiProducts.textContent=String(products.filter((r)=>number(r.range_quantity)>0).length);E.consumptionKpiOrders.textContent=formatQty(totalOrders);E.consumptionKpiAmount.textContent=formatCurrency(totalAmount);E.consumptionKpiServicesFoot.textContent=`Consumo confirmado · ${period}`;
+    setConsumptionLabels(true);renderConsumptionRangeIntelligence(keys,services,products,serviceMonthly,productMonthly,totalAmount,selectedServiceId);
+    E.consumptionServiceCount.textContent=`${services.length} ${services.length===1?'servicio':'servicios'}`;E.consumptionProductCount.textContent=`${products.length} ${products.length===1?'registro':'registros'}`;E.consumptionResultsCaption.textContent=`Consumo acumulado · ${period}. Los meses inicial/final pueden ser parciales según las fechas elegidas.`;
+    E.consumptionServiceTableBody.innerHTML=services.map((row)=>{const stats=rangeStats(serviceMonthly.get(row.service_id),keys);const signal=stats.variation!=null&&stats.variation>30?'high':(stats.variation!=null&&stats.variation<-30?'low':'normal');return `<tr><td><div class="consumption-service-name">${eh(row.service_name)}</div><span class="consumption-subvalue">${row.last_consumption_at?`Último consumo: ${eh(dtf.format(new Date(row.last_consumption_at)))}`:'Sin entregas registradas'}</span></td><td><span class="consumption-value">${formatQty(row.range_orders)}</span></td><td><span class="consumption-value">${formatQty(row.range_products)}</span></td><td><span class="consumption-value">${eh(formatCurrency(row.range_amount))}</span></td><td><span class="consumption-value">${eh(formatCurrency(stats.first))}</span></td><td><span class="consumption-value">${eh(formatCurrency(stats.avg))}</span></td><td>${consumptionVariationBadge(stats.variation)}</td><td><span class="consumption-value">${stats.activeMonths} / ${keys.length}</span><span class="consumption-subvalue">meses con consumo</span></td><td>${consumptionSignalBadge(signal)}</td><td>${serviceHistoryButton(row.service_id)}</td></tr>`;}).join('')||'<tr><td colspan="10"><div class="consumption-empty">No hay consumos confirmados dentro del rango seleccionado.</div></td></tr>';
+    E.consumptionProductsTableBody.innerHTML=products.map((row)=>{const stats=rangeStats(productMonthly.get(`${row.service_id}|${row.material_key}`),keys,'quantity');const signal=stats.variation!=null&&stats.variation>30?'high':(stats.variation!=null&&stats.variation<-30?'low':'normal');const sku=row.item_sku?`SKU ${row.item_sku} · `:'';return `<tr><td class="consumption-product-cell"><strong>${eh(row.item_name)}</strong><small>${eh(row.service_name)} · ${eh(sku)}${eh(row.unit||'unidad')}</small></td><td><span class="consumption-value">${formatQty(row.range_quantity)} ${eh(row.unit||'unidad')}</span><span class="consumption-subvalue">${formatQty(row.range_orders)} pedidos</span></td><td><span class="consumption-value">${formatQty(stats.first)} ${eh(row.unit||'unidad')}</span></td><td><span class="consumption-value">${formatQty(stats.avg)} ${eh(row.unit||'unidad')}</span></td><td>${consumptionVariationBadge(stats.variation)}</td><td><span class="consumption-value">${stats.activeMonths} / ${keys.length}</span><span class="consumption-subvalue">meses con consumo</span></td><td><span class="consumption-value">${eh(formatCurrency(row.range_amount))}</span></td><td>${consumptionSignalBadge(signal)}</td><td><button class="btn btn-outline-primary btn-sm consumption-history-button" type="button" data-consumption-service="${ea(row.service_id)}" data-consumption-history="${ea(row.material_key)}"><i class="bi bi-bar-chart-line me-1"></i>Histórico</button></td></tr>`;}).join('')||'<tr><td colspan="9"><div class="consumption-empty">No hay consumos que coincidan con los filtros.</div></td></tr>';
+  }
+
+  function renderConsumptionRangeIntelligence(keys,services,products,serviceMonthly,productMonthly,totalAmount,selectedServiceId) {
+    const monthlyTotals=new Map(keys.map((k)=>[k,0]));S.consumptionRangeMonthlyRows.forEach((row)=>{const k=String(row.consumption_month).slice(0,7);if(monthlyTotals.has(k))monthlyTotals.set(k,number(monthlyTotals.get(k))+number(row.amount));});
+    const trend=keys.map((key)=>({key,label:monthLabel(key),shortLabel:shortMonthLabel(key),amount:number(monthlyTotals.get(key))}));const monthlyAvg=keys.length?totalAmount/keys.length:0;
+    E.consumptionInsightMonthTotal.textContent=formatCurrency(totalAmount);E.consumptionInsightVsAverage.innerHTML=`<span class="consumption-range-average">${eh(formatCurrency(monthlyAvg))}</span>`;E.consumptionInsightVsAverageFoot.textContent=`Promedio de ${keys.length} ${keys.length===1?'mes':'meses'} calendario`;
+    const topServices=[...services].sort((a,b)=>number(b.range_amount)-number(a.range_amount)).slice(0,8).map((r)=>({name:r.service_name,amount:number(r.range_amount),share:totalAmount?number(r.range_amount)/totalAmount*100:0,serviceId:r.service_id}));const topProducts=[...products].sort((a,b)=>number(b.range_amount)-number(a.range_amount)).slice(0,8).map((r)=>({name:r.item_name,itemName:r.item_name,amount:number(r.range_amount),share:totalAmount?number(r.range_amount)/totalAmount*100:0,serviceId:r.service_id}));
+    const alerts=[];const recurrences=[];let durables=0;
+    services.forEach((service)=>{const stats=rangeStats(serviceMonthly.get(service.service_id),keys);if(stats.variation!=null&&stats.variation>=40&&stats.last>=10000)alerts.push({severity:stats.variation>=80?3:2,impact:stats.last-stats.first,serviceId:service.service_id,serviceName:service.service_name,title:'Gasto en crecimiento dentro del rango',detail:`${formatCurrency(stats.first)} al inicio → ${formatCurrency(stats.last)} al final (${formatSignedPercent(stats.variation)}).`,icon:'bi-graph-up-arrow'});});
+    products.forEach((row)=>{const map=productMonthly.get(`${row.service_id}|${row.material_key}`);const stats=rangeStats(map,keys,'quantity');const durable=isDurableConsumptionItem({materialId:row.material_id,itemName:row.item_name});if(stats.activeMonths>=Math.min(3,keys.length)&&keys.length>=3){const rec={serviceId:row.service_id,serviceName:row.service_name,itemName:row.item_name,unit:row.unit||'unidad',activeMonths:stats.activeMonths,periodMonths:keys.length,totalQuantity:number(row.range_quantity),totalAmount:number(row.range_amount),durable};recurrences.push(rec);if(durable&&stats.activeMonths>=Math.min(3,keys.length)){durables+=1;alerts.push({severity:3,impact:number(row.range_amount),serviceId:row.service_id,serviceName:row.service_name,itemName:row.item_name,title:'Elemento durable pedido repetidamente',detail:`${row.item_name} tuvo consumo en ${stats.activeMonths} de ${keys.length} meses · ${formatQty(row.range_quantity)} ${row.unit||'unidad'} acumuladas.`,icon:'bi-arrow-repeat'});}}});
+    alerts.sort((a,b)=>b.severity-a.severity||b.impact-a.impact);recurrences.sort((a,b)=>Number(b.durable)-Number(a.durable)||b.activeMonths-a.activeMonths||b.totalAmount-a.totalAmount);
+    E.consumptionInsightAlerts.textContent=String(alerts.length);E.consumptionInsightDurables.textContent=String(durables);
+    const max=Math.max(1,...trend.map(r=>r.amount));E.consumptionTrendBars.innerHTML=trend.map((row)=>`<div class="consumption-trend-column" title="${ea(`${row.label}: ${formatCurrency(row.amount)}`)}"><div class="consumption-trend-value">${eh(compactCurrency(row.amount))}</div><div class="consumption-trend-track"><span style="height:${Math.max(row.amount>0?5:1,row.amount/max*100).toFixed(1)}%"></span></div><div class="consumption-trend-label">${eh(row.shortLabel)}</div></div>`).join('');
+    E.consumptionTopServices.innerHTML=topServices.map((r,i)=>rankingItemHtml(i+1,r.name,formatCurrency(r.amount),r.share,r.serviceId)).join('')||'<div class="consumption-empty compact">Sin gasto registrado.</div>';E.consumptionTopProducts.innerHTML=topProducts.map((r,i)=>rankingItemHtml(i+1,r.name,formatCurrency(r.amount),r.share,r.serviceId,r.itemName)).join('')||'<div class="consumption-empty compact">Sin productos registrados.</div>';E.consumptionRecurringList.innerHTML=recurrences.slice(0,12).map(consumptionRecurrenceHtml).join('')||'<div class="consumption-empty compact">No se detectaron recurrencias suficientes dentro del rango.</div>';E.consumptionAlertsList.innerHTML=alerts.slice(0,14).map(consumptionAlertHtml).join('')||'<div class="consumption-alert-empty"><i class="bi bi-check-circle-fill"></i><div><strong>Sin desvíos relevantes</strong><span>No se detectaron patrones atípicos dentro del rango seleccionado.</span></div></div>';E.consumptionAlertsCaption.textContent=alerts.length?`${alerts.length} señales priorizadas`:'Sin señales críticas';
+    const best=topServices[0];E.consumptionDecisionSummary.innerHTML=totalAmount<=0?'<strong>Sin consumo confirmado en el rango.</strong>':`${best?`<strong>${eh(best.name)}</strong> concentra el mayor gasto (${eh(formatCurrency(best.amount))}). `:''}${alerts.length?`Hay <strong>${alerts.length}</strong> señales para revisar.`:'No se detectaron desvíos relevantes.'}${selectedServiceId?' El análisis está filtrado al servicio seleccionado.':''}`;
+  }
+
+  function serviceHistoryButton(serviceId) {return `<button class="btn btn-outline-secondary btn-sm consumption-service-history-button" type="button" data-consumption-service-history="${ea(serviceId)}"><i class="bi bi-clock-history me-1"></i>Histórico</button>`;}
 
   function renderConsumptionIntelligence(month, selectedServiceId) {
     const analytics = buildConsumptionIntelligence(month);
@@ -6405,7 +6486,7 @@
 
   function consumptionRecurrenceHtml(row) {
     return `<button class="consumption-recurrence-item ${row.durable ? 'is-durable' : ''}" type="button" data-consumption-focus-service="${ea(row.serviceId)}" data-consumption-focus-item="${ea(row.itemName)}">
-      <div class="consumption-recurrence-head"><strong>${eh(row.itemName)}</strong>${row.durable ? '<span>Durable · revisar</span>' : `<span>${row.activeMonths}/6 meses</span>`}</div>
+      <div class="consumption-recurrence-head"><strong>${eh(row.itemName)}</strong>${row.durable ? '<span>Durable · revisar</span>' : `<span>${row.activeMonths}/${row.periodMonths||6} meses</span>`}</div>
       <div class="consumption-recurrence-service">${eh(row.serviceName)}</div>
       <div class="consumption-recurrence-metrics"><span><b>${formatQty(row.totalQuantity)}</b> ${eh(row.unit)}</span><span>${eh(formatCurrency(row.totalAmount))}</span><span>${row.activeMonths} meses con consumo</span></div>
     </button>`;
@@ -6439,6 +6520,8 @@
   }
 
   function handleConsumptionInsightClick(event) {
+    const historyButton=event.target.closest('[data-consumption-service-history]');
+    if(historyButton){openConsumptionServiceHistory(historyButton.dataset.consumptionServiceHistory);return;}
     const button=event.target.closest('[data-consumption-focus-service]');
     if (!button) return;
     const serviceId=button.dataset.consumptionFocusService || '';
@@ -6490,11 +6573,8 @@
   }
 
   function filteredConsumptionRows() {
-    const query = normalize(E.consumptionSearch?.value);
-    return S.consumptionRows.filter((row) => {
-      if (!query) return true;
-      return normalize(`${row.item_name} ${row.item_sku || ''} ${row.service_name} ${row.unit || ''}`).includes(query);
-    });
+    const query=normalize(E.consumptionSearch?.value);const source=getConsumptionMode()==='range'?S.consumptionRangeRows:S.consumptionRows;
+    return source.filter((row)=>!query||normalize(`${row.item_name} ${row.item_sku||''} ${row.service_name} ${row.unit||''}`).includes(query));
   }
 
   function consumptionSignal(currentValue, baselineValue, activeMonths) {
@@ -6545,12 +6625,13 @@
 
   async function openConsumptionHistory(serviceId, materialKey) {
     if (!isFullAdmin()) return;
-    const row = S.consumptionRows.find((item) => item.service_id === serviceId && item.material_key === materialKey);
+    const row = (getConsumptionMode()==='range'?S.consumptionRangeRows:S.consumptionRows).find((item) => item.service_id === serviceId && item.material_key === materialKey);
     if (!row) return;
 
     S.consumptionHistoryContext = row;
     E.consumptionHistoryTitle.textContent = row.item_name;
-    E.consumptionHistorySubtitle.textContent = `${row.service_name} · ${row.item_sku ? `SKU ${row.item_sku} · ` : ''}${row.unit || 'unidad'} · 12 meses hasta ${monthLabel(E.consumptionMonth.value)}`;
+    const untilMonth=getConsumptionMode()==='range'?String(E.consumptionRangeEnd.value).slice(0,7):(E.consumptionMonth.value||monthInputValue(new Date()));
+    E.consumptionHistorySubtitle.textContent = `${row.service_name} · ${row.item_sku ? `SKU ${row.item_sku} · ` : ''}${row.unit || 'unidad'} · 12 meses hasta ${monthLabel(untilMonth)}`;
     E.consumptionHistoryLoading.classList.remove('d-none');
     E.consumptionHistoryContent.classList.add('d-none');
     E.consumptionHistoryError.classList.add('d-none');
@@ -6561,7 +6642,7 @@
       const { data, error } = await S.sb.rpc('admin_consumption_history', {
         p_service_id: serviceId,
         p_material_key: materialKey,
-        p_until_month: `${E.consumptionMonth.value || monthInputValue(new Date())}-01`,
+        p_until_month: `${untilMonth}-01`,
         p_months: 12
       });
       if (error) throw error;
@@ -6598,45 +6679,33 @@
     E.consumptionHistoryContent.classList.remove('d-none');
   }
 
-  function exportConsumptionCsv() {
-    const rows = filteredConsumptionRows();
-    if (!rows.length) {
-      toast('No hay datos de consumo para exportar.', 'error');
-      return;
-    }
-    const month = E.consumptionMonth.value || monthInputValue(new Date());
-    const headers = ['Mes','Servicio','Producto','SKU','Unidad','Cantidad mes','Valor mes','Pedidos mes','Cantidad mes anterior','Promedio 3 meses','Variación vs promedio','Cantidad histórica','Valor histórico','Pedidos históricos','Señal'];
-    const lines = [headers, ...rows.map((row) => {
-      const signal = consumptionSignal(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
-      const variation = consumptionVariation(row.month_quantity, row.avg_previous_3_quantity, row.previous_3_months_with_activity);
-      return [
-        month,
-        row.service_name,
-        row.item_name,
-        row.item_sku || '',
-        row.unit || 'unidad',
-        csvNumber(row.month_quantity),
-        csvNumber(row.month_amount),
-        csvNumber(row.month_orders),
-        csvNumber(row.previous_month_quantity),
-        csvNumber(row.avg_previous_3_quantity),
-        variation == null ? '' : csvNumber(Math.round(variation * 100) / 100),
-        csvNumber(row.historical_quantity),
-        csvNumber(row.historical_amount),
-        csvNumber(row.historical_orders),
-        ({ high: 'Alto', low: 'Bajo', normal: 'Habitual', new: 'Nuevo', none: 'Sin datos' })[signal]
-      ];
-    })].map((row) => row.map(csvCell).join(';')).join('\r\n');
+  async function openConsumptionServiceHistory(serviceId) {
+    if(!isFullAdmin()||!serviceId)return;S.consumptionServiceHistoryId=serviceId;const service=S.services.find((s)=>s.id===serviceId);E.consumptionServiceHistoryTitle.textContent=service?.name||'Servicio';E.consumptionServiceHistorySubtitle.textContent='Evolución mensual del consumo confirmado';E.consumptionServiceHistoryMonths.value='24';M.consumptionServiceHistory.show();await loadConsumptionServiceHistory();
+  }
 
-    const blob = new Blob([`\ufeff${lines}`], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `consumo-clean-it-${month}.csv`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+  async function loadConsumptionServiceHistory() {
+    const serviceId=S.consumptionServiceHistoryId;if(!serviceId)return;E.consumptionServiceHistoryLoading.classList.remove('d-none');E.consumptionServiceHistoryContent.classList.add('d-none');E.consumptionServiceHistoryError.classList.add('d-none');
+    try{const months=Number(E.consumptionServiceHistoryMonths.value||24);const{data,error}=await S.sb.rpc('admin_consumption_service_history',{p_service_id:serviceId,p_months:months});if(error)throw error;renderConsumptionServiceHistory(data||[]);}catch(error){console.error(error);E.consumptionServiceHistoryLoading.classList.add('d-none');E.consumptionServiceHistoryError.textContent=consumptionErrorMessage(error);E.consumptionServiceHistoryError.classList.remove('d-none');}
+  }
+
+  function renderConsumptionServiceHistory(rows) {
+    const sorted=[...rows].sort((a,b)=>String(a.consumption_month).localeCompare(String(b.consumption_month)));const total=sorted.reduce((s,r)=>s+number(r.amount),0);const active=sorted.filter((r)=>number(r.amount)>0);const avg=active.length?total/active.length:0;const max=Math.max(0,...sorted.map((r)=>number(r.amount)));const orders=sorted.reduce((s,r)=>s+number(r.orders),0);
+    E.consumptionServiceHistoryTotal.textContent=formatCurrency(total);E.consumptionServiceHistoryAverage.textContent=formatCurrency(avg);E.consumptionServiceHistoryMax.textContent=formatCurrency(max);E.consumptionServiceHistoryOrders.textContent=formatQty(orders);
+    const maxValue=Math.max(1,max);E.consumptionServiceHistoryBars.innerHTML=sorted.map((r)=>`<div class="consumption-service-history-column" title="${ea(`${monthLabelFromDate(r.consumption_month)}: ${formatCurrency(r.amount)}`)}"><div>${eh(compactCurrency(r.amount))}</div><span style="height:${Math.max(number(r.amount)>0?5:1,number(r.amount)/maxValue*100).toFixed(1)}%"></span><small>${eh(shortMonthLabel(String(r.consumption_month).slice(0,7)))}</small></div>`).join('')||'<div class="consumption-empty">No hay consumos históricos para este servicio.</div>';
+    E.consumptionServiceHistoryBody.innerHTML=sorted.slice().reverse().map((r,i,arr)=>{const prev=sorted.find((x)=>String(x.consumption_month).slice(0,7)===previousMonthKey(String(r.consumption_month).slice(0,7)));const variation=prev&&number(prev.amount)>0?(number(r.amount)-number(prev.amount))/number(prev.amount)*100:null;return `<tr><td><strong>${eh(monthLabelFromDate(r.consumption_month))}</strong></td><td>${formatQty(r.orders)}</td><td>${formatQty(r.products)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${consumptionVariationBadge(variation)}</td></tr>`;}).join('')||'<tr><td colspan="5" class="text-center text-secondary py-4">Sin información histórica.</td></tr>';
+    E.consumptionServiceHistoryLoading.classList.add('d-none');E.consumptionServiceHistoryContent.classList.remove('d-none');
+  }
+
+  function previousMonthKey(value){const[y,m]=String(value).split('-').map(Number);return monthInputValue(new Date(y,m-2,15));}
+
+  function exportConsumptionCsv() {
+    const rows=filteredConsumptionRows();if(!rows.length){toast('No hay datos de consumo para exportar.','error');return;}
+    const range=getConsumptionMode()==='range';const period=range?consumptionPeriodLabel():(E.consumptionMonth.value||monthInputValue(new Date()));
+    const headers=range?['Período','Servicio','Producto','SKU','Unidad','Cantidad período','Valor período','Pedidos','Meses con consumo']:['Mes','Servicio','Producto','SKU','Unidad','Cantidad mes','Valor mes','Pedidos mes','Cantidad mes anterior','Promedio 3 meses','Variación vs promedio','Cantidad histórica','Valor histórico','Pedidos históricos','Señal'];
+    let dataRows;
+    if(range){const keys=consumptionRangeMonthKeys();const maps=rangeMonthlyMap();dataRows=rows.map((row)=>{const stats=rangeStats(maps.get(`${row.service_id}|${row.material_key}`),keys,'quantity');return[period,row.service_name,row.item_name,row.item_sku||'',row.unit||'unidad',csvNumber(row.range_quantity),csvNumber(row.range_amount),csvNumber(row.range_orders),stats.activeMonths];});}
+    else{dataRows=rows.map((row)=>{const signal=consumptionSignal(row.month_quantity,row.avg_previous_3_quantity,row.previous_3_months_with_activity);const variation=consumptionVariation(row.month_quantity,row.avg_previous_3_quantity,row.previous_3_months_with_activity);return[period,row.service_name,row.item_name,row.item_sku||'',row.unit||'unidad',csvNumber(row.month_quantity),csvNumber(row.month_amount),csvNumber(row.month_orders),csvNumber(row.previous_month_quantity),csvNumber(row.avg_previous_3_quantity),variation==null?'':csvNumber(Math.round(variation*100)/100),csvNumber(row.historical_quantity),csvNumber(row.historical_amount),csvNumber(row.historical_orders),({high:'Alto',low:'Bajo',normal:'Habitual',new:'Nuevo',none:'Sin datos'})[signal]];});}
+    const lines=[headers,...dataRows].map((row)=>row.map(csvCell).join(';')).join('\r\n');const blob=new Blob([`\ufeff${lines}`],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=`consumo-clean-it-${range?'rango':period}.csv`;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url);
   }
 
   function csvNumber(value) {

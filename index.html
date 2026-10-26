@@ -325,10 +325,13 @@
           <div class="alert alert-info consumption-definition"><i class="bi bi-info-circle-fill me-2"></i><strong>Consumo confirmado:</strong> se contabilizan únicamente pedidos con estado <strong>Entregado</strong>, usando la fecha en que fueron cerrados. Los pedidos pendientes, en preparación, enviados o cancelados no alteran el informe.</div>
           <div class="section-card mb-4">
             <div class="row g-3 align-items-end">
-              <div class="col-md-4 col-xl-3"><label for="consumptionMonth" class="form-label">Mes analizado</label><input id="consumptionMonth" class="form-control" type="month"></div>
-              <div class="col-md-8 col-xl-4"><label for="consumptionServiceFilter" class="form-label">Servicio</label><select id="consumptionServiceFilter" class="form-select"><option value="">Todos los servicios</option></select></div>
-              <div class="col-xl-5"><label for="consumptionSearch" class="form-label">Buscar insumo</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="consumptionSearch" class="form-control" type="search" placeholder="Producto, SKU, servicio o unidad"></div></div>
+              <div class="col-md-4 col-xl-2"><label for="consumptionPeriodMode" class="form-label">Tipo de análisis</label><select id="consumptionPeriodMode" class="form-select"><option value="month">Mensual</option><option value="range">Rango personalizado</option></select></div>
+              <div id="consumptionMonthWrap" class="col-md-4 col-xl-2"><label for="consumptionMonth" class="form-label">Mes analizado</label><input id="consumptionMonth" class="form-control" type="month"></div>
+              <div id="consumptionRangeWrap" class="col-md-8 col-xl-4 d-none"><div class="row g-2"><div class="col-6"><label for="consumptionRangeStart" class="form-label">Desde</label><input id="consumptionRangeStart" class="form-control" type="date"></div><div class="col-6"><label for="consumptionRangeEnd" class="form-label">Hasta</label><input id="consumptionRangeEnd" class="form-control" type="date"></div></div></div>
+              <div class="col-md-8 col-xl-3"><label for="consumptionServiceFilter" class="form-label">Servicio</label><select id="consumptionServiceFilter" class="form-select"><option value="">Todos los servicios</option></select></div>
+              <div class="col-xl-3"><label for="consumptionSearch" class="form-label">Buscar insumo</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="consumptionSearch" class="form-control" type="search" placeholder="Producto, SKU o servicio"></div></div>
             </div>
+            <div id="consumptionRangeQuickButtons" class="consumption-range-quick d-none mt-3"><span>Rangos rápidos:</span><button type="button" class="btn btn-sm btn-light" data-consumption-quick-months="2">2 meses</button><button type="button" class="btn btn-sm btn-light" data-consumption-quick-months="3">3 meses</button><button type="button" class="btn btn-sm btn-light" data-consumption-quick-months="6">6 meses</button><button type="button" class="btn btn-sm btn-light" data-consumption-quick-months="12">12 meses</button></div>
           </div>
           <div id="consumptionError" class="alert alert-danger d-none"></div>
           <div id="consumptionAnalyticsNotice" class="alert alert-warning d-none"></div>
@@ -345,31 +348,31 @@
               <div><span class="eyebrow">Lectura ejecutiva</span><div id="consumptionDecisionSummary" class="consumption-decision-text">Calculando señales operativas...</div></div>
             </div>
             <div class="row g-3 mb-3">
-              <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi"><span>Gasto del mes</span><strong id="consumptionInsightMonthTotal">$ 0</strong><small>Pedidos entregados</small></div></div>
-              <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi"><span>Vs. promedio 3 meses</span><div id="consumptionInsightVsAverage" class="mt-2"></div><small id="consumptionInsightVsAverageFoot">Sin referencia</small></div></div>
+              <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi"><span id="consumptionInsightTotalLabel">Gasto del mes</span><strong id="consumptionInsightMonthTotal">$ 0</strong><small>Pedidos entregados</small></div></div>
+              <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi"><span id="consumptionInsightComparisonLabel">Vs. promedio 3 meses</span><div id="consumptionInsightVsAverage" class="mt-2"></div><small id="consumptionInsightVsAverageFoot">Sin referencia</small></div></div>
               <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi is-warning"><span>Señales para revisar</span><strong id="consumptionInsightAlerts">0</strong><small>Picos, crecimiento y recurrencias</small></div></div>
               <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi is-danger"><span>Durables repetidos</span><strong id="consumptionInsightDurables">0</strong><small>Reposiciones potencialmente anómalas</small></div></div>
             </div>
             <div class="row g-3 mb-3">
-              <div class="col-xl-7"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Evolución de 12 meses</h2><p class="text-secondary mb-0">Valor mensual confirmado para detectar tendencia y estacionalidad.</p></div></div><div id="consumptionTrendBars" class="consumption-trend-chart"></div></div></div>
+              <div class="col-xl-7"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 id="consumptionTrendTitle" class="section-title mb-1">Evolución de 12 meses</h2><p id="consumptionTrendDescription" class="text-secondary mb-0">Valor mensual confirmado para detectar tendencia y estacionalidad.</p></div></div><div id="consumptionTrendBars" class="consumption-trend-chart"></div></div></div>
               <div class="col-xl-5"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Alertas para revisar</h2><p class="text-secondary mb-0">Se priorizan los patrones con mayor impacto operativo.</p></div><span id="consumptionAlertsCaption" class="badge text-bg-light">0 señales</span></div><div id="consumptionAlertsList" class="consumption-alert-list"></div></div></div>
             </div>
             <div class="row g-3 mb-3">
-              <div class="col-xl-6"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Servicios con mayor gasto</h2><p class="text-secondary mb-0">Ranking del mes seleccionado.</p></div></div><div id="consumptionTopServices" class="consumption-ranking-list"></div></div></div>
+              <div class="col-xl-6"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Servicios con mayor gasto</h2><p id="consumptionTopServicesDescription" class="text-secondary mb-0">Ranking del mes seleccionado.</p></div></div><div id="consumptionTopServices" class="consumption-ranking-list"></div></div></div>
               <div class="col-xl-6"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Insumos con mayor gasto</h2><p class="text-secondary mb-0">Concentración económica por producto.</p></div></div><div id="consumptionTopProducts" class="consumption-ranking-list"></div></div></div>
             </div>
             <div class="section-card mb-4">
-              <div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Patrones de consumo recurrente</h2><p class="text-secondary mb-0">Qué servicios vienen pidiendo los mismos insumos de forma repetida y en qué cantidad.</p></div><span class="badge text-bg-light">Últimos 6 meses</span></div>
+              <div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Patrones de consumo recurrente</h2><p class="text-secondary mb-0">Qué servicios vienen pidiendo los mismos insumos de forma repetida y en qué cantidad.</p></div><span id="consumptionRecurringBadge" class="badge text-bg-light">Últimos 6 meses</span></div>
               <div id="consumptionRecurringList" class="consumption-recurring-grid"></div>
             </div>
           </div>
           <div class="section-card p-0 overflow-hidden mb-4">
             <div class="consumption-table-heading"><div><h2 class="section-title mb-1">Resumen por servicio</h2><p class="text-secondary mb-0">El valor monetario permite comparar servicios aun cuando usan unidades de pedido diferentes.</p></div><span id="consumptionServiceCount" class="badge text-bg-light">0 servicios</span></div>
-            <div class="table-responsive"><table class="table admin-table align-middle"><thead><tr><th>Servicio</th><th>Pedidos</th><th>Insumos</th><th>Mes</th><th>Mes anterior</th><th>Promedio 3 meses</th><th>Variación</th><th>Histórico</th><th>Señal</th></tr></thead><tbody id="consumptionServiceTableBody"></tbody></table></div>
+            <div class="table-responsive"><table id="consumptionServiceTable" class="table admin-table align-middle"><thead><tr><th>Servicio</th><th>Pedidos</th><th>Insumos</th><th>Mes</th><th>Mes anterior</th><th>Promedio 3 meses</th><th>Variación</th><th>Histórico</th><th>Señal</th><th></th></tr></thead><tbody id="consumptionServiceTableBody"></tbody></table></div>
           </div>
           <div class="section-card p-0 overflow-hidden">
             <div class="consumption-table-heading"><div><h2 class="section-title mb-1">Detalle por producto y servicio</h2><p id="consumptionResultsCaption" class="text-secondary mb-0">Consumo del mes seleccionado y referencia histórica.</p></div><span id="consumptionProductCount" class="badge text-bg-light">0 registros</span></div>
-            <div class="table-responsive"><table class="table admin-table align-middle consumption-table"><thead><tr><th>Servicio e insumo</th><th>Mes seleccionado</th><th>Mes anterior</th><th>Promedio 3 meses</th><th>Variación</th><th>Histórico</th><th>Valor del mes</th><th>Señal</th><th></th></tr></thead><tbody id="consumptionProductsTableBody"></tbody></table></div>
+            <div class="table-responsive"><table id="consumptionProductsTable" class="table admin-table align-middle consumption-table"><thead><tr><th>Servicio e insumo</th><th>Mes seleccionado</th><th>Mes anterior</th><th>Promedio 3 meses</th><th>Variación</th><th>Histórico</th><th>Valor del mes</th><th>Señal</th><th></th></tr></thead><tbody id="consumptionProductsTableBody"></tbody></table></div>
           </div>
         </section>
 
@@ -758,6 +761,25 @@
     </div>
   </div>
 
+
+  <div class="modal fade" id="consumptionServiceHistoryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header"><div><div class="eyebrow">Histórico por servicio</div><h5 id="consumptionServiceHistoryTitle" class="modal-title fw-black">Servicio</h5><p id="consumptionServiceHistorySubtitle" class="text-secondary small mb-0 mt-1">Evolución mensual</p></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4"><div><label for="consumptionServiceHistoryMonths" class="form-label">Período histórico</label><select id="consumptionServiceHistoryMonths" class="form-select"><option value="12">Últimos 12 meses</option><option value="24" selected>Últimos 24 meses</option><option value="36">Últimos 36 meses</option><option value="60">Últimos 60 meses</option><option value="0">Todo el histórico</option></select></div><div class="text-secondary small">Solo pedidos marcados como Entregados.</div></div>
+          <div id="consumptionServiceHistoryLoading" class="consumption-history-loading"><div class="spinner-border text-primary" role="status"></div><span>Calculando histórico del servicio...</span></div>
+          <div id="consumptionServiceHistoryContent" class="d-none">
+            <div class="row g-3 mb-4"><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Gasto histórico</span><strong id="consumptionServiceHistoryTotal">$ 0</strong></div></div><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Promedio mes activo</span><strong id="consumptionServiceHistoryAverage">$ 0</strong></div></div><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Máximo mensual</span><strong id="consumptionServiceHistoryMax">$ 0</strong></div></div><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Pedidos entregados</span><strong id="consumptionServiceHistoryOrders">0</strong></div></div></div>
+            <div class="section-card mb-4"><h6 class="fw-black mb-3">Evolución mes a mes</h6><div id="consumptionServiceHistoryBars" class="consumption-service-history-chart"></div></div>
+            <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle mb-0"><thead><tr><th>Mes</th><th>Pedidos</th><th>Insumos distintos</th><th>Gasto</th><th>Vs. mes anterior</th></tr></thead><tbody id="consumptionServiceHistoryBody"></tbody></table></div></div>
+          </div>
+          <div id="consumptionServiceHistoryError" class="alert alert-danger d-none mb-0"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="toast-container position-fixed bottom-0 end-0 p-3"><div id="appToast" class="toast border-0 shadow" role="alert"><div class="d-flex"><div id="toastBody" class="toast-body fw-bold">Listo</div><button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div></div></div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
@@ -768,6 +790,6 @@
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
   <!-- Build: PDF múltiple de pedidos + facturas IA + PWA + facturación + scroll sticky 2026-08-26-v1 -->
   <script src="config.js"></script>
-  <script src="app.js?v=20260826-orders-pdf1"></script>
+  <script src="app.js?v=20261026-consumption-range2"></script>
 </body>
 </html>

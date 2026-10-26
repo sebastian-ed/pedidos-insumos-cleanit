@@ -1,46 +1,43 @@
-# Pedidos Clean It - totalizador y analítica de consumos
+# Pedidos Clean It - rangos e histórico de consumos
 
-## 1. Totalizador de pedidos
+## Mejoras incluidas
 
-Los mismos checkbox de **Pedidos** ahora tienen dos funciones independientes:
+### Totalizador de pedidos
+Los checkbox de Pedidos siguen funcionando como selección general. La selección permite ver el valor total acumulado, copiarlo y, de forma independiente, generar el PDF para proveedor.
 
-- muestran automáticamente la cantidad de pedidos seleccionados y su **valor total acumulado**;
-- permiten, de forma opcional e independiente, generar el PDF para el proveedor.
+### Consumos por período
+En Consumos se puede elegir:
+- **Mensual**, manteniendo el análisis anterior.
+- **Rango personalizado**, seleccionando fecha desde y fecha hasta.
 
-Si la selección incluye pedidos cancelados, la app muestra una advertencia visual para evitar incluirlos por error en una conciliación con la factura del proveedor.
+También hay accesos rápidos de 2, 3, 6 y 12 meses.
 
-## 2. Consumos - tablero operativo
+El rango calcula únicamente pedidos con estado **Entregado**, según la fecha de cierre del pedido. Para el período elegido muestra gasto acumulado, pedidos, insumos utilizados, ranking de servicios, ranking de productos, evolución mensual y patrones recurrentes.
 
-Se amplió el módulo de Consumos con:
+### Histórico por servicio
+En el resumen por servicio aparece el botón **Histórico**. Permite consultar:
+- últimos 12, 24, 36 o 60 meses;
+- todo el histórico disponible;
+- gasto de cada mes;
+- pedidos entregados por mes;
+- cantidad de insumos distintos;
+- variación contra el mes anterior;
+- promedio de meses con actividad y máximo mensual.
 
-- evolución de gasto de los últimos 12 meses;
-- comparación del mes contra el promedio de los 3 meses anteriores;
-- ranking de servicios con mayor gasto;
-- ranking de insumos con mayor gasto;
-- alertas de servicios con aumento fuerte de gasto;
-- alertas de crecimiento sostenido durante varios meses;
-- alertas de aumentos fuertes por SKU/insumo;
-- detección de reposición reiterada de elementos durables como escobas, baldes, mopas, cabos, palas, secadores, pulverizadores, cepillos, plumeros, carros, etc.;
-- bloque de **Patrones de consumo recurrente**: muestra servicio + insumo + cantidad acumulada + meses con consumo durante los últimos 6 meses;
-- lectura ejecutiva automática para señalar rápidamente dónde conviene revisar.
+Los meses sin consumo se muestran en cero para que la comparación mes a mes sea real.
 
-Los cálculos continúan usando únicamente pedidos con estado **Entregado**.
+## Supabase - paso obligatorio
+Ejecutar una sola vez en **Supabase > SQL Editor**:
 
-## 3. Supabase - paso obligatorio
+`actualizar-rangos-historico-consumos.sql`
 
-Ejecutar una sola vez en **Supabase > SQL Editor** el archivo:
+La migración no modifica pedidos ni registros históricos. Solo agrega funciones de lectura y consolidación para el módulo de Consumos.
 
-`actualizar-analitica-consumos.sql`
-
-La función solo lee y consolida consumos históricos. No modifica pedidos ni registros existentes.
-
-## 4. Publicar
-
-Reemplazar los archivos del repositorio y ejecutar:
+## Publicar
 
 ```powershell
 git add .
-git commit -m "Totalizador y analitica avanzada de consumos"
+git commit -m "Rangos e historico de consumos"
 git push origin main
 ```
 
