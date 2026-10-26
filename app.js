@@ -60,6 +60,7 @@
     passwordRecovery: false,
     consumptionRows: [],
     consumptionServiceRows: [],
+    consumptionAnalyticsRows: [],
     consumptionLoadedKey: '',
     consumptionLoading: false,
     consumptionHistoryContext: null,
@@ -229,6 +230,7 @@
     E.ordersTableBody.addEventListener('change', handleOrderPdfSelectionChange);
     E.ordersPdfSelectAll.addEventListener('change', toggleVisibleOrderPdfSelections);
     E.generateOrdersPdfButton.addEventListener('click', generateSelectedOrdersPdf);
+    E.copyOrdersSelectionTotalButton.addEventListener('click', copyOrdersSelectionTotal);
     E.clearOrdersPdfSelectionButton.addEventListener('click', clearOrderPdfSelection);
     E.applyCurrentBillingToOpenOrdersButton.addEventListener('click', applyCurrentBillingToAllOpenOrders);
     E.selectInvoiceFilesButton.addEventListener('click', () => E.invoicePdfInput.click());
@@ -267,6 +269,7 @@
     E.consumptionSearch.addEventListener('input', renderConsumption);
     E.refreshConsumptionButton.addEventListener('click', () => loadConsumptionReport(true));
     E.exportConsumptionButton.addEventListener('click', exportConsumptionCsv);
+    E.adminConsumption.addEventListener('click', handleConsumptionInsightClick);
     E.materialsSearch.addEventListener('input', renderMaterials);
     E.materialsStatusFilter.addEventListener('change', renderMaterials);
     E.adminServiceSearch.addEventListener('input', renderServices);
@@ -1512,7 +1515,7 @@
       const service = serviceById(order.service_id);
       const selected = S.orderPdfSelected.has(order.id);
       return `<tr class="${order.priority === 'urgente' && !['entregado', 'cancelado'].includes(order.status) ? 'order-row-urgent ' : ''}${selected ? 'order-row-pdf-selected' : ''}">
-        <td class="orders-pdf-check-col"><input class="form-check-input order-pdf-checkbox" type="checkbox" data-order-pdf-select="${ea(order.id)}" ${selected ? 'checked' : ''} aria-label="Incluir ${ea(order.order_code)} en el PDF"></td>
+        <td class="orders-pdf-check-col"><input class="form-check-input order-pdf-checkbox" type="checkbox" data-order-pdf-select="${ea(order.id)}" ${selected ? 'checked' : ''} aria-label="Seleccionar ${ea(order.order_code)}"></td>
         <td><div class="order-code">${eh(order.order_code)}</div><div class="order-date">${dtf.format(new Date(order.created_at))}</div></td>
         <td><div class="order-service">${eh(service?.name || 'Servicio eliminado')}</div><div class="table-subtitle">${eh(service?.address || '')}</div></td>
         <td>${eh(order.reporter_name)}</td>
@@ -1528,14 +1531,24 @@
 
   function renderOrdersPdfToolbar(filtered = filteredOrdersForView()) {
     if (!E.ordersPdfToolbar) return;
-    const selectedCount = S.orderPdfSelected.size;
+    const selectedOrders = S.orders.filter((order) => S.orderPdfSelected.has(order.id));
+    const selectedCount = selectedOrders.length;
+    const selectedTotal = selectedOrders.reduce((sum, order) => sum + number(order.total_amount), 0);
+    const cancelled = selectedOrders.filter((order) => order.status === 'cancelado');
     E.ordersPdfToolbar.classList.remove('d-none');
     E.ordersPdfSelectedCount.textContent = String(selectedCount);
+    E.ordersSelectionCount.textContent = String(selectedCount);
+    E.ordersSelectionTotal.textContent = formatCurrency(selectedTotal);
+    E.ordersSelectionCancelled.classList.toggle('d-none', cancelled.length === 0);
+    E.ordersSelectionCancelled.textContent = cancelled.length
+      ? `${cancelled.length} ${cancelled.length === 1 ? 'pedido cancelado incluido' : 'pedidos cancelados incluidos'} en la selección.`
+      : '';
     E.generateOrdersPdfButton.disabled = selectedCount === 0;
+    E.copyOrdersSelectionTotalButton.disabled = selectedCount === 0;
     E.clearOrdersPdfSelectionButton.classList.toggle('d-none', selectedCount === 0);
     E.ordersPdfSelectionText.textContent = selectedCount
-      ? `${selectedCount} ${selectedCount === 1 ? 'pedido seleccionado' : 'pedidos seleccionados'} para generar en un único PDF.`
-      : 'Marcá los pedidos que querés incluir. Cada pedido comienza en una página nueva.';
+      ? 'La misma selección sirve para controlar el total y, si querés, generar el PDF para el proveedor.'
+      : 'Marcá pedidos para calcular su total. Generar el PDF es una acción independiente.';
 
     const visibleIds = filtered.map((order) => order.id);
     const visibleSelected = visibleIds.filter((id) => S.orderPdfSelected.has(id)).length;
@@ -1568,6 +1581,18 @@
   function clearOrderPdfSelection() {
     S.orderPdfSelected.clear();
     renderOrders();
+  }
+
+  function copyOrdersSelectionTotal() {
+    const selected = S.orders.filter((order) => S.orderPdfSelected.has(order.id));
+    if (!selected.length) return;
+    const total = selected.reduce((sum, order) => sum + number(order.total_amount), 0);
+    const lines = [
+      `PEDIDOS SELECCIONADOS: ${selected.length}`,
+      ...selected.map((order) => `${order.order_code} · ${serviceById(order.service_id)?.name || 'Servicio'} · ${formatCurrency(order.total_amount)}`),
+      `TOTAL: ${formatCurrency(total)}`
+    ];
+    copyText(lines.join('\n'));
   }
 
   function pdfSafeText(value) {
@@ -6114,11 +6139,28 @@
 
       S.consumptionServiceRows = servicesResult.data || [];
       S.consumptionRows = productsResult.data || [];
+      const analyticsResult = await S.sb.rpc('admin_consumption_analytics', {
+        p_until_month: `${month}-01`,
+        p_months: 12,
+        p_service_id: serviceId
+      });
+      if (analyticsResult.error) {
+        console.warn('Analítica avanzada de consumos no disponible:', analyticsResult.error);
+        S.consumptionAnalyticsRows = [];
+        if (E.consumptionAnalyticsNotice) {
+          E.consumptionAnalyticsNotice.textContent = 'Para ver tendencias de 12 meses y alertas avanzadas, ejecutá actualizar-analitica-consumos.sql en Supabase.';
+          E.consumptionAnalyticsNotice.classList.remove('d-none');
+        }
+      } else {
+        S.consumptionAnalyticsRows = analyticsResult.data || [];
+        if (E.consumptionAnalyticsNotice) E.consumptionAnalyticsNotice.classList.add('d-none');
+      }
       S.consumptionLoadedKey = key;
     } catch (error) {
       console.error(error);
       S.consumptionServiceRows = [];
       S.consumptionRows = [];
+      S.consumptionAnalyticsRows = [];
       S.consumptionLoadedKey = '';
       E.consumptionError.textContent = consumptionErrorMessage(error);
       E.consumptionError.classList.remove('d-none');
@@ -6157,6 +6199,7 @@
     E.consumptionKpiOrders.textContent = formatQty(deliveredOrders);
     E.consumptionKpiAmount.textContent = formatCurrency(monthAmount);
     E.consumptionKpiServicesFoot.textContent = `Consumo confirmado en ${monthText}`;
+    renderConsumptionIntelligence(month, selectedServiceId);
     E.consumptionServiceCount.textContent = `${visibleServiceRows.length} ${visibleServiceRows.length === 1 ? 'servicio' : 'servicios'}`;
     E.consumptionProductCount.textContent = `${productRows.length} ${productRows.length === 1 ? 'registro' : 'registros'}`;
     E.consumptionResultsCaption.textContent = `Cantidades de ${monthText}, promedio de los tres meses anteriores e histórico acumulado.`;
@@ -6195,6 +6238,255 @@
         <td><button class="btn btn-outline-primary btn-sm consumption-history-button" type="button" data-consumption-service="${ea(row.service_id)}" data-consumption-history="${ea(row.material_key)}"><i class="bi bi-bar-chart-line me-1"></i>Histórico</button></td>
       </tr>`;
     }).join('') || '<tr><td colspan="9"><div class="consumption-empty">No hay consumos que coincidan con los filtros. Los pedidos deben estar marcados como Entregados.</div></td></tr>';
+  }
+
+  function renderConsumptionIntelligence(month, selectedServiceId) {
+    const analytics = buildConsumptionIntelligence(month);
+    const hasAdvanced = S.consumptionAnalyticsRows.length > 0;
+    if (!E.consumptionTrendBars) return;
+
+    E.consumptionInsightMonthTotal.textContent = formatCurrency(analytics.currentTotal);
+    E.consumptionInsightVsAverage.innerHTML = consumptionVariationBadge(analytics.vsPrevious3);
+    E.consumptionInsightVsAverageFoot.textContent = analytics.previous3Average > 0
+      ? `Promedio 3 meses: ${formatCurrency(analytics.previous3Average)}`
+      : 'Todavía no hay referencia suficiente';
+    E.consumptionInsightAlerts.textContent = String(analytics.alerts.length);
+    E.consumptionInsightDurables.textContent = String(analytics.durableAlerts.length);
+
+    const maxTrend = Math.max(1, ...analytics.monthTrend.map((row) => row.amount));
+    E.consumptionTrendBars.innerHTML = analytics.monthTrend.map((row) => {
+      const height = Math.max(row.amount > 0 ? 5 : 1, (row.amount / maxTrend) * 100);
+      const current = row.key === month;
+      return `<div class="consumption-trend-column ${current ? 'is-current' : ''}" title="${ea(`${row.label}: ${formatCurrency(row.amount)}`)}">
+        <div class="consumption-trend-value">${eh(compactCurrency(row.amount))}</div>
+        <div class="consumption-trend-track"><span style="height:${height.toFixed(1)}%"></span></div>
+        <div class="consumption-trend-label">${eh(row.shortLabel)}</div>
+      </div>`;
+    }).join('');
+
+    E.consumptionTopServices.innerHTML = analytics.topServices.map((row, index) => rankingItemHtml(index + 1, row.name, formatCurrency(row.amount), row.share, row.serviceId)).join('')
+      || '<div class="consumption-empty compact">Sin gasto registrado en el mes.</div>';
+    E.consumptionTopProducts.innerHTML = analytics.topProducts.map((row, index) => rankingItemHtml(index + 1, row.name, formatCurrency(row.amount), row.share, row.serviceId, row.itemName)).join('')
+      || '<div class="consumption-empty compact">Sin productos registrados en el mes.</div>';
+    E.consumptionRecurringList.innerHTML = analytics.recurrences.map(consumptionRecurrenceHtml).join('')
+      || '<div class="consumption-empty compact">Todavía no hay suficientes meses de consumo para detectar recurrencias.</div>';
+
+    E.consumptionAlertsList.innerHTML = analytics.alerts.slice(0, 14).map(consumptionAlertHtml).join('')
+      || `<div class="consumption-alert-empty"><i class="bi bi-check-circle-fill"></i><div><strong>Sin desvíos relevantes</strong><span>No se detectaron patrones fuera de los umbrales configurados para ${eh(monthLabel(month))}.</span></div></div>`;
+    E.consumptionAlertsCaption.textContent = analytics.alerts.length
+      ? `${analytics.alerts.length} señales priorizadas · ordenadas por impacto`
+      : 'Sin señales críticas';
+
+    E.consumptionDecisionSummary.innerHTML = buildConsumptionDecisionSummary(analytics, selectedServiceId, hasAdvanced);
+  }
+
+  function buildConsumptionIntelligence(month) {
+    const rows = S.consumptionAnalyticsRows || [];
+    const monthKeys = previousMonthKeys(month, 12);
+    const amountByMonth = new Map(monthKeys.map((key) => [key, 0]));
+    const serviceMonth = new Map();
+    const productMonth = new Map();
+
+    rows.forEach((row) => {
+      const key = String(row.consumption_month || '').slice(0, 7);
+      if (!amountByMonth.has(key)) return;
+      amountByMonth.set(key, number(amountByMonth.get(key)) + number(row.amount));
+      const serviceKey = String(row.service_id);
+      if (!serviceMonth.has(serviceKey)) serviceMonth.set(serviceKey, { serviceId: row.service_id, name: row.service_name, months: new Map(monthKeys.map((k) => [k, 0])) });
+      serviceMonth.get(serviceKey).months.set(key, number(serviceMonth.get(serviceKey).months.get(key)) + number(row.amount));
+      const productKey = `${row.service_id}|${row.material_key}`;
+      if (!productMonth.has(productKey)) productMonth.set(productKey, {
+        serviceId: row.service_id,
+        serviceName: row.service_name,
+        materialKey: row.material_key,
+        materialId: row.material_id,
+        itemName: row.item_name,
+        sku: row.item_sku,
+        unit: row.unit || 'unidad',
+        months: new Map(monthKeys.map((k) => [k, { quantity: 0, amount: 0, orders: 0 }]))
+      });
+      const bucket = productMonth.get(productKey).months.get(key);
+      bucket.quantity += number(row.quantity);
+      bucket.amount += number(row.amount);
+      bucket.orders += number(row.orders);
+    });
+
+    const advancedAvailable = rows.length > 0;
+    if (!advancedAvailable) {
+      amountByMonth.set(month, S.consumptionServiceRows.reduce((sum, row) => sum + number(row.month_amount), 0));
+    }
+    const currentTotal = number(amountByMonth.get(month));
+    const prevKeys = monthKeys.slice(-4, -1);
+    const previous3Average = advancedAvailable
+      ? (prevKeys.length ? prevKeys.reduce((sum, key) => sum + number(amountByMonth.get(key)), 0) / prevKeys.length : 0)
+      : S.consumptionServiceRows.reduce((sum, row) => sum + number(row.avg_previous_3_amount), 0);
+    const vsPrevious3 = previous3Average > 0 ? ((currentTotal - previous3Average) / previous3Average) * 100 : null;
+    const monthTrend = monthKeys.map((key) => ({ key, amount: number(amountByMonth.get(key)), label: monthLabel(key), shortLabel: shortMonthLabel(key) }));
+
+    let currentServiceRows = [...serviceMonth.values()].map((row) => ({ ...row, amount: number(row.months.get(month)) })).filter((row) => row.amount > 0).sort((a,b)=>b.amount-a.amount);
+    if (!advancedAvailable) currentServiceRows = S.consumptionServiceRows.filter((row)=>number(row.month_amount)>0).map((row)=>({ serviceId:row.service_id, name:row.service_name, amount:number(row.month_amount), months:new Map() })).sort((a,b)=>b.amount-a.amount);
+    const topServices = currentServiceRows.slice(0, 8).map((row) => ({ ...row, share: currentTotal > 0 ? row.amount / currentTotal * 100 : 0 }));
+
+    const productAggregate = new Map();
+    if (advancedAvailable) [...productMonth.values()].forEach((row) => {
+      const current = row.months.get(month);
+      if (!current || current.amount <= 0) return;
+      const key = row.materialId ? `material:${row.materialId}` : (row.sku ? `sku:${normalize(row.sku)}` : `name:${normalize(row.itemName)}`);
+      if (!productAggregate.has(key)) productAggregate.set(key, { name: row.itemName, itemName: row.itemName, amount: 0, serviceId: '' });
+      productAggregate.get(key).amount += current.amount;
+    });
+    if (!advancedAvailable) {
+      S.consumptionRows.filter((row)=>number(row.month_amount)>0).forEach((row)=>{
+        const key=row.material_id ? `material:${row.material_id}` : (row.item_sku ? `sku:${normalize(row.item_sku)}` : `name:${normalize(row.item_name)}`);
+        if (!productAggregate.has(key)) productAggregate.set(key,{name:row.item_name,itemName:row.item_name,amount:0,serviceId:''});
+        productAggregate.get(key).amount += number(row.month_amount);
+      });
+    }
+    const topProducts = [...productAggregate.values()].sort((a,b)=>b.amount-a.amount).slice(0,8).map((row)=>({ ...row, share: currentTotal > 0 ? row.amount/currentTotal*100 : 0 }));
+
+    const alerts = [];
+    const durableAlerts = [];
+    const recurrences = [];
+
+    if (advancedAvailable) currentServiceRows.forEach((service) => {
+      const current = service.amount;
+      const prev = prevKeys.map((key)=>number(service.months.get(key)));
+      const avg = prev.length ? prev.reduce((a,b)=>a+b,0)/prev.length : 0;
+      const variation = avg > 0 ? (current-avg)/avg*100 : null;
+      if (variation != null && variation >= 35 && current >= 10000) {
+        alerts.push({ type:'service-spike', severity: variation >= 70 ? 3 : 2, impact: current-avg, serviceId:service.serviceId, serviceName:service.name, title:'Gasto del servicio por encima de lo habitual', detail:`${formatCurrency(current)} en el mes · ${formatSignedPercent(variation)} frente al promedio de 3 meses.`, icon:'bi-graph-up-arrow' });
+      }
+      const last4 = monthKeys.slice(-4).map((key)=>number(service.months.get(key)));
+      if (last4.every((value)=>value>0) && last4[1] > last4[0]*1.05 && last4[2] > last4[1]*1.05 && last4[3] > last4[2]*1.05) {
+        alerts.push({ type:'service-growth', severity:2, impact:last4[3]-last4[0], serviceId:service.serviceId, serviceName:service.name, title:'Crecimiento sostenido del gasto', detail:`El gasto aumentó durante 4 meses consecutivos: ${formatCurrency(last4[0])} → ${formatCurrency(last4[3])}.`, icon:'bi-arrow-up-right-circle' });
+      }
+    });
+
+    if (advancedAvailable) [...productMonth.values()].forEach((row) => {
+      const current = row.months.get(month) || { quantity:0, amount:0, orders:0 };
+      if (current.quantity <= 0) return;
+      const prev = prevKeys.map((key)=>number(row.months.get(key)?.quantity));
+      const avg = prev.length ? prev.reduce((a,b)=>a+b,0)/prev.length : 0;
+      const activePrev = prev.filter((value)=>value>0).length;
+      const variation = avg > 0 ? (current.quantity-avg)/avg*100 : null;
+      if (variation != null && variation >= 50 && activePrev >= 2) {
+        alerts.push({ type:'product-spike', severity: variation >= 100 ? 3 : 2, impact:current.amount, serviceId:row.serviceId, serviceName:row.serviceName, itemName:row.itemName, title:'Aumento fuerte de un insumo', detail:`${row.itemName}: ${formatQty(current.quantity)} ${row.unit} · ${formatSignedPercent(variation)} frente al promedio reciente.`, icon:'bi-exclamation-diamond' });
+      }
+      const last6Buckets = monthKeys.slice(-6).map((key)=>row.months.get(key) || {quantity:0,amount:0,orders:0});
+      const active6All = last6Buckets.filter((bucket)=>number(bucket.quantity)>0).length;
+      const totalQty6 = last6Buckets.reduce((sum,bucket)=>sum+number(bucket.quantity),0);
+      const totalAmount6 = last6Buckets.reduce((sum,bucket)=>sum+number(bucket.amount),0);
+      const durable = isDurableConsumptionItem(row);
+      if (active6All >= 4) recurrences.push({serviceId:row.serviceId,serviceName:row.serviceName,itemName:row.itemName,unit:row.unit,activeMonths:active6All,totalQuantity:totalQty6,totalAmount:totalAmount6,durable});
+      const streak = trailingPositiveStreak(monthKeys.map((key)=>number(row.months.get(key)?.quantity)));
+      if (durable && streak >= 3) {
+        const lastValues = monthKeys.slice(-streak).map((key)=>number(row.months.get(key)?.quantity));
+        const totalQty = lastValues.reduce((a,b)=>a+b,0);
+        const alert = { type:'durable-repeat', severity:3, impact:current.amount, serviceId:row.serviceId, serviceName:row.serviceName, itemName:row.itemName, title:'Reposición reiterada de un elemento durable', detail:`${row.itemName} fue pedido ${streak} meses consecutivos · ${formatQty(totalQty)} ${row.unit} acumuladas en ese período.`, icon:'bi-arrow-repeat' };
+        alerts.push(alert); durableAlerts.push(alert);
+      } else {
+        const last6 = last6Buckets.map((bucket)=>number(bucket.quantity));
+        const active6 = active6All;
+        if (active6 >= 5 && current.amount >= 5000 && variation != null && variation >= 20) {
+          alerts.push({ type:'frequent-item', severity:1, impact:current.amount, serviceId:row.serviceId, serviceName:row.serviceName, itemName:row.itemName, title:'Insumo de reposición muy frecuente', detail:`${row.itemName} tuvo consumo en ${active6} de los últimos 6 meses y este mes subió ${formatSignedPercent(variation)}.`, icon:'bi-calendar-check' });
+        }
+      }
+    });
+
+    const unique = new Map();
+    alerts.forEach((alert)=>{
+      const key=`${alert.type}|${alert.serviceId}|${normalize(alert.itemName||'')}`;
+      if (!unique.has(key) || unique.get(key).severity < alert.severity) unique.set(key, alert);
+    });
+    const sortedAlerts=[...unique.values()].sort((a,b)=>b.severity-a.severity || b.impact-a.impact);
+    recurrences.sort((a,b)=>Number(b.durable)-Number(a.durable) || b.activeMonths-a.activeMonths || b.totalAmount-a.totalAmount);
+    return { currentTotal, previous3Average, vsPrevious3, monthTrend, topServices, topProducts, alerts:sortedAlerts, durableAlerts, recurrences:recurrences.slice(0,12) };
+  }
+
+  function consumptionRecurrenceHtml(row) {
+    return `<button class="consumption-recurrence-item ${row.durable ? 'is-durable' : ''}" type="button" data-consumption-focus-service="${ea(row.serviceId)}" data-consumption-focus-item="${ea(row.itemName)}">
+      <div class="consumption-recurrence-head"><strong>${eh(row.itemName)}</strong>${row.durable ? '<span>Durable · revisar</span>' : `<span>${row.activeMonths}/6 meses</span>`}</div>
+      <div class="consumption-recurrence-service">${eh(row.serviceName)}</div>
+      <div class="consumption-recurrence-metrics"><span><b>${formatQty(row.totalQuantity)}</b> ${eh(row.unit)}</span><span>${eh(formatCurrency(row.totalAmount))}</span><span>${row.activeMonths} meses con consumo</span></div>
+    </button>`;
+  }
+
+  function consumptionAlertHtml(alert) {
+    const severityClass = alert.severity >= 3 ? 'critical' : (alert.severity === 2 ? 'warning' : 'info');
+    return `<article class="consumption-alert-item ${severityClass}">
+      <div class="consumption-alert-icon"><i class="bi ${ea(alert.icon)}"></i></div>
+      <div class="consumption-alert-copy"><span>${eh(alert.serviceName)}</span><strong>${eh(alert.title)}</strong><p>${eh(alert.detail)}</p></div>
+      <button class="btn btn-sm btn-outline-primary" type="button" data-consumption-focus-service="${ea(alert.serviceId)}" ${alert.itemName ? `data-consumption-focus-item="${ea(alert.itemName)}"` : ''}>Ver detalle</button>
+    </article>`;
+  }
+
+  function rankingItemHtml(position, name, value, share, serviceId, itemName='') {
+    return `<button class="consumption-ranking-item" type="button" data-consumption-focus-service="${ea(serviceId || '')}" ${itemName ? `data-consumption-focus-item="${ea(itemName)}"` : ''}>
+      <span class="consumption-ranking-position">${position}</span><span class="consumption-ranking-name">${eh(name)}</span><span class="consumption-ranking-value">${eh(value)}<small>${formatPercent(share)} del gasto</small></span>
+    </button>`;
+  }
+
+  function buildConsumptionDecisionSummary(analytics, selectedServiceId, hasAdvanced) {
+    if (!hasAdvanced) return '<strong>Analítica avanzada pendiente.</strong> Las tablas de consumo siguen disponibles; ejecutá la migración incluida para activar tendencias y alertas de 12 meses.';
+    if (analytics.currentTotal <= 0) return '<strong>Sin consumo confirmado en el mes.</strong> No hay pedidos entregados para analizar.';
+    const pieces=[];
+    if (analytics.vsPrevious3 != null) pieces.push(`El gasto está <strong>${Math.abs(analytics.vsPrevious3).toLocaleString('es-AR',{maximumFractionDigits:1})}% ${analytics.vsPrevious3>=0?'por encima':'por debajo'}</strong> del promedio reciente.`);
+    if (analytics.topServices[0]) pieces.push(`<strong>${eh(analytics.topServices[0].name)}</strong> es el mayor gasto del período (${eh(formatCurrency(analytics.topServices[0].amount))}).`);
+    if (analytics.durableAlerts.length) pieces.push(`Hay <strong>${analytics.durableAlerts.length}</strong> reposiciones reiteradas de elementos durables para revisar.`);
+    else if (!analytics.alerts.length) pieces.push('No se detectaron patrones operativos atípicos con los umbrales actuales.');
+    if (selectedServiceId) pieces.push('El análisis está filtrado al servicio seleccionado.');
+    return pieces.join(' ');
+  }
+
+  function handleConsumptionInsightClick(event) {
+    const button=event.target.closest('[data-consumption-focus-service]');
+    if (!button) return;
+    const serviceId=button.dataset.consumptionFocusService || '';
+    const item=button.dataset.consumptionFocusItem || '';
+    if (serviceId && E.consumptionServiceFilter.value !== serviceId) {
+      E.consumptionServiceFilter.value=serviceId;
+      E.consumptionSearch.value=item;
+      loadConsumptionReport(true);
+      return;
+    }
+    E.consumptionSearch.value=item;
+    renderConsumption();
+    E.consumptionProductsTableBody?.closest('.section-card')?.scrollIntoView({behavior:'smooth',block:'start'});
+  }
+
+  function previousMonthKeys(month, count) {
+    const [year, mon]=String(month).split('-').map(Number);
+    const base=new Date(year, mon-1, 15);
+    const out=[];
+    for(let i=count-1;i>=0;i-=1){const d=new Date(base.getFullYear(),base.getMonth()-i,15);out.push(monthInputValue(d));}
+    return out;
+  }
+
+  function shortMonthLabel(value) {
+    const [year, month]=String(value).split('-').map(Number);
+    return new Intl.DateTimeFormat('es-AR',{month:'short'}).format(new Date(year,month-1,15)).replace('.','');
+  }
+
+  function compactCurrency(value) {
+    const n=number(value);
+    if (Math.abs(n)>=1000000) return `$ ${(n/1000000).toLocaleString('es-AR',{maximumFractionDigits:1})}M`;
+    if (Math.abs(n)>=1000) return `$ ${(n/1000).toLocaleString('es-AR',{maximumFractionDigits:0})}k`;
+    return formatCurrency(n);
+  }
+
+  function formatSignedPercent(value) {
+    const n=number(value); return `${n>=0?'+':''}${n.toLocaleString('es-AR',{maximumFractionDigits:1})}%`;
+  }
+
+  function trailingPositiveStreak(values) {
+    let count=0; for(let i=values.length-1;i>=0;i-=1){if(number(values[i])>0) count+=1; else break;} return count;
+  }
+
+  function isDurableConsumptionItem(row) {
+    const material=S.materials.find((item)=>item.id===row.materialId);
+    const text=normalize(`${row.itemName||''} ${material?.name||''} ${material?.category||''}`);
+    const durableTerms=['escoba','escobillon','balde','mopa','lampazo','cabo','pala','secador','haragan','pulverizador','rociador','cepillo','plumero','carro','dispenser','jarra','embudo','recogedor','porta mopa'];
+    return durableTerms.some((term)=>text.includes(term));
   }
 
   function filteredConsumptionRows() {
@@ -6359,7 +6651,7 @@
   function consumptionErrorMessage(error) {
     const message = String(error?.message || '');
     if (message.includes('admin_consumption_') || message.includes('schema cache') || String(error?.code || '').includes('PGRST202')) {
-      return 'El módulo de consumos todavía no está instalado en Supabase. Ejecutá actualizar-consumos-por-servicio.sql desde SQL Editor y volvé a actualizar.';
+      return 'El módulo de consumos no está completamente instalado en Supabase. Ejecutá el SQL de consumos indicado en LEEME.md y volvé a actualizar.';
     }
     return message || 'No se pudo calcular el consumo por servicio.';
   }

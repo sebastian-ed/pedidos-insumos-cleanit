@@ -1,31 +1,47 @@
-# Pedidos Clean It - actualización actual
+# Pedidos Clean It - totalizador y analítica de consumos
 
-## Cambio incluido
+## 1. Totalizador de pedidos
 
-Se agregó trazabilidad visible de los cambios de estado del pedido.
+Los mismos checkbox de **Pedidos** ahora tienen dos funciones independientes:
 
-Cuando un pedido pasa, por ejemplo, de **Pendiente** a **En preparación**, **Enviado**, **Entregado** o **Cancelado**:
+- muestran automáticamente la cantidad de pedidos seleccionados y su **valor total acumulado**;
+- permiten, de forma opcional e independiente, generar el PDF para el proveedor.
 
-- la fecha y hora siguen quedando registradas en `order_status_history`;
-- el movimiento aparece en **Historial** con estado anterior, estado nuevo, fecha/hora y usuario;
-- dentro del botón del **ojo** aparece **Último cambio de estado**;
-- dentro del mismo detalle aparece un bloque **Historial de estados** con toda la secuencia del pedido, fecha/hora y usuario que realizó cada cambio;
-- después de guardar un estado, el modal permanece abierto y actualiza la trazabilidad inmediatamente.
+Si la selección incluye pedidos cancelados, la app muestra una advertencia visual para evitar incluirlos por error en una conciliación con la factura del proveedor.
 
-## Supabase
+## 2. Consumos - tablero operativo
 
-**No hay que ejecutar ningún SQL nuevo para esta actualización.**
+Se amplió el módulo de Consumos con:
 
-La aplicación ya utiliza la tabla `order_status_history` y el trigger de auditoría instalados en las versiones anteriores.
+- evolución de gasto de los últimos 12 meses;
+- comparación del mes contra el promedio de los 3 meses anteriores;
+- ranking de servicios con mayor gasto;
+- ranking de insumos con mayor gasto;
+- alertas de servicios con aumento fuerte de gasto;
+- alertas de crecimiento sostenido durante varios meses;
+- alertas de aumentos fuertes por SKU/insumo;
+- detección de reposición reiterada de elementos durables como escobas, baldes, mopas, cabos, palas, secadores, pulverizadores, cepillos, plumeros, carros, etc.;
+- bloque de **Patrones de consumo recurrente**: muestra servicio + insumo + cantidad acumulada + meses con consumo durante los últimos 6 meses;
+- lectura ejecutiva automática para señalar rápidamente dónde conviene revisar.
 
-## Publicar
+Los cálculos continúan usando únicamente pedidos con estado **Entregado**.
 
-Reemplazar los archivos de la aplicación y ejecutar:
+## 3. Supabase - paso obligatorio
+
+Ejecutar una sola vez en **Supabase > SQL Editor** el archivo:
+
+`actualizar-analitica-consumos.sql`
+
+La función solo lee y consolida consumos históricos. No modifica pedidos ni registros existentes.
+
+## 4. Publicar
+
+Reemplazar los archivos del repositorio y ejecutar:
 
 ```powershell
 git add .
-git commit -m "Registrar fechas de cambios de estado"
+git commit -m "Totalizador y analitica avanzada de consumos"
 git push origin main
 ```
 
-Cuando termine el deploy de GitHub Pages, hacer `Ctrl + Shift + R` una vez. Si la aplicación está instalada como PWA, cerrarla y volver a abrirla para tomar la nueva versión del Service Worker.
+Después del deploy de GitHub Pages, hacer `Ctrl + Shift + R`. Si la app está instalada como PWA, cerrarla completamente y volver a abrirla.

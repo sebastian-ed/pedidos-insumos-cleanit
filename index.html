@@ -275,11 +275,18 @@
           </div>
           <div id="ordersPdfToolbar" class="orders-pdf-toolbar d-none mb-3">
             <div class="orders-pdf-toolbar-copy">
-              <div class="orders-pdf-toolbar-title"><i class="bi bi-file-earmark-pdf"></i><strong>PDF para proveedor</strong></div>
-              <div id="ordersPdfSelectionText" class="text-secondary small">Seleccioná los pedidos que querés incluir.</div>
+              <div class="orders-pdf-toolbar-title"><i class="bi bi-check2-square"></i><strong>Selección de pedidos</strong></div>
+              <div id="ordersPdfSelectionText" class="text-secondary small">Marcá pedidos para calcular su total. Generar el PDF es una acción independiente.</div>
+              <div id="ordersSelectionCancelled" class="orders-selection-warning d-none"></div>
+            </div>
+            <div class="orders-selection-total" aria-live="polite">
+              <span><strong id="ordersSelectionCount">0</strong> seleccionados</span>
+              <strong id="ordersSelectionTotal">$ 0,00</strong>
+              <small>Total de los pedidos seleccionados</small>
             </div>
             <div class="orders-pdf-toolbar-actions">
               <button id="clearOrdersPdfSelectionButton" class="btn btn-light d-none" type="button"><i class="bi bi-x-circle me-2"></i>Limpiar selección</button>
+              <button id="copyOrdersSelectionTotalButton" class="btn btn-outline-primary fw-bold" type="button" disabled><i class="bi bi-copy me-2"></i>Copiar total</button>
               <button id="generateOrdersPdfButton" class="btn btn-danger fw-bold" type="button" disabled><i class="bi bi-file-earmark-pdf-fill me-2"></i>Generar PDF <span id="ordersPdfSelectedCount" class="badge text-bg-light ms-1">0</span></button>
             </div>
           </div>
@@ -324,11 +331,37 @@
             </div>
           </div>
           <div id="consumptionError" class="alert alert-danger d-none"></div>
+          <div id="consumptionAnalyticsNotice" class="alert alert-warning d-none"></div>
           <div class="row g-3 mb-4">
             <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Servicios con consumo</div><div id="consumptionKpiServices" class="kpi-value">0</div><div id="consumptionKpiServicesFoot" class="kpi-foot">En el mes seleccionado</div></div></div>
             <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Insumos utilizados</div><div id="consumptionKpiProducts" class="kpi-value">0</div><div class="kpi-foot">Combinaciones servicio-producto</div></div></div>
             <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Pedidos entregados</div><div id="consumptionKpiOrders" class="kpi-value">0</div><div class="kpi-foot">Base del consumo confirmado</div></div></div>
             <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Valor consumido</div><div id="consumptionKpiAmount" class="kpi-value consumption-money">$ 0</div><div class="kpi-foot">Precios finales de los pedidos</div></div></div>
+          </div>
+
+          <div class="consumption-intelligence mb-4">
+            <div class="section-card consumption-decision-card mb-3">
+              <div class="consumption-decision-icon"><i class="bi bi-lightbulb-fill"></i></div>
+              <div><span class="eyebrow">Lectura ejecutiva</span><div id="consumptionDecisionSummary" class="consumption-decision-text">Calculando señales operativas...</div></div>
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi"><span>Gasto del mes</span><strong id="consumptionInsightMonthTotal">$ 0</strong><small>Pedidos entregados</small></div></div>
+              <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi"><span>Vs. promedio 3 meses</span><div id="consumptionInsightVsAverage" class="mt-2"></div><small id="consumptionInsightVsAverageFoot">Sin referencia</small></div></div>
+              <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi is-warning"><span>Señales para revisar</span><strong id="consumptionInsightAlerts">0</strong><small>Picos, crecimiento y recurrencias</small></div></div>
+              <div class="col-sm-6 col-xl-3"><div class="section-card consumption-insight-kpi is-danger"><span>Durables repetidos</span><strong id="consumptionInsightDurables">0</strong><small>Reposiciones potencialmente anómalas</small></div></div>
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-xl-7"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Evolución de 12 meses</h2><p class="text-secondary mb-0">Valor mensual confirmado para detectar tendencia y estacionalidad.</p></div></div><div id="consumptionTrendBars" class="consumption-trend-chart"></div></div></div>
+              <div class="col-xl-5"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Alertas para revisar</h2><p class="text-secondary mb-0">Se priorizan los patrones con mayor impacto operativo.</p></div><span id="consumptionAlertsCaption" class="badge text-bg-light">0 señales</span></div><div id="consumptionAlertsList" class="consumption-alert-list"></div></div></div>
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-xl-6"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Servicios con mayor gasto</h2><p class="text-secondary mb-0">Ranking del mes seleccionado.</p></div></div><div id="consumptionTopServices" class="consumption-ranking-list"></div></div></div>
+              <div class="col-xl-6"><div class="section-card h-100"><div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Insumos con mayor gasto</h2><p class="text-secondary mb-0">Concentración económica por producto.</p></div></div><div id="consumptionTopProducts" class="consumption-ranking-list"></div></div></div>
+            </div>
+            <div class="section-card mb-4">
+              <div class="consumption-intelligence-heading"><div><h2 class="section-title mb-1">Patrones de consumo recurrente</h2><p class="text-secondary mb-0">Qué servicios vienen pidiendo los mismos insumos de forma repetida y en qué cantidad.</p></div><span class="badge text-bg-light">Últimos 6 meses</span></div>
+              <div id="consumptionRecurringList" class="consumption-recurring-grid"></div>
+            </div>
           </div>
           <div class="section-card p-0 overflow-hidden mb-4">
             <div class="consumption-table-heading"><div><h2 class="section-title mb-1">Resumen por servicio</h2><p class="text-secondary mb-0">El valor monetario permite comparar servicios aun cuando usan unidades de pedido diferentes.</p></div><span id="consumptionServiceCount" class="badge text-bg-light">0 servicios</span></div>
