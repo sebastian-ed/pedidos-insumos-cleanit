@@ -39,3 +39,7 @@ npx supabase@latest functions deploy analyze-invoice --no-verify-jwt
 ```
 
 No requiere un SQL nuevo. Si el PDF tiene texto incorporado, el navegador también intenta detectar la referencia sin usar Gemini.
+
+
+## Corrección carga de facturas
+La detección del número de pedido impreso en la factura ya no agrega un valor nuevo a `match_method`; se conserva `automatico` y la referencia detectada se guarda en `comparison_summary`. No requiere SQL adicional.

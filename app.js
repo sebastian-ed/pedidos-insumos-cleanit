@@ -3212,9 +3212,15 @@
 
   function invoiceMethodLabel(method) {
     if (method === 'manual') return 'Vinculación manual';
-    if (method === 'referencia_pedido') return 'Pedido detectado en factura';
     if (method === 'automatico') return 'Vinculación automática';
     return 'Sin vincular';
+  }
+
+  function invoiceHasPrintedOrderReferenceMatch(invoice) {
+    const summary = invoice?.comparison_summary && typeof invoice.comparison_summary === 'object'
+      ? invoice.comparison_summary
+      : {};
+    return Boolean(summary.printed_reference_match && summary.order_reference_detected && invoice?.matched_order_id);
   }
 
   async function refreshInvoicesData() {
@@ -3270,7 +3276,7 @@
         <td><div class="order-code">${eh(invoiceTitle)}</div><div class="order-date">${eh(invoice.file_name)}</div></td>
         <td><div class="order-service">${eh(supplier)}</div><div class="table-subtitle">${eh(invoiceDate)}${invoice.supplier_tax_id ? ` · CUIT ${eh(invoice.supplier_tax_id)}` : ''}</div></td>
         <td><strong>${eh(amount)}</strong><div class="table-subtitle">${number(invoice.pdf_page_count)} ${number(invoice.pdf_page_count) === 1 ? 'página' : 'páginas'}</div></td>
-        <td>${order ? `<div class="order-code">${eh(order.order_code)}</div><div class="table-subtitle">${eh(service?.name || 'Servicio eliminado')}</div>${invoice.match_method === 'referencia_pedido' ? '<span class="badge text-bg-primary mt-1"><i class="bi bi-link-45deg me-1"></i>Detectado en factura</span>' : ''}` : '<span class="text-secondary">Sin vincular</span>'}</td>
+        <td>${order ? `<div class="order-code">${eh(order.order_code)}</div><div class="table-subtitle">${eh(service?.name || 'Servicio eliminado')}</div>${invoiceHasPrintedOrderReferenceMatch(invoice) ? '<span class="badge text-bg-primary mt-1"><i class="bi bi-link-45deg me-1"></i>Detectado en factura</span>' : ''}` : '<span class="text-secondary">Sin vincular</span>'}</td>
         <td><div class="invoice-confidence"><strong>${Math.round(score)}%</strong><div class="invoice-confidence-track"><span style="width:${score}%"></span></div><small>${eh(invoiceMethodLabel(invoice.match_method))}</small></div></td>
         <td><span class="badge text-bg-${invoiceStatusClass(effectiveStatus)}">${eh(INVOICE_STATUS_LABELS[effectiveStatus] || effectiveStatus)}</span></td>
         <td>${invoice.reviewed ? '<span class="invoice-reviewed"><i class="bi bi-check2-circle"></i> Revisada</span>' : '<span class="text-secondary">Pendiente</span>'}</td>
@@ -3293,8 +3299,19 @@
 
   function invoiceModuleErrorMessage(error) {
     const message = String(error?.message || '');
-    if (message.includes('supplier_invoices') || message.includes('supplier-invoices') || message.includes('schema cache') || String(error?.code || '').includes('PGRST')) {
-      return 'El módulo de facturas todavía no está instalado en Supabase. Ejecutá actualizar-control-facturas-proveedor.sql y volvé a intentar.';
+    const code = String(error?.code || '');
+    const lower = message.toLowerCase();
+    const missingModule = code === '42P01'
+      || code === 'PGRST205'
+      || (lower.includes('schema cache') && (lower.includes('supplier_invoices') || lower.includes('supplier-invoices')));
+    if (missingModule) {
+      return 'El módulo de facturas no está disponible en Supabase. Revisá que exista la tabla supplier_invoices y el bucket supplier-invoices.';
+    }
+    if (code === '23514') {
+      return `Supabase rechazó la factura por una restricción de datos: ${message || 'revisá la configuración de la tabla supplier_invoices.'}`;
+    }
+    if (code === '42501' || lower.includes('row-level security') || lower.includes('permission denied')) {
+      return `Supabase rechazó la operación por permisos: ${message || 'revisá las políticas RLS del módulo de facturas.'}`;
     }
     return message || 'No se pudo procesar la factura.';
   }
@@ -3375,6 +3392,7 @@
           : emptyInvoiceComparison(extracted.text.trim() ? 'sin_match' : 'sin_lectura');
         applyInvoiceExtractionMeta(comparison, analyzed);
         comparison.order_reference_detected = parsed.orderReference || null;
+        comparison.printed_reference_match = Boolean(match.printedReferenceMatch);
         const comparisonStatus = selectedOrder ? comparison.status : (extracted.text.trim() ? 'sin_match' : 'sin_lectura');
 
         const payload = {
@@ -3396,7 +3414,7 @@
           unmatched_lines: parsed.unmatchedLines,
           matched_order_id: selectedOrder?.id || null,
           match_score: match.score,
-          match_method: selectedOrder ? (match.printedReferenceMatch ? 'referencia_pedido' : 'automatico') : 'sin_match',
+          match_method: selectedOrder ? 'automatico' : 'sin_match',
           match_candidates: match.candidates,
           comparison_status: comparisonStatus,
           comparison_summary: comparison,
@@ -4724,7 +4742,7 @@
     const service = order ? serviceById(order.service_id) : null;
     const summary = normalizeInvoiceComparisonSummary(invoice.comparison_summary, invoice.comparison_status);
     E.invoiceDetailTitle.textContent = invoice.invoice_number ? `Factura ${invoice.invoice_number}` : invoice.file_name;
-    E.invoiceDetailSubtitle.textContent = `${invoice.file_name} · ${invoiceMethodLabel(invoice.match_method)} · ${invoiceExtractionLabel(summary)}`;
+    E.invoiceDetailSubtitle.textContent = `${invoice.file_name} · ${invoiceHasPrintedOrderReferenceMatch(invoice) ? 'Pedido detectado en factura' : invoiceMethodLabel(invoice.match_method)} · ${invoiceExtractionLabel(summary)}`;
     E.invoiceRawText.textContent = invoice.extracted_text || 'No se pudo extraer texto del PDF.';
     E.invoiceMatchConfidence.textContent = invoice.match_method === 'manual' ? 'Manual' : `${Math.round(number(invoice.match_score))}%`;
     E.invoiceMatchConfidence.className = `invoice-confidence-pill is-${invoiceStatusClass(invoice.comparison_status)}`;
@@ -4973,6 +4991,7 @@
         : emptyInvoiceComparison(statusWithoutOrder);
       applyInvoiceExtractionMeta(comparison, analyzed);
       comparison.order_reference_detected = parsed.orderReference || null;
+      comparison.printed_reference_match = Boolean(match.printedReferenceMatch);
       const comparisonStatus = selectedOrder ? comparison.status : statusWithoutOrder;
       const update = {
         pdf_page_count: analyzed.extracted.pageCount,
@@ -4989,7 +5008,7 @@
         unmatched_lines: parsed.unmatchedLines,
         matched_order_id: selectedOrder?.id || null,
         match_score: invoice.match_method === 'manual' && selectedOrder ? 100 : number(match.score),
-        match_method: invoice.match_method === 'manual' && selectedOrder ? 'manual' : (selectedOrder ? (match.printedReferenceMatch ? 'referencia_pedido' : 'automatico') : 'sin_match'),
+        match_method: invoice.match_method === 'manual' && selectedOrder ? 'manual' : (selectedOrder ? 'automatico' : 'sin_match'),
         match_candidates: match.candidates || [],
         comparison_status: comparisonStatus,
         comparison_summary: comparison,
