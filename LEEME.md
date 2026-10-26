@@ -23,3 +23,19 @@ La sección Facturas → Conciliación IVA permite cargar varias facturas manual
 ## Exportación de conciliación IVA
 
 La conciliación múltiple de Facturas permite ahora exportar el lote actual en PDF y XLSX. El PDF incluye resumen y detalle por factura; el XLSX contiene las hojas `Conciliación` y `Resumen`. No requiere SQL adicional.
+
+
+## Detección del número de pedido dentro de la factura
+
+La app reconoce referencias impresas como `PEDIDO N° 000160`, `PEDIDO 160`, `NRO PEDIDO 160` o `PED-000160` y las cruza contra el código interno `PED-000160`.
+
+Cuando la referencia coincide, la factura queda identificada visualmente como **Pedido detectado en factura** y se prioriza esa coincidencia por encima de importe, SKU o fecha. La vinculación sigue pudiéndose corregir manualmente.
+
+### Paso obligatorio para PDFs escaneados
+Esta mejora actualiza también la Edge Function `analyze-invoice`, por lo que después de subir los archivos al repositorio hay que volver a desplegarla:
+
+```powershell
+npx supabase@latest functions deploy analyze-invoice --no-verify-jwt
+```
+
+No requiere un SQL nuevo. Si el PDF tiene texto incorporado, el navegador también intenta detectar la referencia sin usar Gemini.

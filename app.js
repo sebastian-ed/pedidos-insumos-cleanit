@@ -3211,7 +3211,10 @@
   }
 
   function invoiceMethodLabel(method) {
-    return method === 'manual' ? 'Vinculación manual' : (method === 'automatico' ? 'Vinculación automática' : 'Sin vincular');
+    if (method === 'manual') return 'Vinculación manual';
+    if (method === 'referencia_pedido') return 'Pedido detectado en factura';
+    if (method === 'automatico') return 'Vinculación automática';
+    return 'Sin vincular';
   }
 
   async function refreshInvoicesData() {
@@ -3267,7 +3270,7 @@
         <td><div class="order-code">${eh(invoiceTitle)}</div><div class="order-date">${eh(invoice.file_name)}</div></td>
         <td><div class="order-service">${eh(supplier)}</div><div class="table-subtitle">${eh(invoiceDate)}${invoice.supplier_tax_id ? ` · CUIT ${eh(invoice.supplier_tax_id)}` : ''}</div></td>
         <td><strong>${eh(amount)}</strong><div class="table-subtitle">${number(invoice.pdf_page_count)} ${number(invoice.pdf_page_count) === 1 ? 'página' : 'páginas'}</div></td>
-        <td>${order ? `<div class="order-code">${eh(order.order_code)}</div><div class="table-subtitle">${eh(service?.name || 'Servicio eliminado')}</div>` : '<span class="text-secondary">Sin vincular</span>'}</td>
+        <td>${order ? `<div class="order-code">${eh(order.order_code)}</div><div class="table-subtitle">${eh(service?.name || 'Servicio eliminado')}</div>${invoice.match_method === 'referencia_pedido' ? '<span class="badge text-bg-primary mt-1"><i class="bi bi-link-45deg me-1"></i>Detectado en factura</span>' : ''}` : '<span class="text-secondary">Sin vincular</span>'}</td>
         <td><div class="invoice-confidence"><strong>${Math.round(score)}%</strong><div class="invoice-confidence-track"><span style="width:${score}%"></span></div><small>${eh(invoiceMethodLabel(invoice.match_method))}</small></div></td>
         <td><span class="badge text-bg-${invoiceStatusClass(effectiveStatus)}">${eh(INVOICE_STATUS_LABELS[effectiveStatus] || effectiveStatus)}</span></td>
         <td>${invoice.reviewed ? '<span class="invoice-reviewed"><i class="bi bi-check2-circle"></i> Revisada</span>' : '<span class="text-secondary">Pendiente</span>'}</td>
@@ -3371,6 +3374,7 @@
           ? compareInvoiceAgainstOrder(parsed, selectedOrder)
           : emptyInvoiceComparison(extracted.text.trim() ? 'sin_match' : 'sin_lectura');
         applyInvoiceExtractionMeta(comparison, analyzed);
+        comparison.order_reference_detected = parsed.orderReference || null;
         const comparisonStatus = selectedOrder ? comparison.status : (extracted.text.trim() ? 'sin_match' : 'sin_lectura');
 
         const payload = {
@@ -3392,7 +3396,7 @@
           unmatched_lines: parsed.unmatchedLines,
           matched_order_id: selectedOrder?.id || null,
           match_score: match.score,
-          match_method: selectedOrder ? 'automatico' : 'sin_match',
+          match_method: selectedOrder ? (match.printedReferenceMatch ? 'referencia_pedido' : 'automatico') : 'sin_match',
           match_candidates: match.candidates,
           comparison_status: comparisonStatus,
           comparison_summary: comparison,
@@ -3604,6 +3608,11 @@
     return {
       invoiceNumber: String(ai.invoiceNumber || '').trim() || extractInvoiceNumber(String(ai.rawText || ''), fileName),
       invoiceDate: invoiceDate || extractInvoiceDate(String(ai.rawText || '')),
+      orderReference: ai.orderReference ? {
+        raw: String(ai.orderReferenceRaw || ai.orderReference || '').trim(),
+        digits: invoiceOrderReferenceDigits(ai.orderReference),
+        normalizedCode: invoiceOrderReferenceLabel(ai.orderReference)
+      } : extractInvoiceOrderReference(String(ai.rawText || '')),
       supplierTaxId: String(ai.supplierTaxId || '').trim() || extractTaxId(String(ai.rawText || '')),
       supplierName: String(ai.supplierName || '').trim() || null,
       currency: String(ai.currency || 'ARS').toUpperCase() === 'USD' ? 'USD' : 'ARS',
@@ -3622,6 +3631,7 @@
     if (raw) parts.push(raw);
     if (parsed.invoiceNumber) parts.push(`Factura: ${parsed.invoiceNumber}`);
     if (parsed.invoiceDate) parts.push(`Fecha: ${parsed.invoiceDate}`);
+    if (parsed.orderReference) parts.push(`Pedido relacionado: ${invoiceOrderReferenceLabel(parsed.orderReference) || parsed.orderReference.raw || parsed.orderReference}`);
     if (parsed.supplierName) parts.push(`Proveedor: ${parsed.supplierName}`);
     if (parsed.supplierTaxId) parts.push(`CUIT: ${parsed.supplierTaxId}`);
     (parsed.items || []).forEach((item) => {
@@ -3678,7 +3688,7 @@
 
   function mergeInvoiceParses(primary, fallback) {
     const result = { ...primary };
-    ['invoiceNumber','invoiceDate','supplierTaxId','supplierName','currency','subtotal','taxAmount','totalAmount'].forEach((key) => {
+    ['invoiceNumber','invoiceDate','orderReference','supplierTaxId','supplierName','currency','subtotal','taxAmount','totalAmount'].forEach((key) => {
       if (result[key] == null || result[key] === '') result[key] = fallback?.[key] ?? result[key];
     });
     if ((!Array.isArray(result.items) || !result.items.length) && Array.isArray(fallback?.items)) result.items = fallback.items;
@@ -3897,6 +3907,7 @@
     const cleanText = String(text || '').replace(/\u00a0/g, ' ');
     const invoiceNumber = extractInvoiceNumber(cleanText, fileName);
     const invoiceDate = extractInvoiceDate(cleanText);
+    const orderReference = extractInvoiceOrderReference(cleanText);
     const supplierTaxId = extractTaxId(cleanText);
     const supplierName = extractSupplierName(lines, supplierTaxId);
     const totals = extractInvoiceTotals(cleanText, lines);
@@ -3904,6 +3915,7 @@
     return {
       invoiceNumber,
       invoiceDate,
+      orderReference,
       supplierTaxId,
       supplierName,
       currency: /\bUSD\b|U\$S|D[ÓO]LAR/i.test(cleanText) ? 'USD' : 'ARS',
@@ -3937,6 +3949,49 @@
     const fileMatch = String(fileName || '').match(/(?:FAC(?:TURA)?[^0-9]*)?(\d{3,5})\s*[-_]\s*(\d{6,12})/i);
     if (fileMatch) return `${fileMatch[1].padStart(4, '0')}-${fileMatch[2].padStart(8, '0')}`;
     return null;
+  }
+
+  function extractInvoiceOrderReference(text) {
+    const source = String(text || '').replace(/\u00a0/g, ' ');
+    const patterns = [
+      /\bpedido\s*(?:n(?:ro|umero)?\.?|n[°ºo.]?|#)?\s*[:\-]?\s*(?:ped\s*[-–]?\s*)?0*(\d{2,8})\b/i,
+      /\b(?:n(?:ro|umero)?\.?\s+de\s+pedido|pedido\s+cliente|pedido\s+interno)\s*[:\-]?\s*(?:ped\s*[-–]?\s*)?0*(\d{2,8})\b/i,
+      /\bPED\s*[-–]\s*0*(\d{2,8})\b/i
+    ];
+    for (const pattern of patterns) {
+      const match = source.match(pattern);
+      if (!match) continue;
+      const digits = String(match[1] || '').replace(/\D/g, '').replace(/^0+/, '') || '0';
+      return {
+        raw: match[0].replace(/\s+/g, ' ').trim(),
+        digits,
+        normalizedCode: `PED-${digits.padStart(6, '0')}`
+      };
+    }
+    return null;
+  }
+
+  function invoiceOrderReferenceDigits(value) {
+    if (!value) return '';
+    if (typeof value === 'object') {
+      const rawDigits = String(value.digits || value.normalizedCode || value.raw || '').replace(/\D/g, '');
+      return rawDigits.replace(/^0+/, '') || (rawDigits ? '0' : '');
+    }
+    const rawDigits = String(value).replace(/\D/g, '');
+    return rawDigits.replace(/^0+/, '') || (rawDigits ? '0' : '');
+  }
+
+  function invoiceOrderReferenceLabel(value) {
+    const digits = invoiceOrderReferenceDigits(value);
+    return digits ? `PED-${digits.padStart(6, '0')}` : '';
+  }
+
+  function invoiceOrderReferenceMatchesOrder(reference, order) {
+    const refDigits = invoiceOrderReferenceDigits(reference);
+    if (!refDigits || !order) return false;
+    const orderDigitsRaw = String(order.order_code || '').replace(/\D/g, '');
+    const orderDigits = orderDigitsRaw.replace(/^0+/, '') || (orderDigitsRaw ? '0' : '');
+    return orderDigits === refDigits;
   }
 
   function extractInvoiceDate(text) {
@@ -4308,12 +4363,15 @@
       .slice(0, 5);
     const best = candidates[0];
     const second = candidates[1];
-    const hasPrintedReference = Boolean(best?.reasons?.some((reason) => reason.includes('pedido')));
+    const hasPrintedReference = Boolean(best?.reasons?.some((reason) => /pedido impreso|número de pedido exacto|referencia numérica del pedido/i.test(reason)));
     const hasClearLead = !second || best.score - second.score >= 8;
     const reliable = best && best.score >= INVOICE_MATCH_THRESHOLD && (hasPrintedReference || hasClearLead);
+    const printedReferenceMatch = Boolean(reliable && best?.reasons?.some((reason) => /pedido impreso en factura/i.test(reason)));
     return {
       order: reliable ? S.orders.find((item) => item.id === best.order_id) || null : null,
       score: reliable ? best.score : (best?.score || 0),
+      printedReferenceMatch,
+      printedReference: parsed?.orderReference || extractInvoiceOrderReference(rawText),
       candidates
     };
   }
@@ -4328,7 +4386,13 @@
     let score = 0;
     const reasons = [];
 
-    if (orderCodeCompact && rawCompact.includes(orderCodeCompact)) {
+    const printedOrderRef = parsed?.orderReference || extractInvoiceOrderReference(rawText);
+    if (invoiceOrderReferenceMatchesOrder(printedOrderRef, order)) {
+      score += 100;
+      reasons.push(`Pedido impreso en factura: ${invoiceOrderReferenceLabel(printedOrderRef)}`);
+    }
+
+    if (!invoiceOrderReferenceMatchesOrder(printedOrderRef, order) && orderCodeCompact && rawCompact.includes(orderCodeCompact)) {
       score += 80;
       reasons.push('Número de pedido exacto');
     } else if (orderDigits.length >= 3 && new RegExp(`(?:pedido|orden|oc|referencia)[^\\d]{0,15}0*${escapeRegExp(orderDigits)}\\b`, 'i').test(rawText)) {
@@ -4728,9 +4792,13 @@
 
   function renderInvoiceCandidateHints(invoice) {
     const candidates = Array.isArray(invoice.match_candidates) ? invoice.match_candidates : [];
-    E.invoiceCandidateHints.innerHTML = candidates.length
-      ? `<div class="invoice-candidate-label">Sugerencias del análisis</div><div class="invoice-candidate-list">${candidates.map((candidate) => `<button class="invoice-candidate" type="button" data-invoice-candidate="${ea(candidate.order_id)}"><strong>${eh(candidate.order_code || 'Pedido')}</strong><span>${eh(candidate.service_name || '')} · ${eh(formatCurrency(candidate.total_amount))}</span><em>${Math.round(number(candidate.score))}%${candidate.reasons?.length ? ` · ${eh(candidate.reasons.join(', '))}` : ''}</em></button>`).join('')}</div>`
-      : '<div class="text-secondary small">No hubo candidatos confiables. Seleccioná el pedido manualmente.</div>';
+    const printedCandidate = candidates.find((candidate) => candidate.reasons?.some((reason) => /pedido impreso en factura/i.test(reason)));
+    const printedAlert = printedCandidate
+      ? `<div class="invoice-printed-order-alert"><i class="bi bi-link-45deg"></i><div><strong>Pedido detectado en la factura: ${eh(printedCandidate.order_code || 'Pedido')}</strong><span>${eh(printedCandidate.service_name || '')} · referencia impresa reconocida en el PDF.</span></div><button class="btn btn-sm btn-primary" type="button" data-invoice-candidate="${ea(printedCandidate.order_id)}">Usar este pedido</button></div>`
+      : '';
+    E.invoiceCandidateHints.innerHTML = printedAlert + (candidates.length
+      ? `<div class="invoice-candidate-label">${printedCandidate ? 'Otras señales de coincidencia' : 'Sugerencias del análisis'}</div><div class="invoice-candidate-list">${candidates.map((candidate) => `<button class="invoice-candidate" type="button" data-invoice-candidate="${ea(candidate.order_id)}"><strong>${eh(candidate.order_code || 'Pedido')}</strong><span>${eh(candidate.service_name || '')} · ${eh(formatCurrency(candidate.total_amount))}</span><em>${Math.round(number(candidate.score))}%${candidate.reasons?.length ? ` · ${eh(candidate.reasons.join(', '))}` : ''}</em></button>`).join('')}</div>`
+      : '<div class="text-secondary small">No hubo candidatos confiables. Seleccioná el pedido manualmente.</div>');
     E.invoiceCandidateHints.querySelectorAll('[data-invoice-candidate]').forEach((button) => {
       button.addEventListener('click', () => { E.invoiceOrderSelect.value = button.dataset.invoiceCandidate; });
     });
@@ -4904,6 +4972,7 @@
         ? compareInvoiceAgainstOrder(parsed, selectedOrder)
         : emptyInvoiceComparison(statusWithoutOrder);
       applyInvoiceExtractionMeta(comparison, analyzed);
+      comparison.order_reference_detected = parsed.orderReference || null;
       const comparisonStatus = selectedOrder ? comparison.status : statusWithoutOrder;
       const update = {
         pdf_page_count: analyzed.extracted.pageCount,
@@ -4920,7 +4989,7 @@
         unmatched_lines: parsed.unmatchedLines,
         matched_order_id: selectedOrder?.id || null,
         match_score: invoice.match_method === 'manual' && selectedOrder ? 100 : number(match.score),
-        match_method: invoice.match_method === 'manual' && selectedOrder ? 'manual' : (selectedOrder ? 'automatico' : 'sin_match'),
+        match_method: invoice.match_method === 'manual' && selectedOrder ? 'manual' : (selectedOrder ? (match.printedReferenceMatch ? 'referencia_pedido' : 'automatico') : 'sin_match'),
         match_candidates: match.candidates || [],
         comparison_status: comparisonStatus,
         comparison_summary: comparison,

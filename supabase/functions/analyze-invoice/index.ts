@@ -57,7 +57,9 @@ REGLAS IMPORTANTES
 - Distingui subtotal/neto, impuestos/IVA y total fiscal.
 - Si hay descuentos por línea o globales, respetá los valores impresos en la factura.
 - Si un SKU parece tener un error visual de una sola letra o número, podés usar el catálogo de referencia SOLO si la coincidencia es clara. Si hay duda, conservá lo leído.
-- Incluí en rawText una transcripción útil de encabezado, referencias, artículos y totales. No hace falta transcribir textos legales extensos.
+- Detectá especialmente referencias al pedido interno de Clean It. Puede aparecer como "PEDIDO N° 000160", "PEDIDO 160", "NRO PEDIDO 160", "PED-000160" o variantes similares. Si existe, devolvé el número en orderReference y conservá la frase exacta en orderReferenceRaw.
+- La referencia de pedido NO es el número de factura ni el número de remito. Solo completá orderReference cuando el documento identifique explícitamente un pedido/orden del cliente.
+- Incluí en rawText una transcripción útil de encabezado, referencias, artículos y totales. Si aparece un número de pedido, incluí obligatoriamente esa línea en rawText. No hace falta transcribir textos legales extensos.
 - invoiceDate debe estar en formato YYYY-MM-DD cuando sea legible.
 - currency debe ser ARS o USD.
 - confidence es una estimación general de 0 a 100 sobre la calidad de lectura.
@@ -75,6 +77,8 @@ const responseSchema = {
   properties: {
     invoiceNumber: { type: 'string', description: 'Número de factura, por ejemplo 0016-00005501.' },
     invoiceDate: { type: 'string', description: 'Fecha en formato YYYY-MM-DD.' },
+    orderReference: { type: 'string', description: 'Número de pedido interno del cliente si está explícitamente impreso, por ejemplo 000160 o PED-000160.' },
+    orderReferenceRaw: { type: 'string', description: 'Texto exacto o casi exacto donde aparece la referencia, por ejemplo PEDIDO N° 000160.' },
     supplierName: { type: 'string' },
     supplierTaxId: { type: 'string', description: 'CUIT del proveedor.' },
     currency: { type: 'string', enum: ['ARS', 'USD'] },
