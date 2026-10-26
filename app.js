@@ -2574,7 +2574,8 @@
       invoiceDate: String(seed.invoiceDate || ''),
       gross: seed.gross == null ? '' : String(seed.gross),
       vatRate: seed.vatRate == null ? String(S.invoiceVatDefaultRate || 21) : String(seed.vatRate),
-      orderId: String(seed.orderId || '')
+      orderId: String(seed.orderId || ''),
+      sourceInvoiceId: String(seed.sourceInvoiceId || '')
     };
   }
 
@@ -2636,7 +2637,7 @@
         <td><strong>${order ? eh(formatCurrency(order.total_amount)) : '—'}</strong></td>
         <td><strong class="${result.status === 'ok' ? 'text-success' : (result.status === 'partial' ? 'text-secondary' : 'text-danger')}">${eh(diff)}</strong>${order && net != null && number(order.total_amount) > 0 ? `<div class="table-subtitle">${eh(((result.diff / number(order.total_amount)) * 100).toLocaleString('es-AR', { maximumFractionDigits: 2 }))}%</div>` : ''}</td>
         <td>${invoiceVatStatusBadge(result)}</td>
-        <td><button class="btn btn-outline-danger btn-sm" type="button" data-vat-batch-delete="${ea(row.id)}" title="Quitar fila"><i class="bi bi-trash3"></i></button></td>
+        <td><div class="d-flex gap-1 justify-content-end">${row.sourceInvoiceId ? `<button class="btn btn-outline-primary btn-sm" type="button" data-vat-batch-open-invoice="${ea(row.sourceInvoiceId)}" title="Abrir PDF de la factura"><i class="bi bi-file-earmark-pdf"></i></button>` : ''}<button class="btn btn-outline-danger btn-sm" type="button" data-vat-batch-delete="${ea(row.id)}" title="Quitar fila"><i class="bi bi-trash3"></i></button></div></td>
       </tr>`;
     }).join('');
     renderInvoiceVatBatchSummary();
@@ -2704,7 +2705,12 @@
     if (cells[9]) cells[9].innerHTML = invoiceVatStatusBadge(result);
   }
 
-  function handleInvoiceVatBatchClick(event) {
+  async function handleInvoiceVatBatchClick(event) {
+    const openButton = event.target.closest('[data-vat-batch-open-invoice]');
+    if (openButton) {
+      await openInvoicePdfById(openButton.dataset.vatBatchOpenInvoice, openButton);
+      return;
+    }
     const deleteButton = event.target.closest('[data-vat-batch-delete]');
     if (!deleteButton) return;
     const id = deleteButton.dataset.vatBatchDelete;
@@ -2712,6 +2718,7 @@
     if (!S.invoiceVatBatchRows.length) S.invoiceVatBatchRows = [invoiceVatBatchDefaultRow()];
     saveInvoiceVatBatchDraft();
     renderInvoiceVatBatch();
+    renderInvoiceVatReconciliation();
   }
 
   function clearInvoiceVatBatch() {
@@ -3089,6 +3096,42 @@
     renderInvoiceVatReconciliation();
   }
 
+  function invoiceVatBatchHasSourceInvoice(invoiceId) {
+    if (!invoiceId) return false;
+    if (!S.invoiceVatBatchLoaded) loadInvoiceVatBatchDraft();
+    return S.invoiceVatBatchRows.some((row) => row.sourceInvoiceId === invoiceId);
+  }
+
+  function addLoadedInvoiceToVatBatch(invoiceId, orderId) {
+    const invoice = invoiceById(invoiceId);
+    if (!invoice) return false;
+    if (!orderId) {
+      toast('Elegí y vinculá un pedido antes de añadir la factura a la conciliación.', 'error');
+      return false;
+    }
+    if (!S.invoiceVatBatchLoaded) loadInvoiceVatBatchDraft();
+    if (invoiceVatBatchHasSourceInvoice(invoiceId)) {
+      toast('Esta factura ya está incluida en la conciliación múltiple.', 'info');
+      return false;
+    }
+    const seed = invoiceVatBatchDefaultRow({
+      invoiceNumber: invoice.invoice_number || invoice.file_name || '',
+      invoiceDate: invoice.invoice_date || '',
+      gross: invoice.total_amount == null ? '' : invoice.total_amount,
+      vatRate: E.invoiceVatDefaultRate?.value || S.invoiceVatDefaultRate || 21,
+      orderId,
+      sourceInvoiceId: invoice.id
+    });
+    const onlyBlank = S.invoiceVatBatchRows.length === 1 && !S.invoiceVatBatchRows[0].invoiceNumber && !S.invoiceVatBatchRows[0].gross && !S.invoiceVatBatchRows[0].orderId && !S.invoiceVatBatchRows[0].sourceInvoiceId;
+    if (onlyBlank) S.invoiceVatBatchRows = [seed];
+    else S.invoiceVatBatchRows.push(seed);
+    saveInvoiceVatBatchDraft();
+    renderInvoiceVatBatch();
+    renderInvoiceVatReconciliation();
+    toast(`Factura ${invoice.invoice_number || invoice.file_name} añadida a la conciliación.`, 'success');
+    return true;
+  }
+
   function renderInvoiceVatReconciliation() {
     if (!E.invoiceVatReconciliationBody) return;
     const rate = Math.max(0, number(E.invoiceVatDefaultRate.value || S.invoiceVatDefaultRate || 21));
@@ -3113,7 +3156,7 @@
         <td><strong>${order ? eh(formatCurrency(order.total_amount)) : '—'}</strong></td>
         <td><strong class="${result.status === 'ok' ? 'text-success' : (result.status === 'partial' ? 'text-secondary' : 'text-danger')}">${eh(difference)}</strong></td>
         <td>${invoiceVatStatusBadge(result)}</td>
-        <td><button class="btn btn-outline-primary btn-sm fw-bold" type="button" data-invoice-vat-save="${ea(invoice.id)}"><i class="bi bi-link-45deg me-1"></i>Vincular</button></td>
+        <td><div class="d-flex flex-wrap gap-1 justify-content-end"><button class="btn btn-outline-secondary btn-sm fw-bold" type="button" data-invoice-vat-open="${ea(invoice.id)}" title="Abrir PDF"><i class="bi bi-file-earmark-pdf me-1"></i>PDF</button><button class="btn btn-outline-primary btn-sm fw-bold" type="button" data-invoice-vat-save="${ea(invoice.id)}"><i class="bi bi-link-45deg me-1"></i>Vincular</button><button class="btn ${invoiceVatBatchHasSourceInvoice(invoice.id) ? 'btn-success' : 'btn-primary'} btn-sm fw-bold" type="button" data-invoice-vat-add="${ea(invoice.id)}" ${invoiceVatBatchHasSourceInvoice(invoice.id) ? 'disabled' : ''} title="Añadir al lote superior de conciliación"><i class="bi ${invoiceVatBatchHasSourceInvoice(invoice.id) ? 'bi-check2' : 'bi-plus-lg'} me-1"></i>${invoiceVatBatchHasSourceInvoice(invoice.id) ? 'Añadida' : 'Añadir'}</button></div></td>
       </tr>`;
     }).join('');
   }
@@ -3136,6 +3179,30 @@
   }
 
   async function handleInvoiceVatTableClick(event) {
+    const openButton = event.target.closest('[data-invoice-vat-open]');
+    if (openButton) {
+      await openInvoicePdfById(openButton.dataset.invoiceVatOpen, openButton);
+      return;
+    }
+
+    const addButton = event.target.closest('[data-invoice-vat-add]');
+    if (addButton) {
+      const invoiceId = addButton.dataset.invoiceVatAdd;
+      const row = addButton.closest('[data-invoice-vat-row]');
+      const select = row?.querySelector('[data-invoice-vat-order]');
+      const orderId = select?.value || '';
+      if (!orderId) return toast('Elegí un pedido antes de añadir esta factura a la conciliación.', 'error');
+      const invoice = invoiceById(invoiceId);
+      if (!invoice) return;
+      if (invoice.matched_order_id !== orderId) {
+        const linkButton = row?.querySelector('[data-invoice-vat-save]');
+        const saved = await saveInvoiceVatMatch(invoiceId, orderId, linkButton || addButton);
+        if (!saved) return;
+      }
+      addLoadedInvoiceToVatBatch(invoiceId, orderId);
+      return;
+    }
+
     const button = event.target.closest('[data-invoice-vat-save]');
     if (!button) return;
     const invoiceId = button.dataset.invoiceVatSave;
@@ -3169,9 +3236,11 @@
       renderInvoices();
       renderInvoiceVatReconciliation();
       toast(orderId ? 'Factura vinculada al pedido.' : 'Vinculación eliminada.', 'success');
+      return data;
     } catch (error) {
       console.error(error);
       toast(error.message || 'No se pudo vincular la factura.', 'error');
+      return null;
     } finally {
       buttonBusy(button, false);
     }
@@ -4938,10 +5007,10 @@
     }
   }
 
-  async function openSelectedInvoicePdf() {
-    const invoice = invoiceById(S.selectedInvoiceId);
+  async function openInvoicePdfById(invoiceId, button = null) {
+    const invoice = invoiceById(invoiceId);
     if (!invoice) return;
-    buttonBusy(E.openInvoicePdfButton, true, 'Abriendo...');
+    if (button) buttonBusy(button, true, 'Abriendo...');
     try {
       const { data, error } = await S.sb.storage.from(INVOICE_BUCKET).createSignedUrl(invoice.storage_path, 120);
       if (error) throw error;
@@ -4949,10 +5018,14 @@
       if (!opened) window.location.href = data.signedUrl;
     } catch (error) {
       console.error(error);
-      showInvoiceDetailError(invoiceModuleErrorMessage(error));
+      toast(invoiceModuleErrorMessage(error), 'error');
     } finally {
-      buttonBusy(E.openInvoicePdfButton, false);
+      if (button) buttonBusy(button, false);
     }
+  }
+
+  async function openSelectedInvoicePdf() {
+    await openInvoicePdfById(S.selectedInvoiceId, E.openInvoicePdfButton);
   }
 
   async function reprocessSelectedInvoiceWithOcr(options = {}) {
