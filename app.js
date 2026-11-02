@@ -306,9 +306,12 @@
     E.consumptionServiceFilter.addEventListener('change', () => loadConsumptionReport(true));
     E.consumptionSearch.addEventListener('input', renderConsumption);
     E.consumptionProductRankingSort.addEventListener('change', renderConsumptionFullRankings);
+    E.consumptionAnalysisView?.addEventListener('change', applyConsumptionAnalysisView);
     E.consumptionRecurringFilter?.addEventListener('change', renderConsumption);
     E.refreshConsumptionButton.addEventListener('click', () => loadConsumptionReport(true));
     E.exportConsumptionButton.addEventListener('click', exportConsumptionCsv);
+    E.exportConsumptionXlsxButton?.addEventListener('click', exportConsumptionXlsx);
+    E.exportConsumptionPdfButton?.addEventListener('click', exportConsumptionPdf);
     E.adminConsumption.addEventListener('click', handleConsumptionInsightClick);
     E.consumptionServiceHistoryModal.addEventListener('click', handleConsumptionInsightClick);
     E.consumptionProductHistoryModal.addEventListener('click', handleConsumptionInsightClick);
@@ -7618,6 +7621,184 @@
     E.consumptionProductConcentration.innerHTML=consumptionShareBars([...data.products].sort((a,b)=>b.amount-a.amount),total,'product');
     E.consumptionFullServiceRankingBody.innerHTML=data.services.map((r,i)=>`<tr><td><span class="consumption-rank-number">${i+1}</span></td><td><strong>${eh(r.name)}</strong></td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td>${formatQty(r.orders)}</td><td>${eh(formatCurrency(r.orders>0?r.amount/r.orders:0))}</td><td>${consumptionVariationBadge(r.variation)}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-service-history="${ea(r.serviceId)}"><i class="bi bi-graph-up me-1"></i>Analizar</button></td></tr>`).join('')||'<tr><td colspan="8" class="text-center text-secondary py-4">Sin servicios con consumo.</td></tr>';
     E.consumptionFullProductRankingBody.innerHTML=data.products.map((r,i)=>`<tr><td><span class="consumption-rank-number">${i+1}</span></td><td><strong>${eh(r.name)}</strong>${r.sku?`<small class="d-block text-secondary">SKU ${eh(r.sku)}</small>`:''}</td><td>${formatQty(r.quantity)} ${eh(r.unit)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td>${formatQty(r.orders)}</td><td>${formatQty(r.serviceCount)}</td><td>${consumptionVariationBadge(r.variation)}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}"><i class="bi bi-graph-up me-1"></i>Evolución</button></td></tr>`).join('')||'<tr><td colspan="9" class="text-center text-secondary py-4">Sin insumos consumidos.</td></tr>';
+    renderConsumptionManagementAnalysis(data);
+    applyConsumptionAnalysisView();
+  }
+
+  function currentConsumptionRecurrences() {
+    if (getConsumptionMode() === 'month') {
+      const month = E.consumptionMonth.value || monthInputValue(new Date());
+      return buildConsumptionIntelligence(month).recurrences || [];
+    }
+    const keys = consumptionRangeMonthKeys();
+    const monthly = rangeMonthlyMap();
+    const rows = [];
+    S.consumptionRangeRows.forEach((row) => {
+      const map = monthly.get(`${row.service_id}|${row.material_key}`) || new Map();
+      const profile = consumptionRecurrenceProfile({
+        serviceId: row.service_id, serviceName: row.service_name, materialKey: row.material_key,
+        materialId: row.material_id, itemName: row.item_name, sku: row.item_sku,
+        unit: row.unit || 'unidad'
+      }, keys, (key) => map.get(key));
+      if (profile) rows.push(profile);
+    });
+    return rows.sort((a,b)=>b.score-a.score||b.totalAmount-a.totalAmount);
+  }
+
+  function consumptionMonthlyEvolutionRows() {
+    const map = new Map();
+    const source = getConsumptionMode() === 'range' ? S.consumptionRangeMonthlyRows : S.consumptionAnalyticsRows;
+    (source || []).forEach((row) => {
+      const key = String(row.consumption_month || '').slice(0,7);
+      if (!/^\d{4}-\d{2}$/.test(key)) return;
+      if (!map.has(key)) map.set(key, { month:key, amount:0 });
+      map.get(key).amount += number(row.amount);
+    });
+    return [...map.values()].sort((a,b)=>a.month.localeCompare(b.month));
+  }
+
+  function buildConsumptionManagementAnalysis(data = buildConsumptionFullRankings()) {
+    const total = number(data.total);
+    const services = data.services || [];
+    const productsByAmount = [...(data.products || [])].sort((a,b)=>b.amount-a.amount);
+    const productsByQuantity = [...(data.products || [])].sort((a,b)=>b.quantity-a.quantity || b.amount-a.amount);
+    const productsByOrders = [...(data.products || [])].sort((a,b)=>b.orders-a.orders || b.amount-a.amount);
+    const totalOrders = services.reduce((sum,row)=>sum+number(row.orders),0);
+    const top5ServicesAmount = services.slice(0,5).reduce((sum,row)=>sum+number(row.amount),0);
+    const top5ProductsAmount = productsByAmount.slice(0,5).reduce((sum,row)=>sum+number(row.amount),0);
+    const top5ServicesShare = total>0 ? top5ServicesAmount/total*100 : 0;
+    const top5ProductsShare = total>0 ? top5ProductsAmount/total*100 : 0;
+    const recurrences = currentConsumptionRecurrences();
+    const durable = recurrences.filter((r)=>r.durableRepeat);
+    const highVolume = recurrences.filter((r)=>r.highVolume);
+    const frequent = recurrences.filter((r)=>r.frequent);
+    const findings = [];
+    if (total <= 0) findings.push({level:'info',title:'Sin consumo confirmado',detail:'No hay pedidos Entregados dentro del período y filtros elegidos.'});
+    if (services[0]) findings.push({level:'info',title:'Servicio con mayor gasto',detail:`${services[0].name} concentra ${formatCurrency(services[0].amount)} (${formatPercent(total>0?services[0].amount/total*100:0)} del total).`});
+    if (top5ServicesShare >= 60) findings.push({level:'warning',title:'Alta concentración del gasto',detail:`Los 5 servicios de mayor gasto explican ${formatPercent(top5ServicesShare)} del consumo económico. Conviene focalizar controles y estandarización en ese grupo.`});
+    else if (top5ServicesShare > 0) findings.push({level:'normal',title:'Concentración por servicio',detail:`Los 5 servicios principales representan ${formatPercent(top5ServicesShare)} del gasto del período.`});
+    if (productsByAmount[0]) findings.push({level:'info',title:'Insumo de mayor impacto económico',detail:`${productsByAmount[0].name} suma ${formatCurrency(productsByAmount[0].amount)} y representa ${formatPercent(total>0?productsByAmount[0].amount/total*100:0)} del gasto.`});
+    if (productsByOrders[0]) findings.push({level:'normal',title:'Insumo más recurrente en pedidos',detail:`${productsByOrders[0].name} aparece en ${formatQty(productsByOrders[0].orders)} pedidos y acumula ${formatQty(productsByOrders[0].quantity)} ${productsByOrders[0].unit}.`});
+    if (services.length > 1) { const low=services[services.length-1]; findings.push({level:'info',title:'Servicio de menor gasto con consumo',detail:`${low.name} registra ${formatCurrency(low.amount)} en el período. Sirve como referencia inferior para comparar estructuras operativas similares.`}); }
+    if (productsByAmount.length > 1) { const low=productsByAmount[productsByAmount.length-1]; findings.push({level:'info',title:'Insumo de menor impacto económico',detail:`${low.name} representa ${formatCurrency(low.amount)} (${formatQty(low.quantity)} ${low.unit}) dentro del período analizado.`}); }
+    if (durable.length) findings.push({level:'danger',title:'Posibles fugas en elementos durables',detail:`Hay ${durable.length} patrones de reposición reiterada de elementos durables. Prioridad: ${durable.slice(0,3).map((r)=>`${r.serviceName} / ${r.itemName}`).join(' · ')}.`});
+    if (highVolume.length) findings.push({level:'warning',title:'Volumen recurrente elevado',detail:`Se detectaron ${highVolume.length} combinaciones servicio-insumo con cantidades reiteradamente altas. Revisar dosificación, frecuencia y stock físico.`});
+    const growingServices = services.filter((r)=>r.variation!=null && r.variation>=30).sort((a,b)=>b.variation-a.variation);
+    if (growingServices.length) findings.push({level:'warning',title:'Servicios con aumento fuerte',detail:`${growingServices.slice(0,3).map((r)=>`${r.name} (${formatSignedPercent(r.variation)})`).join(' · ')} muestran crecimiento relevante frente a su referencia.`});
+    const growingProducts = productsByAmount.filter((r)=>r.variation!=null && r.variation>=40).sort((a,b)=>b.variation-a.variation);
+    if (growingProducts.length) findings.push({level:'warning',title:'Insumos en aumento',detail:`${growingProducts.slice(0,3).map((r)=>`${r.name} (${formatSignedPercent(r.variation)})`).join(' · ')} merecen revisión por incremento de consumo.`});
+    if (!durable.length && !highVolume.length && !growingServices.length && total>0) findings.push({level:'normal',title:'Sin señales críticas por los umbrales actuales',detail:'No se observan reposiciones durables reiteradas, cantidades recurrentes altas ni saltos fuertes de gasto en el período seleccionado.'});
+    return {
+      period:data.period,total,totalOrders,avgOrder:totalOrders?total/totalOrders:0,services,productsByAmount,productsByQuantity,productsByOrders,
+      top5ServicesShare,top5ProductsShare,recurrences,durable,highVolume,frequent,findings,
+      topService:services[0]||null,topProduct:productsByAmount[0]||null,mostQuantity:productsByQuantity[0]||null,mostFrequent:productsByOrders[0]||null
+    };
+  }
+
+  function renderConsumptionManagementAnalysis(data) {
+    if (!E.consumptionManagementAnalysis) return;
+    const a = buildConsumptionManagementAnalysis(data);
+    E.consumptionManagementPeriod.textContent = a.period;
+    E.consumptionMgmtTop5Services.textContent = formatPercent(a.top5ServicesShare);
+    E.consumptionMgmtTop5Products.textContent = formatPercent(a.top5ProductsShare);
+    E.consumptionMgmtAvgOrder.textContent = formatCurrency(a.avgOrder);
+    E.consumptionMgmtTopService.textContent = a.topService?.name || '—';
+    E.consumptionMgmtTopServiceFoot.textContent = a.topService ? `${formatCurrency(a.topService.amount)} · ${formatPercent(a.total>0?a.topService.amount/a.total*100:0)}` : 'Sin datos';
+    E.consumptionMgmtTopProduct.textContent = a.topProduct?.name || '—';
+    E.consumptionMgmtTopProductFoot.textContent = a.topProduct ? `${formatCurrency(a.topProduct.amount)} · ${formatQty(a.topProduct.quantity)} ${a.topProduct.unit}` : 'Sin datos';
+    E.consumptionMgmtRecurring.textContent = String(a.recurrences.length);
+    E.consumptionMgmtRecurringFoot.textContent = `${a.durable.length} durables · ${a.highVolume.length} cantidad alta`;
+    E.consumptionManagementFindings.innerHTML = a.findings.map((f)=>`<article class="consumption-management-finding is-${ea(f.level)}"><i class="bi ${f.level==='danger'?'bi-exclamation-octagon-fill':f.level==='warning'?'bi-exclamation-triangle-fill':f.level==='normal'?'bi-check-circle-fill':'bi-info-circle-fill'}"></i><div><strong>${eh(f.title)}</strong><p>${eh(f.detail)}</p></div></article>`).join('');
+    const quantity = a.mostQuantity ? `${a.mostQuantity.name}: ${formatQty(a.mostQuantity.quantity)} ${a.mostQuantity.unit}` : 'Sin datos';
+    const frequent = a.mostFrequent ? `${a.mostFrequent.name}: ${formatQty(a.mostFrequent.orders)} pedidos` : 'Sin datos';
+    E.consumptionManagementQuantitative.innerHTML = `
+      <div><span>Gasto total</span><strong>${eh(formatCurrency(a.total))}</strong></div>
+      <div><span>Pedidos entregados</span><strong>${formatQty(a.totalOrders)}</strong></div>
+      <div><span>Servicios activos</span><strong>${formatQty(a.services.length)}</strong></div>
+      <div><span>SKUs / productos</span><strong>${formatQty(a.productsByAmount.length)}</strong></div>
+      <div><span>Mayor cantidad de un insumo</span><strong>${eh(quantity)}</strong></div>
+      <div><span>Mayor frecuencia</span><strong>${eh(frequent)}</strong></div>
+      <div><span>Menor gasto · servicio</span><strong>${eh(a.services.length ? `${a.services[a.services.length-1].name}: ${formatCurrency(a.services[a.services.length-1].amount)}` : 'Sin datos')}</strong></div>
+      <div><span>Menor gasto · insumo</span><strong>${eh(a.productsByAmount.length ? `${a.productsByAmount[a.productsByAmount.length-1].name}: ${formatCurrency(a.productsByAmount[a.productsByAmount.length-1].amount)}` : 'Sin datos')}</strong></div>`;
+  }
+
+  function applyConsumptionAnalysisView() {
+    const view = E.consumptionAnalysisView?.value || 'complete';
+    const show = (id,visible) => E[id]?.classList.toggle('d-none', !visible);
+    show('consumptionIntelligenceSection', ['complete','executive','recurrence'].includes(view));
+    show('consumptionFullAnalysisSection', ['complete','services','products'].includes(view));
+    show('consumptionServiceSummarySection', ['complete','services'].includes(view));
+    show('consumptionProductDetailSection', ['complete','products'].includes(view));
+    show('consumptionRecurrenceSection', ['complete','executive','recurrence'].includes(view));
+    if (E.consumptionServiceRankingBlock) E.consumptionServiceRankingBlock.classList.toggle('d-none', view==='products');
+    if (E.consumptionProductRankingBlock) E.consumptionProductRankingBlock.classList.toggle('d-none', view==='services');
+  }
+
+  function consumptionExportDetailRows() {
+    const mode=getConsumptionMode();
+    if(mode==='range') return S.consumptionRangeRows.map((r)=>({
+      Servicio:r.service_name,Producto:r.item_name,SKU:r.item_sku||'',Unidad:r.unit||'unidad',Cantidad:number(r.range_quantity),Gasto:number(r.range_amount),Pedidos:number(r.range_orders)
+    }));
+    return S.consumptionRows.map((r)=>({
+      Servicio:r.service_name,Producto:r.item_name,SKU:r.item_sku||'',Unidad:r.unit||'unidad',Cantidad:number(r.month_quantity),Gasto:number(r.month_amount),Pedidos:number(r.month_orders),Cantidad_mes_anterior:number(r.previous_month_quantity),Promedio_3_meses:number(r.avg_previous_3_quantity),Cantidad_historica:number(r.historical_quantity),Gasto_historico:number(r.historical_amount)
+    }));
+  }
+
+  function consumptionEvolutionExportRows() {
+    const source=getConsumptionMode()==='range'?S.consumptionRangeMonthlyRows:S.consumptionAnalyticsRows;
+    return (source||[]).map((r)=>({
+      Mes:String(r.consumption_month||'').slice(0,7),Servicio:r.service_name,Producto:r.item_name,SKU:r.item_sku||'',Unidad:r.unit||'unidad',Cantidad:number(r.quantity),Gasto:number(r.amount),Pedidos:number(r.orders)
+    })).sort((a,b)=>a.Mes.localeCompare(b.Mes)||String(a.Servicio).localeCompare(String(b.Servicio),'es'));
+  }
+
+  function exportConsumptionXlsx() {
+    if(!window.XLSX) return toast('No se pudo cargar el generador de Excel. Revisá la conexión y volvé a intentar.','error');
+    const data=buildConsumptionFullRankings();const a=buildConsumptionManagementAnalysis(data);
+    if(!data.services.length&&!data.products.length) return toast('No hay datos de consumo para exportar.','error');
+    buttonBusy(E.exportConsumptionXlsxButton,true,'Generando XLSX...');
+    try{
+      const wb=XLSX.utils.book_new();
+      const summary=[
+        ['ANÁLISIS DE CONSUMOS · CLEAN IT'],['Período',a.period],['Vista',E.consumptionAnalysisView?.selectedOptions?.[0]?.textContent||'Completo'],['Servicio',E.consumptionServiceFilter?.selectedOptions?.[0]?.textContent||'Todos'],
+        [],['INDICADORES'],['Gasto total',a.total],['Pedidos entregados',a.totalOrders],['Gasto promedio por pedido',a.avgOrder],['Servicios con consumo',a.services.length],['Insumos distintos',a.productsByAmount.length],['Top 5 servicios - % gasto',a.top5ServicesShare/100],['Top 5 insumos - % gasto',a.top5ProductsShare/100],['Patrones recurrentes',a.recurrences.length],['Durables repetidos',a.durable.length],['Cantidad alta recurrente',a.highVolume.length],
+        [],['HALLAZGOS CUALITATIVOS'],...a.findings.map((f,i)=>[i+1,f.title,f.detail,f.level])
+      ];
+      const wsSummary=XLSX.utils.aoa_to_sheet(summary);wsSummary['!cols']=[{wch:24},{wch:34},{wch:85},{wch:14}];XLSX.utils.book_append_sheet(wb,wsSummary,'Resumen');
+      const serviceRows=a.services.map((r,i)=>({Ranking:i+1,Servicio:r.name,Gasto:r.amount,Participacion:a.total?r.amount/a.total:0,Pedidos:r.orders,Gasto_por_pedido:r.orders?r.amount/r.orders:0,Variacion_pct:r.variation==null?null:r.variation/100}));
+      const wsS=XLSX.utils.json_to_sheet(serviceRows);wsS['!cols']=[{wch:8},{wch:42},{wch:16},{wch:14},{wch:11},{wch:18},{wch:14}];wsS['!autofilter']={ref:wsS['!ref']};XLSX.utils.book_append_sheet(wb,wsS,'Ranking servicios');
+      const productRows=a.productsByAmount.map((r,i)=>({Ranking:i+1,Producto:r.name,SKU:r.sku||'',Unidad:r.unit,Cantidad:r.quantity,Gasto:r.amount,Participacion:a.total?r.amount/a.total:0,Pedidos:r.orders,Servicios:r.serviceCount,Variacion_pct:r.variation==null?null:r.variation/100}));
+      const wsP=XLSX.utils.json_to_sheet(productRows);wsP['!cols']=[{wch:8},{wch:42},{wch:20},{wch:14},{wch:13},{wch:16},{wch:14},{wch:10},{wch:10},{wch:14}];wsP['!autofilter']={ref:wsP['!ref']};XLSX.utils.book_append_sheet(wb,wsP,'Ranking insumos');
+      const recurrenceRows=a.recurrences.map((r)=>({Servicio:r.serviceName,Producto:r.itemName,SKU:r.sku||'',Unidad:r.unit,Patron:r.pattern,Durable:r.durableRepeat?'Sí':'No',Muy_frecuente:r.frequent?'Sí':'No',Cantidad_alta:r.highVolume?'Sí':'No',Meses_activos:r.activeMonths,Meses_analizados:r.periodMonths,Cantidad_acumulada:r.totalQuantity,Pedidos:r.totalOrders,Promedio_mes_activo:r.avgActiveQuantity,Gasto_acumulado:r.totalAmount,Ultimo_mes:r.lastMonth,Score:r.score}));
+      const wsR=XLSX.utils.json_to_sheet(recurrenceRows);wsR['!cols']=[{wch:38},{wch:38},{wch:20},{wch:12},{wch:24},{wch:9},{wch:12},{wch:12},{wch:12},{wch:14},{wch:18},{wch:10},{wch:18},{wch:18},{wch:12},{wch:8}];if(wsR['!ref'])wsR['!autofilter']={ref:wsR['!ref']};XLSX.utils.book_append_sheet(wb,wsR,'Recurrencias');
+      const detail=consumptionExportDetailRows();const wsD=XLSX.utils.json_to_sheet(detail);wsD['!cols']=[{wch:38},{wch:40},{wch:20},{wch:12},{wch:13},{wch:16},{wch:10},{wch:18},{wch:18},{wch:18},{wch:18}];if(wsD['!ref'])wsD['!autofilter']={ref:wsD['!ref']};XLSX.utils.book_append_sheet(wb,wsD,'Detalle servicio-insumo');
+      const evolution=consumptionEvolutionExportRows();const wsE=XLSX.utils.json_to_sheet(evolution);wsE['!cols']=[{wch:12},{wch:38},{wch:40},{wch:20},{wch:12},{wch:13},{wch:16},{wch:10}];if(wsE['!ref'])wsE['!autofilter']={ref:wsE['!ref']};XLSX.utils.book_append_sheet(wb,wsE,'Evolucion mensual');
+      const stamp=new Date().toISOString().slice(0,10).replaceAll('-','');XLSX.writeFile(wb,`Analisis_Consumos_CleanIt_${stamp}.xlsx`);toast('Excel de consumos generado.','success');
+    }catch(error){console.error(error);toast(error.message||'No se pudo generar el Excel.','error');}finally{buttonBusy(E.exportConsumptionXlsxButton,false);}
+  }
+
+  function exportConsumptionPdf() {
+    if(!window.jspdf?.jsPDF) return toast('No se pudo cargar el generador de PDF. Revisá la conexión y volvé a intentar.','error');
+    const data=buildConsumptionFullRankings();const a=buildConsumptionManagementAnalysis(data);
+    if(!data.services.length&&!data.products.length) return toast('No hay datos de consumo para exportar.','error');
+    buttonBusy(E.exportConsumptionPdfButton,true,'Generando PDF...');
+    try{
+      const {jsPDF}=window.jspdf;const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),mx=10,bottom=11,cw=W-mx*2;let y=10;
+      const font=(style='normal',size=8)=>{doc.setFont('helvetica',style);doc.setFontSize(size);};
+      const footer=()=>{const pages=doc.internal.getNumberOfPages();for(let p=1;p<=pages;p++){doc.setPage(p);font('normal',6.5);doc.setTextColor(120);doc.text(`Clean It · Análisis de consumos · Página ${p}/${pages}`,mx,H-5);doc.text(pdfSafeText(new Date().toLocaleString('es-AR')),W-mx,H-5,{align:'right'});doc.setTextColor(0);}};
+      const newPage=()=>{doc.addPage();y=10;};const ensure=(h)=>{if(y+h>H-bottom)newPage();};
+      const title=(text)=>{ensure(10);font('bold',11);doc.setTextColor(25);doc.text(pdfSafeText(text),mx,y);y+=6;doc.setDrawColor(220);doc.line(mx,y,W-mx,y);y+=4;};
+      const table=(section,cols,rows)=>{title(section);const head=7;const drawHead=()=>{doc.setFillColor(242,246,251);doc.rect(mx,y,cw,head,'F');font('bold',6.5);doc.setTextColor(75);cols.forEach(c=>doc.text(pdfSafeText(c.label),c.align==='right'?c.x+c.w-1.5:c.x+1.5,y+4.6,{align:c.align==='right'?'right':'left'}));doc.setTextColor(0);y+=head;};drawHead();rows.forEach(row=>{const cells=cols.map(c=>doc.splitTextToSize(pdfSafeText(row[c.key]??'—'),c.w-3));const lines=Math.max(1,...cells.map(v=>v.length));const rh=Math.max(6,lines*3+2);if(y+rh>H-bottom){newPage();drawHead();}font('normal',6.7);cells.forEach((arr,i)=>{const c=cols[i];doc.text(arr,c.align==='right'?c.x+c.w-1.5:c.x+1.5,y+3.8,{align:c.align==='right'?'right':'left'});});doc.setDrawColor(235);doc.line(mx,y+rh,W-mx,y+rh);y+=rh;});y+=5;};
+      doc.setFillColor(13,110,253);doc.roundedRect(mx,y,12,12,2,2,'F');font('bold',8);doc.setTextColor(255);doc.text('CI',mx+6,y+7.8,{align:'center'});doc.setTextColor(0);font('bold',16);doc.text('ANÁLISIS DE CONSUMOS',mx+17,y+5);font('normal',8);doc.setTextColor(100);doc.text(pdfSafeText(`Clean It · ${a.period}`),mx+17,y+10);doc.setTextColor(0);y+=18;
+      font('bold',8);doc.text(`Gasto: ${pdfMoney(a.total)}`,mx,y);doc.text(`Pedidos: ${formatQty(a.totalOrders)}`,mx+50,y);doc.text(`Gasto/pedido: ${pdfMoney(a.avgOrder)}`,mx+83,y);doc.text(`Servicios: ${a.services.length}`,mx+140,y);doc.text(`Insumos: ${a.productsByAmount.length}`,mx+174,y);doc.text(`Recurrencias: ${a.recurrences.length}`,mx+207,y);doc.text(`Durables: ${a.durable.length}`,mx+248,y);y+=7;
+      font('normal',7.2);doc.text(`Top 5 servicios: ${formatPercent(a.top5ServicesShare)} del gasto · Top 5 insumos: ${formatPercent(a.top5ProductsShare)} del gasto`,mx,y);y+=8;
+      title('Conclusiones cualitativas');a.findings.forEach((f,i)=>{const lines=doc.splitTextToSize(pdfSafeText(`${i+1}. ${f.title}: ${f.detail}`),cw-4);ensure(lines.length*3.6+2);font(f.level==='danger'||f.level==='warning'?'bold':'normal',7.2);doc.text(lines,mx+2,y);y+=lines.length*3.6+2;});y+=3;
+      const svcCols=[{key:'rank',label:'#',x:mx,w:8},{key:'name',label:'SERVICIO',x:mx+8,w:72},{key:'amount',label:'GASTO',x:mx+80,w:35,align:'right'},{key:'share',label:'% TOTAL',x:mx+115,w:24,align:'right'},{key:'orders',label:'PEDIDOS',x:mx+139,w:22,align:'right'},{key:'avg',label:'GASTO/PED.',x:mx+161,w:34,align:'right'},{key:'variation',label:'EVOLUCIÓN',x:mx+195,w:30,align:'right'}];
+      table('Ranking completo de servicios',svcCols,a.services.map((r,i)=>({rank:i+1,name:r.name,amount:formatCurrency(r.amount),share:formatPercent(a.total?r.amount/a.total*100:0),orders:formatQty(r.orders),avg:formatCurrency(r.orders?r.amount/r.orders:0),variation:r.variation==null?'Sin ref.':formatSignedPercent(r.variation)})));
+      const prodCols=[{key:'rank',label:'#',x:mx,w:8},{key:'name',label:'INSUMO',x:mx+8,w:72},{key:'qty',label:'CANTIDAD',x:mx+80,w:35,align:'right'},{key:'amount',label:'GASTO',x:mx+115,w:35,align:'right'},{key:'share',label:'% TOTAL',x:mx+150,w:24,align:'right'},{key:'orders',label:'PEDIDOS',x:mx+174,w:22,align:'right'},{key:'services',label:'SERVICIOS',x:mx+196,w:24,align:'right'},{key:'variation',label:'EVOLUCIÓN',x:mx+220,w:30,align:'right'}];
+      table('Ranking completo de insumos',prodCols,a.productsByAmount.map((r,i)=>({rank:i+1,name:`${r.name}${r.sku?` · ${r.sku}`:''}`,qty:`${formatQty(r.quantity)} ${r.unit}`,amount:formatCurrency(r.amount),share:formatPercent(a.total?r.amount/a.total*100:0),orders:formatQty(r.orders),services:formatQty(r.serviceCount),variation:r.variation==null?'Sin ref.':formatSignedPercent(r.variation)})));
+      if(a.recurrences.length){const recCols=[{key:'service',label:'SERVICIO',x:mx,w:57},{key:'product',label:'INSUMO',x:mx+57,w:62},{key:'pattern',label:'PATRÓN',x:mx+119,w:42},{key:'months',label:'MESES',x:mx+161,w:22,align:'right'},{key:'qty',label:'CANT.',x:mx+183,w:32,align:'right'},{key:'orders',label:'PEDIDOS',x:mx+215,w:22,align:'right'},{key:'amount',label:'GASTO',x:mx+237,w:36,align:'right'}];table('Patrones recurrentes y posibles fugas',recCols,a.recurrences.map(r=>({service:r.serviceName,product:r.itemName,pattern:r.pattern,months:`${r.activeMonths}/${r.periodMonths}`,qty:`${formatQty(r.totalQuantity)} ${r.unit}`,orders:formatQty(r.totalOrders),amount:formatCurrency(r.totalAmount)})));}
+      footer();const stamp=new Date().toISOString().slice(0,10).replaceAll('-','');doc.save(`Analisis_Consumos_CleanIt_${stamp}.pdf`);toast('PDF de consumos generado.','success');
+    }catch(error){console.error(error);toast(error.message||'No se pudo generar el PDF.','error');}finally{buttonBusy(E.exportConsumptionPdfButton,false);}
   }
 
   function currentServiceProductRows(serviceId) {
