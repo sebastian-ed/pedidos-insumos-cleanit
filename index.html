@@ -322,7 +322,7 @@
 
         <section id="adminConsumption" class="admin-panel d-none">
           <div class="panel-heading"><div><span class="eyebrow">Inteligencia operativa</span><h1>Consumo por servicio</h1><p>Compará el consumo mensual de cada insumo y detectá desvíos respecto de los últimos meses.</p></div><div class="d-flex flex-wrap gap-2"><button id="exportConsumptionButton" class="btn btn-outline-primary fw-bold" type="button"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Exportar CSV</button><button id="refreshConsumptionButton" class="btn btn-primary fw-bold" type="button"><i class="bi bi-arrow-clockwise me-2"></i>Actualizar</button></div></div>
-          <div class="alert alert-info consumption-definition"><i class="bi bi-info-circle-fill me-2"></i><strong>Consumo confirmado:</strong> se contabilizan únicamente pedidos con estado <strong>Entregado</strong>, usando la fecha en que fueron cerrados. Los pedidos pendientes, en preparación, enviados o cancelados no alteran el informe.</div>
+          <div class="alert alert-info consumption-definition"><i class="bi bi-info-circle-fill me-2"></i><strong>Consumo confirmado:</strong> se contabilizan únicamente pedidos con estado <strong>Entregado</strong>, usando la fecha en que pasaron a Entregado. Los pedidos pendientes, en preparación, enviados o cancelados no alteran el informe.</div>
           <div class="section-card mb-4">
             <div class="row g-3 align-items-end">
               <div class="col-md-4 col-xl-2"><label for="consumptionPeriodMode" class="form-label">Tipo de análisis</label><select id="consumptionPeriodMode" class="form-select"><option value="month">Mensual</option><option value="range">Rango personalizado</option></select></div>
@@ -337,7 +337,7 @@
           <div id="consumptionAnalyticsNotice" class="alert alert-warning d-none"></div>
           <div class="row g-3 mb-4">
             <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Servicios con consumo</div><div id="consumptionKpiServices" class="kpi-value">0</div><div id="consumptionKpiServicesFoot" class="kpi-foot">En el mes seleccionado</div></div></div>
-            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Insumos utilizados</div><div id="consumptionKpiProducts" class="kpi-value">0</div><div class="kpi-foot">Combinaciones servicio-producto</div></div></div>
+            <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Insumos utilizados</div><div id="consumptionKpiProducts" class="kpi-value">0</div><div class="kpi-foot">SKUs / productos distintos</div></div></div>
             <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Pedidos entregados</div><div id="consumptionKpiOrders" class="kpi-value">0</div><div class="kpi-foot">Base del consumo confirmado</div></div></div>
             <div class="col-sm-6 col-xl-3"><div class="section-card kpi-card"><div class="kpi-label">Valor consumido</div><div id="consumptionKpiAmount" class="kpi-value consumption-money">$ 0</div><div class="kpi-foot">Precios finales de los pedidos</div></div></div>
           </div>
@@ -366,6 +366,19 @@
               <div id="consumptionRecurringList" class="consumption-recurring-grid"></div>
             </div>
           </div>
+
+          <div class="section-card mb-4 consumption-full-analysis">
+            <div class="consumption-intelligence-heading mb-3"><div><span class="eyebrow">Ranking completo</span><h2 class="section-title mb-1">Dónde se concentra el consumo</h2><p class="text-secondary mb-0">Ordenado de mayor a menor para detectar rápidamente qué servicios e insumos explican el gasto.</p></div><span id="consumptionFullRankingPeriod" class="badge text-bg-light">Período</span></div>
+            <div class="row g-3 mb-4">
+              <div class="col-xl-6"><div class="consumption-ranking-panel"><div class="d-flex align-items-center justify-content-between mb-2"><strong>Concentración por servicio</strong><span id="consumptionFullServiceRankingCount" class="badge text-bg-light">0 servicios</span></div><div id="consumptionServiceConcentration" class="consumption-share-chart"></div></div></div>
+              <div class="col-xl-6"><div class="consumption-ranking-panel"><div class="d-flex align-items-center justify-content-between mb-2"><strong>Concentración por insumo</strong><span id="consumptionFullProductRankingCount" class="badge text-bg-light">0 insumos</span></div><div id="consumptionProductConcentration" class="consumption-share-chart"></div></div></div>
+            </div>
+            <div class="row g-4">
+              <div class="col-12"><h3 class="h6 fw-black mb-2">Ranking completo de servicios</h3><div class="table-responsive consumption-ranking-table-wrap"><table class="table admin-table align-middle mb-0"><thead><tr><th>#</th><th>Servicio</th><th>Gasto</th><th>% total</th><th>Pedidos</th><th>Gasto/pedido</th><th>Evolución</th><th></th></tr></thead><tbody id="consumptionFullServiceRankingBody"></tbody></table></div></div>
+              <div class="col-12"><div class="d-flex flex-wrap align-items-end justify-content-between gap-2 mb-2"><div><h3 class="h6 fw-black mb-1">Ranking general de insumos</h3><p class="text-secondary small mb-0">Consolida el mismo SKU/producto entre todos los servicios. Al ordenar por cantidad, tené en cuenta la unidad de pedido de cada producto.</p></div><div><label for="consumptionProductRankingSort" class="form-label small mb-1">Ordenar insumos por</label><select id="consumptionProductRankingSort" class="form-select form-select-sm"><option value="amount">Mayor gasto</option><option value="quantity">Mayor cantidad</option><option value="orders">Más pedidos</option><option value="services">Más servicios</option></select></div></div><div class="table-responsive consumption-ranking-table-wrap"><table class="table admin-table align-middle mb-0"><thead><tr><th>#</th><th>Insumo</th><th>Cantidad</th><th>Gasto</th><th>% total</th><th>Pedidos</th><th>Servicios</th><th>Evolución</th><th></th></tr></thead><tbody id="consumptionFullProductRankingBody"></tbody></table></div></div>
+            </div>
+          </div>
+
           <div class="section-card p-0 overflow-hidden mb-4">
             <div class="consumption-table-heading"><div><h2 class="section-title mb-1">Resumen por servicio</h2><p class="text-secondary mb-0">El valor monetario permite comparar servicios aun cuando usan unidades de pedido diferentes.</p></div><span id="consumptionServiceCount" class="badge text-bg-light">0 servicios</span></div>
             <div class="table-responsive"><table id="consumptionServiceTable" class="table admin-table align-middle"><thead><tr><th>Servicio</th><th>Pedidos</th><th>Insumos</th><th>Mes</th><th>Mes anterior</th><th>Promedio 3 meses</th><th>Variación</th><th>Histórico</th><th>Señal</th><th></th></tr></thead><tbody id="consumptionServiceTableBody"></tbody></table></div>
@@ -825,9 +838,30 @@
           <div id="consumptionServiceHistoryContent" class="d-none">
             <div class="row g-3 mb-4"><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Gasto histórico</span><strong id="consumptionServiceHistoryTotal">$ 0</strong></div></div><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Promedio mes activo</span><strong id="consumptionServiceHistoryAverage">$ 0</strong></div></div><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Máximo mensual</span><strong id="consumptionServiceHistoryMax">$ 0</strong></div></div><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Pedidos entregados</span><strong id="consumptionServiceHistoryOrders">0</strong></div></div></div>
             <div class="section-card mb-4"><h6 class="fw-black mb-3">Evolución mes a mes</h6><div id="consumptionServiceHistoryBars" class="consumption-service-history-chart"></div></div>
-            <div class="section-card p-0 overflow-hidden"><div class="table-responsive"><table class="table admin-table align-middle mb-0"><thead><tr><th>Mes</th><th>Pedidos</th><th>Insumos distintos</th><th>Gasto</th><th>Vs. mes anterior</th></tr></thead><tbody id="consumptionServiceHistoryBody"></tbody></table></div></div>
+            <div class="section-card p-0 overflow-hidden mb-4"><div class="table-responsive"><table class="table admin-table align-middle mb-0"><thead><tr><th>Mes</th><th>Pedidos</th><th>Insumos distintos</th><th>Gasto</th><th>Vs. mes anterior</th></tr></thead><tbody id="consumptionServiceHistoryBody"></tbody></table></div></div>
+            <div class="section-card p-0 overflow-hidden"><div class="consumption-table-heading"><div><h6 class="fw-black mb-1">Qué consume este servicio</h6><p id="consumptionServiceProductBreakdownCaption" class="text-secondary small mb-0"></p></div></div><div class="table-responsive"><table class="table admin-table align-middle mb-0"><thead><tr><th>#</th><th>Insumo</th><th>Cantidad</th><th>Pedidos</th><th>Gasto</th><th>% servicio</th><th></th></tr></thead><tbody id="consumptionServiceProductBreakdownBody"></tbody></table></div></div>
           </div>
           <div id="consumptionServiceHistoryError" class="alert alert-danger d-none mb-0"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="modal fade" id="consumptionProductHistoryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header"><div><div class="eyebrow">Evolución por insumo</div><h5 id="consumptionProductHistoryTitle" class="modal-title fw-black">Insumo</h5><p id="consumptionProductHistorySubtitle" class="text-secondary small mb-0 mt-1"></p></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <div class="row g-3 align-items-end mb-4"><div class="col-md-4"><label for="consumptionProductHistoryMonths" class="form-label">Período histórico</label><select id="consumptionProductHistoryMonths" class="form-select"><option value="12">12 meses</option><option value="24" selected>24 meses</option><option value="36">36 meses</option><option value="60">60 meses</option></select></div><div class="col-md-5"><label for="consumptionProductHistoryService" class="form-label">Servicio</label><select id="consumptionProductHistoryService" class="form-select"><option value="">Todos los servicios</option></select></div><div class="col-md-3 text-md-end"><span class="text-secondary small">Solo pedidos Entregados</span></div></div>
+          <div id="consumptionProductHistoryLoading" class="consumption-history-loading"><div class="spinner-border text-primary" role="status"></div><span>Calculando evolución del insumo...</span></div>
+          <div id="consumptionProductHistoryContent" class="d-none">
+            <div class="row g-3 mb-4"><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Cantidad acumulada</span><strong id="consumptionProductHistoryTotalQty">0</strong></div></div><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Gasto acumulado</span><strong id="consumptionProductHistoryTotalAmount">$ 0</strong></div></div><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Promedio mes activo</span><strong id="consumptionProductHistoryAverage">0</strong></div></div><div class="col-6 col-xl-3"><div class="consumption-history-kpi"><span>Máximo mensual</span><strong id="consumptionProductHistoryMax">0</strong></div></div></div>
+            <div class="row g-3 mb-4"><div class="col-xl-6"><div class="section-card h-100"><h6 class="fw-black mb-2">Evolución de cantidad</h6><div id="consumptionProductQuantityChart" class="consumption-product-history-chart"></div></div></div><div class="col-xl-6"><div class="section-card h-100"><h6 class="fw-black mb-2">Evolución del gasto</h6><div id="consumptionProductAmountChart" class="consumption-product-history-chart"></div></div></div></div>
+            <div class="section-card p-0 overflow-hidden mb-4"><div class="consumption-table-heading"><div><h6 class="fw-black mb-1">Mes a mes</h6><p class="text-secondary small mb-0">Cantidad y pesos para detectar tendencia, saltos y estacionalidad.</p></div></div><div class="table-responsive"><table class="table admin-table align-middle mb-0"><thead><tr><th>Mes</th><th>Cantidad</th><th>Gasto</th><th>Pedidos</th><th>Servicios</th><th>Δ cantidad</th><th>Δ gasto</th></tr></thead><tbody id="consumptionProductHistoryBody"></tbody></table></div></div>
+            <div class="section-card p-0 overflow-hidden"><div class="consumption-table-heading"><div><h6 class="fw-black mb-1">Servicios que más consumen este insumo</h6><p class="text-secondary small mb-0">Ranking acumulado dentro del período histórico seleccionado.</p></div></div><div class="table-responsive"><table class="table admin-table align-middle mb-0"><thead><tr><th>#</th><th>Servicio</th><th>Cantidad</th><th>Pedidos</th><th>Gasto</th><th>% gasto</th><th></th></tr></thead><tbody id="consumptionProductServicesBody"></tbody></table></div></div>
+          </div>
+          <div id="consumptionProductHistoryError" class="alert alert-danger d-none mb-0"></div>
         </div>
       </div>
     </div>
@@ -841,8 +875,8 @@
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
-  <!-- Build: conciliación IVA múltiple + exportación PDF/XLSX + rangos de consumo + facturas IA + PWA 2026-10-26-v3 -->
+  <!-- Build: tablero robusto de consumos + conciliación IVA + facturas IA + PWA 2026-11-02-v1 -->
   <script src="config.js"></script>
-  <script src="app.js?v=20261026-invoice-vat-export1"></script>
+  <script src="app.js?v=20261102-consumos-dashboard1"></script>
 </body>
 </html>

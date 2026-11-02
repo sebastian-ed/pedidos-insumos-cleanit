@@ -1,45 +1,45 @@
-# Pedidos Clean It — corrección de analítica de consumos
+# Pedidos Clean It — tablero robusto de consumos
 
-## Paso obligatorio
-En Supabase → SQL Editor, ejecutá **corregir-analitica-consumos.sql** completo.
+## Mejoras de esta versión
 
-Este script reemplaza las tres funciones analíticas y corrige el error:
+La sección **Consumos** incorpora una capa de análisis adicional sin eliminar las vistas existentes:
 
-`column reference "service_id" is ambiguous`
+- Ranking completo de servicios, ordenado de mayor a menor gasto.
+- Gasto, participación sobre el total, pedidos, gasto promedio por pedido y evolución de cada servicio.
+- Ranking general de insumos consolidando el mismo SKU entre todos los servicios.
+- El ranking de insumos puede ordenarse por **gasto**, **cantidad**, **cantidad de pedidos** o **cantidad de servicios que lo utilizan**.
+- Gráficos de concentración para identificar rápidamente qué servicios e insumos explican la mayor parte del gasto.
+- Ficha histórica de cada servicio con evolución mensual de gasto, pedidos e insumos distintos.
+- Dentro de cada servicio se muestra qué productos explican el gasto del período seleccionado.
+- Ficha histórica global de cada insumo, con evolución mensual de:
+  - cantidad consumida;
+  - gasto;
+  - cantidad de pedidos;
+  - cantidad de servicios que lo utilizaron;
+  - variación contra el mes anterior.
+- La ficha del insumo permite filtrar por un servicio específico para comparar su evolución individual.
+- Ranking de los servicios que más consumen cada insumo.
 
-No modifica pedidos, servicios, consumos ni ningún dato existente.
+Todo el tablero respeta el filtro principal de **mes**, **rango personalizado** y **servicio**.
 
-Después no hace falta ninguna otra migración de consumos.
+## Supabase
+
+Esta mejora no agrega una migración SQL nueva. Utiliza las funciones analíticas de consumo que ya tiene la app.
+
+Si todavía no ejecutaste la corrección de analítica de consumos, ejecutá una sola vez en Supabase → SQL Editor:
+
+`corregir-analitica-consumos.sql`
+
+Si la sección Consumos ya carga sin errores técnicos, no hace falta volver a ejecutarlo.
 
 ## Publicación
-Los archivos de la app pueden subirse normalmente al repositorio y publicarse por GitHub Pages.
 
-
-## Conciliación IVA múltiple
-
-La sección Facturas → Conciliación IVA permite cargar varias facturas manualmente, asociarlas a pedidos, calcular el neto sin IVA y copiar un resumen completo. El borrador manual se guarda localmente en el navegador. Esta mejora no requiere SQL adicional.
-
-
-## Exportación de conciliación IVA
-
-La conciliación múltiple de Facturas permite ahora exportar el lote actual en PDF y XLSX. El PDF incluye resumen y detalle por factura; el XLSX contiene las hojas `Conciliación` y `Resumen`. No requiere SQL adicional.
-
-
-## Detección del número de pedido dentro de la factura
-
-La app reconoce referencias impresas como `PEDIDO N° 000160`, `PEDIDO 160`, `NRO PEDIDO 160` o `PED-000160` y las cruza contra el código interno `PED-000160`.
-
-Cuando la referencia coincide, la factura queda identificada visualmente como **Pedido detectado en factura** y se prioriza esa coincidencia por encima de importe, SKU o fecha. La vinculación sigue pudiéndose corregir manualmente.
-
-### Paso obligatorio para PDFs escaneados
-Esta mejora actualiza también la Edge Function `analyze-invoice`, por lo que después de subir los archivos al repositorio hay que volver a desplegarla:
+Subí los archivos normalmente al repositorio:
 
 ```powershell
-npx supabase@latest functions deploy analyze-invoice --no-verify-jwt
+git add .
+git commit -m "Mejorar tablero de consumos"
+git push origin main
 ```
 
-No requiere un SQL nuevo. Si el PDF tiene texto incorporado, el navegador también intenta detectar la referencia sin usar Gemini.
-
-
-## Corrección carga de facturas
-La detección del número de pedido impreso en la factura ya no agrega un valor nuevo a `match_method`; se conserva `automatico` y la referencia detectada se guarda en `comparison_summary`. No requiere SQL adicional.
+Después del deploy de GitHub Pages, hacé `Ctrl + Shift + R`. Si usás la PWA instalada, cerrala y volvé a abrirla para tomar la nueva caché.

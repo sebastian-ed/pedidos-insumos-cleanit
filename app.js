@@ -66,6 +66,9 @@
     consumptionRangeMonthlyRows: [],
     consumptionMode: 'month',
     consumptionServiceHistoryId: null,
+    consumptionProductHistoryKey: null,
+    consumptionProductHistoryName: '',
+    consumptionProductHistoryServiceId: '',
     consumptionLoadedKey: '',
     consumptionLoading: false,
     consumptionHistoryContext: null,
@@ -140,6 +143,7 @@
     M.user = new bootstrap.Modal(E.userModal);
     M.consumptionHistory = new bootstrap.Modal(E.consumptionHistoryModal);
     M.consumptionServiceHistory = new bootstrap.Modal(E.consumptionServiceHistoryModal);
+    M.consumptionProductHistory = new bootstrap.Modal(E.consumptionProductHistoryModal);
     M.toast = new bootstrap.Toast(E.appToast, { delay: 3200 });
     if (E.consumptionMonth) E.consumptionMonth.value = monthInputValue(new Date());
     initializeConsumptionPeriodControls();
@@ -301,10 +305,15 @@
     E.consumptionRangeQuickButtons.addEventListener('click', handleConsumptionQuickRange);
     E.consumptionServiceFilter.addEventListener('change', () => loadConsumptionReport(true));
     E.consumptionSearch.addEventListener('input', renderConsumption);
+    E.consumptionProductRankingSort.addEventListener('change', renderConsumptionFullRankings);
     E.refreshConsumptionButton.addEventListener('click', () => loadConsumptionReport(true));
     E.exportConsumptionButton.addEventListener('click', exportConsumptionCsv);
     E.adminConsumption.addEventListener('click', handleConsumptionInsightClick);
+    E.consumptionServiceHistoryModal.addEventListener('click', handleConsumptionInsightClick);
+    E.consumptionProductHistoryModal.addEventListener('click', handleConsumptionInsightClick);
     E.consumptionServiceHistoryMonths.addEventListener('change', loadConsumptionServiceHistory);
+    E.consumptionProductHistoryMonths.addEventListener('change', loadConsumptionProductHistory);
+    E.consumptionProductHistoryService.addEventListener('change', () => { S.consumptionProductHistoryServiceId = E.consumptionProductHistoryService.value || ''; loadConsumptionProductHistory(); });
     E.materialsSearch.addEventListener('input', renderMaterials);
     E.materialsStatusFilter.addEventListener('change', renderMaterials);
     E.adminServiceSearch.addEventListener('input', renderServices);
@@ -7165,11 +7174,12 @@
   function renderConsumptionMonth() {
     const month=E.consumptionMonth.value||monthInputValue(new Date());const selectedServiceId=E.consumptionServiceFilter.value||'';const monthText=monthLabel(month);const productRows=filteredConsumptionRows();
     const visibleServiceRows=S.consumptionServiceRows.filter((row)=>selectedServiceId?row.service_id===selectedServiceId:number(row.historical_orders)>0||number(row.month_orders)>0);
-    const activeServices=visibleServiceRows.filter((row)=>number(row.month_orders)>0);const currentProducts=S.consumptionRows.filter((row)=>number(row.month_quantity)>0);const deliveredOrders=activeServices.reduce((sum,row)=>sum+number(row.month_orders),0);const monthAmount=activeServices.reduce((sum,row)=>sum+number(row.month_amount),0);
+    const activeServices=visibleServiceRows.filter((row)=>number(row.month_orders)>0);const currentProducts=aggregateConsumptionProducts(S.consumptionRows.filter((row)=>(!selectedServiceId||row.service_id===selectedServiceId)&&number(row.month_quantity)>0),'month');const deliveredOrders=activeServices.reduce((sum,row)=>sum+number(row.month_orders),0);const monthAmount=activeServices.reduce((sum,row)=>sum+number(row.month_amount),0);
     E.consumptionKpiServices.textContent=String(activeServices.length);E.consumptionKpiProducts.textContent=String(currentProducts.length);E.consumptionKpiOrders.textContent=formatQty(deliveredOrders);E.consumptionKpiAmount.textContent=formatCurrency(monthAmount);E.consumptionKpiServicesFoot.textContent=`Consumo confirmado en ${monthText}`;
     setConsumptionLabels(false);renderConsumptionIntelligence(month,selectedServiceId);E.consumptionServiceCount.textContent=`${visibleServiceRows.length} ${visibleServiceRows.length===1?'servicio':'servicios'}`;E.consumptionProductCount.textContent=`${productRows.length} ${productRows.length===1?'registro':'registros'}`;E.consumptionResultsCaption.textContent=`Cantidades de ${monthText}, promedio de los tres meses anteriores e histórico acumulado.`;
     E.consumptionServiceTableBody.innerHTML=visibleServiceRows.map((row)=>{const signal=consumptionSignal(row.month_amount,row.avg_previous_3_amount,row.previous_3_months_with_activity);const variation=consumptionVariation(row.month_amount,row.avg_previous_3_amount,row.previous_3_months_with_activity);const meter=consumptionMeter(row.month_amount,row.avg_previous_3_amount,signal);return `<tr><td><div class="consumption-service-name">${eh(row.service_name)}</div><span class="consumption-subvalue">${row.last_consumption_at?`Último consumo: ${eh(dtf.format(new Date(row.last_consumption_at)))}`:'Sin entregas registradas'}</span></td><td><span class="consumption-value">${formatQty(row.month_orders)}</span></td><td><span class="consumption-value">${formatQty(row.month_products)}</span></td><td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span>${meter}</td><td><span class="consumption-value">${eh(formatCurrency(row.previous_month_amount))}</span></td><td><span class="consumption-value">${eh(formatCurrency(row.avg_previous_3_amount))}</span><span class="consumption-subvalue">Incluye meses sin consumo</span></td><td>${consumptionVariationBadge(variation)}</td><td><span class="consumption-value">${eh(formatCurrency(row.historical_amount))}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos entregados</span></td><td>${consumptionSignalBadge(signal)}</td><td>${serviceHistoryButton(row.service_id)}</td></tr>`;}).join('')||'<tr><td colspan="10"><div class="consumption-empty">No hay pedidos entregados para construir un resumen de consumo.</div></td></tr>';
     E.consumptionProductsTableBody.innerHTML=productRows.map((row)=>{const signal=consumptionSignal(row.month_quantity,row.avg_previous_3_quantity,row.previous_3_months_with_activity);const variation=consumptionVariation(row.month_quantity,row.avg_previous_3_quantity,row.previous_3_months_with_activity);const meter=consumptionMeter(row.month_quantity,row.avg_previous_3_quantity,signal);const sku=row.item_sku?`SKU ${row.item_sku} · `:'';return `<tr><td class="consumption-product-cell"><strong>${eh(row.item_name)}</strong><small>${eh(row.service_name)} · ${eh(sku)}${eh(row.unit||'unidad')}</small></td><td><span class="consumption-value">${formatQty(row.month_quantity)} ${eh(row.unit||'unidad')}</span><span class="consumption-subvalue">${formatQty(row.month_orders)} pedidos</span>${meter}</td><td><span class="consumption-value">${formatQty(row.previous_month_quantity)} ${eh(row.unit||'unidad')}</span></td><td><span class="consumption-value">${formatQty(row.avg_previous_3_quantity)} ${eh(row.unit||'unidad')}</span><span class="consumption-subvalue">Promedio calendario</span></td><td>${consumptionVariationBadge(variation)}</td><td><span class="consumption-value">${formatQty(row.historical_quantity)} ${eh(row.unit||'unidad')}</span><span class="consumption-subvalue">${formatQty(row.historical_orders)} pedidos · ${eh(formatCurrency(row.historical_amount))}</span></td><td><span class="consumption-value">${eh(formatCurrency(row.month_amount))}</span></td><td>${consumptionSignalBadge(signal)}</td><td><button class="btn btn-outline-primary btn-sm consumption-history-button" type="button" data-consumption-service="${ea(row.service_id)}" data-consumption-history="${ea(row.material_key)}"><i class="bi bi-bar-chart-line me-1"></i>Histórico</button></td></tr>`;}).join('')||'<tr><td colspan="9"><div class="consumption-empty">No hay consumos que coincidan con los filtros. Los pedidos deben estar marcados como Entregados.</div></td></tr>';
+    renderConsumptionFullRankings();
   }
 
   function setConsumptionLabels(range) {
@@ -7208,18 +7218,19 @@
     const services=S.consumptionRangeServiceRows.filter((row)=>!selectedServiceId||row.service_id===selectedServiceId);
     const products=S.consumptionRangeRows.filter((row)=>(!selectedServiceId||row.service_id===selectedServiceId)&&(!query||normalize(`${row.item_name} ${row.item_sku||''} ${row.service_name} ${row.unit||''}`).includes(query)));
     const totalAmount=services.reduce((sum,row)=>sum+number(row.range_amount),0);const totalOrders=services.reduce((sum,row)=>sum+number(row.range_orders),0);
-    E.consumptionKpiServices.textContent=String(services.filter((r)=>number(r.range_orders)>0).length);E.consumptionKpiProducts.textContent=String(products.filter((r)=>number(r.range_quantity)>0).length);E.consumptionKpiOrders.textContent=formatQty(totalOrders);E.consumptionKpiAmount.textContent=formatCurrency(totalAmount);E.consumptionKpiServicesFoot.textContent=`Consumo confirmado · ${period}`;
+    E.consumptionKpiServices.textContent=String(services.filter((r)=>number(r.range_orders)>0).length);E.consumptionKpiProducts.textContent=String(aggregateConsumptionProducts(products.filter((r)=>number(r.range_quantity)>0),'range').length);E.consumptionKpiOrders.textContent=formatQty(totalOrders);E.consumptionKpiAmount.textContent=formatCurrency(totalAmount);E.consumptionKpiServicesFoot.textContent=`Consumo confirmado · ${period}`;
     setConsumptionLabels(true);renderConsumptionRangeIntelligence(keys,services,products,serviceMonthly,productMonthly,totalAmount,selectedServiceId);
     E.consumptionServiceCount.textContent=`${services.length} ${services.length===1?'servicio':'servicios'}`;E.consumptionProductCount.textContent=`${products.length} ${products.length===1?'registro':'registros'}`;E.consumptionResultsCaption.textContent=`Consumo acumulado · ${period}. Los meses inicial/final pueden ser parciales según las fechas elegidas.`;
     E.consumptionServiceTableBody.innerHTML=services.map((row)=>{const stats=rangeStats(serviceMonthly.get(row.service_id),keys);const signal=stats.variation!=null&&stats.variation>30?'high':(stats.variation!=null&&stats.variation<-30?'low':'normal');return `<tr><td><div class="consumption-service-name">${eh(row.service_name)}</div><span class="consumption-subvalue">${row.last_consumption_at?`Último consumo: ${eh(dtf.format(new Date(row.last_consumption_at)))}`:'Sin entregas registradas'}</span></td><td><span class="consumption-value">${formatQty(row.range_orders)}</span></td><td><span class="consumption-value">${formatQty(row.range_products)}</span></td><td><span class="consumption-value">${eh(formatCurrency(row.range_amount))}</span></td><td><span class="consumption-value">${eh(formatCurrency(stats.first))}</span></td><td><span class="consumption-value">${eh(formatCurrency(stats.avg))}</span></td><td>${consumptionVariationBadge(stats.variation)}</td><td><span class="consumption-value">${stats.activeMonths} / ${keys.length}</span><span class="consumption-subvalue">meses con consumo</span></td><td>${consumptionSignalBadge(signal)}</td><td>${serviceHistoryButton(row.service_id)}</td></tr>`;}).join('')||'<tr><td colspan="10"><div class="consumption-empty">No hay consumos confirmados dentro del rango seleccionado.</div></td></tr>';
     E.consumptionProductsTableBody.innerHTML=products.map((row)=>{const stats=rangeStats(productMonthly.get(`${row.service_id}|${row.material_key}`),keys,'quantity');const signal=stats.variation!=null&&stats.variation>30?'high':(stats.variation!=null&&stats.variation<-30?'low':'normal');const sku=row.item_sku?`SKU ${row.item_sku} · `:'';return `<tr><td class="consumption-product-cell"><strong>${eh(row.item_name)}</strong><small>${eh(row.service_name)} · ${eh(sku)}${eh(row.unit||'unidad')}</small></td><td><span class="consumption-value">${formatQty(row.range_quantity)} ${eh(row.unit||'unidad')}</span><span class="consumption-subvalue">${formatQty(row.range_orders)} pedidos</span></td><td><span class="consumption-value">${formatQty(stats.first)} ${eh(row.unit||'unidad')}</span></td><td><span class="consumption-value">${formatQty(stats.avg)} ${eh(row.unit||'unidad')}</span></td><td>${consumptionVariationBadge(stats.variation)}</td><td><span class="consumption-value">${stats.activeMonths} / ${keys.length}</span><span class="consumption-subvalue">meses con consumo</span></td><td><span class="consumption-value">${eh(formatCurrency(row.range_amount))}</span></td><td>${consumptionSignalBadge(signal)}</td><td><button class="btn btn-outline-primary btn-sm consumption-history-button" type="button" data-consumption-service="${ea(row.service_id)}" data-consumption-history="${ea(row.material_key)}"><i class="bi bi-bar-chart-line me-1"></i>Histórico</button></td></tr>`;}).join('')||'<tr><td colspan="9"><div class="consumption-empty">No hay consumos que coincidan con los filtros.</div></td></tr>';
+    renderConsumptionFullRankings();
   }
 
   function renderConsumptionRangeIntelligence(keys,services,products,serviceMonthly,productMonthly,totalAmount,selectedServiceId) {
     const monthlyTotals=new Map(keys.map((k)=>[k,0]));S.consumptionRangeMonthlyRows.forEach((row)=>{const k=String(row.consumption_month).slice(0,7);if(monthlyTotals.has(k))monthlyTotals.set(k,number(monthlyTotals.get(k))+number(row.amount));});
     const trend=keys.map((key)=>({key,label:monthLabel(key),shortLabel:shortMonthLabel(key),amount:number(monthlyTotals.get(key))}));const monthlyAvg=keys.length?totalAmount/keys.length:0;
     E.consumptionInsightMonthTotal.textContent=formatCurrency(totalAmount);E.consumptionInsightVsAverage.innerHTML=`<span class="consumption-range-average">${eh(formatCurrency(monthlyAvg))}</span>`;E.consumptionInsightVsAverageFoot.textContent=`Promedio de ${keys.length} ${keys.length===1?'mes':'meses'} calendario`;
-    const topServices=[...services].sort((a,b)=>number(b.range_amount)-number(a.range_amount)).slice(0,8).map((r)=>({name:r.service_name,amount:number(r.range_amount),share:totalAmount?number(r.range_amount)/totalAmount*100:0,serviceId:r.service_id}));const topProducts=[...products].sort((a,b)=>number(b.range_amount)-number(a.range_amount)).slice(0,8).map((r)=>({name:r.item_name,itemName:r.item_name,amount:number(r.range_amount),share:totalAmount?number(r.range_amount)/totalAmount*100:0,serviceId:r.service_id}));
+    const topServices=[...services].sort((a,b)=>number(b.range_amount)-number(a.range_amount)).slice(0,8).map((r)=>({name:r.service_name,amount:number(r.range_amount),share:totalAmount?number(r.range_amount)/totalAmount*100:0,serviceId:r.service_id}));const topProducts=aggregateConsumptionProducts(products,'range').sort((a,b)=>b.amount-a.amount).slice(0,8).map((r)=>({name:r.name,itemName:r.name,amount:r.amount,share:totalAmount?r.amount/totalAmount*100:0,serviceId:''}));
     const alerts=[];const recurrences=[];let durables=0;
     services.forEach((service)=>{const stats=rangeStats(serviceMonthly.get(service.service_id),keys);if(stats.variation!=null&&stats.variation>=40&&stats.last>=10000)alerts.push({severity:stats.variation>=80?3:2,impact:stats.last-stats.first,serviceId:service.service_id,serviceName:service.service_name,title:'Gasto en crecimiento dentro del rango',detail:`${formatCurrency(stats.first)} al inicio → ${formatCurrency(stats.last)} al final (${formatSignedPercent(stats.variation)}).`,icon:'bi-graph-up-arrow'});});
     products.forEach((row)=>{const map=productMonthly.get(`${row.service_id}|${row.material_key}`);const stats=rangeStats(map,keys,'quantity');const durable=isDurableConsumptionItem({materialId:row.material_id,itemName:row.item_name});if(stats.activeMonths>=Math.min(3,keys.length)&&keys.length>=3){const rec={serviceId:row.service_id,serviceName:row.service_name,itemName:row.item_name,unit:row.unit||'unidad',activeMonths:stats.activeMonths,periodMonths:keys.length,totalQuantity:number(row.range_quantity),totalAmount:number(row.range_amount),durable};recurrences.push(rec);if(durable&&stats.activeMonths>=Math.min(3,keys.length)){durables+=1;alerts.push({severity:3,impact:number(row.range_amount),serviceId:row.service_id,serviceName:row.service_name,itemName:row.item_name,title:'Elemento durable pedido repetidamente',detail:`${row.item_name} tuvo consumo en ${stats.activeMonths} de ${keys.length} meses · ${formatQty(row.range_quantity)} ${row.unit||'unidad'} acumuladas.`,icon:'bi-arrow-repeat'});}}});
@@ -7431,6 +7442,11 @@
   }
 
   function handleConsumptionInsightClick(event) {
+    const productHistoryButton=event.target.closest('[data-consumption-product-history]');
+    if(productHistoryButton){
+      openConsumptionProductHistory(productHistoryButton.dataset.consumptionProductHistory, productHistoryButton.dataset.consumptionProductName || '', productHistoryButton.dataset.consumptionProductService || '');
+      return;
+    }
     const historyButton=event.target.closest('[data-consumption-service-history]');
     if(historyButton){openConsumptionServiceHistory(historyButton.dataset.consumptionServiceHistory);return;}
     const button=event.target.closest('[data-consumption-focus-service]');
@@ -7481,6 +7497,114 @@
     const text=normalize(`${row.itemName||''} ${material?.name||''} ${material?.category||''}`);
     const durableTerms=['escoba','escobillon','balde','mopa','lampazo','cabo','pala','secador','haragan','pulverizador','rociador','cepillo','plumero','carro','dispenser','jarra','embudo','recogedor','porta mopa'];
     return durableTerms.some((term)=>text.includes(term));
+  }
+
+
+  function consumptionMaterialIdentity(row) {
+    return row.material_key || (row.material_id ? `material:${row.material_id}` : (row.item_sku ? `sku:${normalize(row.item_sku)}` : `name:${normalize(row.item_name)}`));
+  }
+
+  function aggregateConsumptionProducts(rows, mode) {
+    const map=new Map();
+    rows.forEach((row)=>{
+      const quantity=number(mode==='range'?row.range_quantity:row.month_quantity);
+      const amount=number(mode==='range'?row.range_amount:row.month_amount);
+      if(quantity<=0 && amount<=0) return;
+      const key=consumptionMaterialIdentity(row);
+      if(!map.has(key)) map.set(key,{materialKey:key,materialId:row.material_id||null,name:row.item_name||'Insumo',sku:row.item_sku||'',unit:row.unit||'unidad',quantity:0,amount:0,orders:0,previousQuantity:0,services:new Set(),serviceRows:[]});
+      const item=map.get(key);item.quantity+=quantity;item.amount+=amount;item.orders+=number(mode==='range'?row.range_orders:row.month_orders);item.previousQuantity+=number(mode==='range'?0:row.previous_month_quantity);item.services.add(row.service_id);item.serviceRows.push(row);
+    });
+    return [...map.values()].map((row)=>({...row,serviceCount:row.services.size}));
+  }
+
+  function sortConsumptionProductRanking(rows) {
+    const mode=E.consumptionProductRankingSort?.value||'amount';
+    const field=mode==='quantity'?'quantity':mode==='orders'?'orders':mode==='services'?'serviceCount':'amount';
+    return [...rows].sort((a,b)=>number(b[field])-number(a[field]) || number(b.amount)-number(a.amount));
+  }
+
+  function buildConsumptionFullRankings() {
+    const mode=getConsumptionMode();
+    const serviceId=E.consumptionServiceFilter.value||'';
+    if(mode==='range'){
+      const keys=consumptionRangeMonthKeys();const serviceMonthly=rangeServiceMonthlyMap();
+      const services=S.consumptionRangeServiceRows.filter((r)=>(!serviceId||r.service_id===serviceId)&&number(r.range_orders)>0).map((r)=>{const stats=rangeStats(serviceMonthly.get(r.service_id),keys);return{serviceId:r.service_id,name:r.service_name,amount:number(r.range_amount),orders:number(r.range_orders),products:number(r.range_products),variation:stats.variation};}).sort((a,b)=>b.amount-a.amount);
+      const products=aggregateConsumptionProducts(S.consumptionRangeRows.filter((r)=>!serviceId||r.service_id===serviceId),'range').map((r)=>{
+        const monthMap=new Map();S.consumptionRangeMonthlyRows.filter((m)=>consumptionMaterialIdentity(m)===r.materialKey&&(!serviceId||m.service_id===serviceId)).forEach((m)=>{const k=String(m.consumption_month).slice(0,7);monthMap.set(k,number(monthMap.get(k))+number(m.quantity));});const vals=keys.map((k)=>number(monthMap.get(k)));const first=vals[0]||0,last=vals[vals.length-1]||0;return{...r,variation:first>0?(last-first)/first*100:null};
+      });
+      const sortedProducts=sortConsumptionProductRanking(products);
+      return {services,products:sortedProducts,total:services.reduce((s,r)=>s+r.amount,0),period:consumptionPeriodLabel()};
+    }
+    const services=S.consumptionServiceRows.filter((r)=>(!serviceId||r.service_id===serviceId)&&number(r.month_orders)>0).map((r)=>({serviceId:r.service_id,name:r.service_name,amount:number(r.month_amount),orders:number(r.month_orders),products:number(r.month_products),variation:number(r.previous_month_amount)>0?(number(r.month_amount)-number(r.previous_month_amount))/number(r.previous_month_amount)*100:null})).sort((a,b)=>b.amount-a.amount);
+    const products=sortConsumptionProductRanking(aggregateConsumptionProducts(S.consumptionRows.filter((r)=>!serviceId||r.service_id===serviceId),'month').map((r)=>({...r,variation:r.previousQuantity>0?(r.quantity-r.previousQuantity)/r.previousQuantity*100:null})));
+    return {services,products,total:services.reduce((s,r)=>s+r.amount,0),period:monthLabel(E.consumptionMonth.value||monthInputValue(new Date()))};
+  }
+
+  function consumptionShareBars(rows, total, type) {
+    const max=Math.max(1,...rows.slice(0,10).map((r)=>r.amount));
+    return rows.slice(0,10).map((r,i)=>`<button type="button" class="consumption-share-row" ${type==='service'?`data-consumption-service-history="${ea(r.serviceId)}"`:`data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}"`}><span class="consumption-share-rank">${i+1}</span><span class="consumption-share-name">${eh(r.name)}</span><span class="consumption-share-track"><i style="width:${Math.max(2,r.amount/max*100).toFixed(1)}%"></i></span><strong>${eh(formatCurrency(r.amount))}</strong><small>${total>0?formatPercent(r.amount/total*100):'0%'} del total</small></button>`).join('')||'<div class="consumption-empty compact">Sin datos para el período.</div>';
+  }
+
+  function renderConsumptionFullRankings() {
+    if(!E.consumptionFullServiceRankingBody||!E.consumptionFullProductRankingBody)return;
+    const data=buildConsumptionFullRankings();const total=data.total||0;
+    E.consumptionFullRankingPeriod.textContent=data.period;
+    E.consumptionFullServiceRankingCount.textContent=`${data.services.length} servicios`;
+    E.consumptionFullProductRankingCount.textContent=`${data.products.length} insumos`;
+    E.consumptionServiceConcentration.innerHTML=consumptionShareBars(data.services,total,'service');
+    E.consumptionProductConcentration.innerHTML=consumptionShareBars([...data.products].sort((a,b)=>b.amount-a.amount),total,'product');
+    E.consumptionFullServiceRankingBody.innerHTML=data.services.map((r,i)=>`<tr><td><span class="consumption-rank-number">${i+1}</span></td><td><strong>${eh(r.name)}</strong></td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td>${formatQty(r.orders)}</td><td>${eh(formatCurrency(r.orders>0?r.amount/r.orders:0))}</td><td>${consumptionVariationBadge(r.variation)}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-service-history="${ea(r.serviceId)}"><i class="bi bi-graph-up me-1"></i>Analizar</button></td></tr>`).join('')||'<tr><td colspan="8" class="text-center text-secondary py-4">Sin servicios con consumo.</td></tr>';
+    E.consumptionFullProductRankingBody.innerHTML=data.products.map((r,i)=>`<tr><td><span class="consumption-rank-number">${i+1}</span></td><td><strong>${eh(r.name)}</strong>${r.sku?`<small class="d-block text-secondary">SKU ${eh(r.sku)}</small>`:''}</td><td>${formatQty(r.quantity)} ${eh(r.unit)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td>${formatQty(r.orders)}</td><td>${formatQty(r.serviceCount)}</td><td>${consumptionVariationBadge(r.variation)}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}"><i class="bi bi-graph-up me-1"></i>Evolución</button></td></tr>`).join('')||'<tr><td colspan="9" class="text-center text-secondary py-4">Sin insumos consumidos.</td></tr>';
+  }
+
+  function currentServiceProductRows(serviceId) {
+    const mode=getConsumptionMode();
+    const rows=mode==='range'?S.consumptionRangeRows:S.consumptionRows;
+    return rows.filter((r)=>r.service_id===serviceId && number(mode==='range'?r.range_amount:r.month_amount)>0).map((r)=>({materialKey:consumptionMaterialIdentity(r),name:r.item_name,sku:r.item_sku||'',unit:r.unit||'unidad',quantity:number(mode==='range'?r.range_quantity:r.month_quantity),amount:number(mode==='range'?r.range_amount:r.month_amount),orders:number(mode==='range'?r.range_orders:r.month_orders)})).sort((a,b)=>b.amount-a.amount);
+  }
+
+  function renderConsumptionServiceProductBreakdown(serviceId) {
+    if(!E.consumptionServiceProductBreakdownBody)return;
+    const rows=currentServiceProductRows(serviceId);const total=rows.reduce((s,r)=>s+r.amount,0);
+    E.consumptionServiceProductBreakdownCaption.textContent=`${consumptionPeriodLabel()} · ${rows.length} insumos`;
+    E.consumptionServiceProductBreakdownBody.innerHTML=rows.map((r,i)=>`<tr><td>${i+1}</td><td><strong>${eh(r.name)}</strong>${r.sku?`<small class="d-block text-secondary">SKU ${eh(r.sku)}</small>`:''}</td><td>${formatQty(r.quantity)} ${eh(r.unit)}</td><td>${formatQty(r.orders)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}" data-consumption-product-service="${ea(serviceId)}">Evolución</button></td></tr>`).join('')||'<tr><td colspan="7" class="text-center text-secondary py-4">Sin consumo para este servicio en el período analizado.</td></tr>';
+  }
+
+  async function openConsumptionProductHistory(materialKey,itemName,serviceId='') {
+    if(!isFullAdmin()||!materialKey)return;
+    S.consumptionProductHistoryKey=materialKey;S.consumptionProductHistoryName=itemName||'Insumo';S.consumptionProductHistoryServiceId=serviceId||'';
+    E.consumptionProductHistoryTitle.textContent=S.consumptionProductHistoryName;
+    const options=['<option value="">Todos los servicios</option>',...S.services.slice().sort((a,b)=>a.name.localeCompare(b.name,'es')).map((s)=>`<option value="${ea(s.id)}">${eh(s.name)}</option>`)].join('');
+    E.consumptionProductHistoryService.innerHTML=options;E.consumptionProductHistoryService.value=S.consumptionProductHistoryServiceId;
+    E.consumptionProductHistoryMonths.value='24';M.consumptionProductHistory.show();await loadConsumptionProductHistory();
+  }
+
+  async function loadConsumptionProductHistory() {
+    const materialKey=S.consumptionProductHistoryKey;if(!materialKey)return;
+    E.consumptionProductHistoryLoading.classList.remove('d-none');E.consumptionProductHistoryContent.classList.add('d-none');E.consumptionProductHistoryError.classList.add('d-none');
+    try{
+      const months=Math.max(3,Math.min(60,Number(E.consumptionProductHistoryMonths.value||24)));
+      const until=getConsumptionMode()==='range'?String(E.consumptionRangeEnd.value||dateInputValue(new Date())).slice(0,7):(E.consumptionMonth.value||monthInputValue(new Date()));
+      const {data,error}=await S.sb.rpc('admin_consumption_analytics',{p_until_month:`${until}-01`,p_months:months,p_service_id:S.consumptionProductHistoryServiceId||null});if(error)throw error;
+      const rows=(data||[]).filter((r)=>r.material_key===materialKey);renderConsumptionProductHistory(rows,months,until);
+    }catch(error){console.error(error);E.consumptionProductHistoryLoading.classList.add('d-none');E.consumptionProductHistoryError.textContent=consumptionErrorMessage(error);E.consumptionProductHistoryError.classList.remove('d-none');}
+  }
+
+  function renderConsumptionProductHistory(rows,months,untilMonth) {
+    const monthKeys=previousMonthKeys(untilMonth,months);const monthly=new Map(monthKeys.map((k)=>[k,{quantity:0,amount:0,orders:0,services:new Set()}]));const services=new Map();let unit='unidad';let sku='';
+    rows.forEach((r)=>{const k=String(r.consumption_month).slice(0,7);if(!monthly.has(k))return;unit=r.unit||unit;sku=r.item_sku||sku;const b=monthly.get(k);b.quantity+=number(r.quantity);b.amount+=number(r.amount);b.orders+=number(r.orders);b.services.add(r.service_id);if(!services.has(r.service_id))services.set(r.service_id,{name:r.service_name,quantity:0,amount:0,orders:0});const s=services.get(r.service_id);s.quantity+=number(r.quantity);s.amount+=number(r.amount);s.orders+=number(r.orders);});
+    const series=monthKeys.map((k)=>({key:k,...monthly.get(k),serviceCount:monthly.get(k).services.size}));const totalQty=series.reduce((s,r)=>s+r.quantity,0);const totalAmount=series.reduce((s,r)=>s+r.amount,0);const active=series.filter((r)=>r.quantity>0);const avgQty=active.length?totalQty/active.length:0;const maxQty=Math.max(0,...series.map((r)=>r.quantity));
+    E.consumptionProductHistorySubtitle.textContent=`${sku?`SKU ${sku} · `:''}${unit} · ${S.consumptionProductHistoryServiceId?(S.services.find((s)=>s.id===S.consumptionProductHistoryServiceId)?.name||'Servicio'):'Todos los servicios'}`;
+    E.consumptionProductHistoryTotalQty.textContent=`${formatQty(totalQty)} ${unit}`;E.consumptionProductHistoryTotalAmount.textContent=formatCurrency(totalAmount);E.consumptionProductHistoryAverage.textContent=`${formatQty(avgQty)} ${unit}`;E.consumptionProductHistoryMax.textContent=`${formatQty(maxQty)} ${unit}`;
+    E.consumptionProductQuantityChart.innerHTML=consumptionMiniColumns(series,'quantity',(r)=>`${formatQty(r.quantity)} ${unit}`);
+    E.consumptionProductAmountChart.innerHTML=consumptionMiniColumns(series,'amount',(r)=>formatCurrency(r.amount));
+    E.consumptionProductHistoryBody.innerHTML=series.slice().reverse().map((r)=>{const prev=series.find((x)=>x.key===previousMonthKey(r.key));const qVar=prev&&prev.quantity>0?(r.quantity-prev.quantity)/prev.quantity*100:null;const aVar=prev&&prev.amount>0?(r.amount-prev.amount)/prev.amount*100:null;return`<tr><td><strong>${eh(monthLabel(r.key))}</strong></td><td>${formatQty(r.quantity)} ${eh(unit)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${formatQty(r.orders)}</td><td>${formatQty(r.serviceCount)}</td><td>${consumptionVariationBadge(qVar)}</td><td>${consumptionVariationBadge(aVar)}</td></tr>`;}).join('');
+    const serviceRows=[...services.entries()].map(([id,r])=>({id,...r})).sort((a,b)=>b.amount-a.amount);E.consumptionProductServicesBody.innerHTML=serviceRows.map((r,i)=>`<tr><td>${i+1}</td><td><strong>${eh(r.name)}</strong></td><td>${formatQty(r.quantity)} ${eh(unit)}</td><td>${formatQty(r.orders)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${totalAmount>0?formatPercent(r.amount/totalAmount*100):'0%'}</td><td><button class="btn btn-sm btn-outline-secondary" type="button" data-consumption-service-history="${ea(r.id)}">Servicio</button></td></tr>`).join('')||'<tr><td colspan="7" class="text-center text-secondary py-4">Sin servicios con consumo.</td></tr>';
+    E.consumptionProductHistoryLoading.classList.add('d-none');E.consumptionProductHistoryContent.classList.remove('d-none');
+  }
+
+  function consumptionMiniColumns(series,field,labelFn) {
+    const max=Math.max(1,...series.map((r)=>number(r[field])));return `<div class="consumption-product-history-columns">${series.map((r)=>`<div class="consumption-product-history-column" title="${ea(`${monthLabel(r.key)}: ${labelFn(r)}`)}"><div>${eh(field==='amount'?compactCurrency(r[field]):formatQty(r[field]))}</div><span style="height:${Math.max(number(r[field])>0?4:1,number(r[field])/max*100).toFixed(1)}%"></span><small>${eh(shortMonthLabel(r.key))}</small></div>`).join('')}</div>`;
   }
 
   function filteredConsumptionRows() {
@@ -7591,7 +7715,7 @@
   }
 
   async function openConsumptionServiceHistory(serviceId) {
-    if(!isFullAdmin()||!serviceId)return;S.consumptionServiceHistoryId=serviceId;const service=S.services.find((s)=>s.id===serviceId);E.consumptionServiceHistoryTitle.textContent=service?.name||'Servicio';E.consumptionServiceHistorySubtitle.textContent='Evolución mensual del consumo confirmado';E.consumptionServiceHistoryMonths.value='24';M.consumptionServiceHistory.show();await loadConsumptionServiceHistory();
+    if(!isFullAdmin()||!serviceId)return;S.consumptionServiceHistoryId=serviceId;const service=S.services.find((s)=>s.id===serviceId);E.consumptionServiceHistoryTitle.textContent=service?.name||'Servicio';E.consumptionServiceHistorySubtitle.textContent=`Evolución mensual · ${consumptionPeriodLabel()}`;E.consumptionServiceHistoryMonths.value='24';renderConsumptionServiceProductBreakdown(serviceId);M.consumptionServiceHistory.show();await loadConsumptionServiceHistory();
   }
 
   async function loadConsumptionServiceHistory() {
