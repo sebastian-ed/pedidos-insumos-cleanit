@@ -306,6 +306,7 @@
     E.consumptionServiceFilter.addEventListener('change', () => loadConsumptionReport(true));
     E.consumptionSearch.addEventListener('input', renderConsumption);
     E.consumptionProductRankingSort.addEventListener('change', renderConsumptionFullRankings);
+    E.consumptionRecurringFilter?.addEventListener('change', renderConsumption);
     E.refreshConsumptionButton.addEventListener('click', () => loadConsumptionReport(true));
     E.exportConsumptionButton.addEventListener('click', exportConsumptionCsv);
     E.adminConsumption.addEventListener('click', handleConsumptionInsightClick);
@@ -7231,14 +7232,22 @@
     const trend=keys.map((key)=>({key,label:monthLabel(key),shortLabel:shortMonthLabel(key),amount:number(monthlyTotals.get(key))}));const monthlyAvg=keys.length?totalAmount/keys.length:0;
     E.consumptionInsightMonthTotal.textContent=formatCurrency(totalAmount);E.consumptionInsightVsAverage.innerHTML=`<span class="consumption-range-average">${eh(formatCurrency(monthlyAvg))}</span>`;E.consumptionInsightVsAverageFoot.textContent=`Promedio de ${keys.length} ${keys.length===1?'mes':'meses'} calendario`;
     const topServices=[...services].sort((a,b)=>number(b.range_amount)-number(a.range_amount)).slice(0,8).map((r)=>({name:r.service_name,amount:number(r.range_amount),share:totalAmount?number(r.range_amount)/totalAmount*100:0,serviceId:r.service_id}));const topProducts=aggregateConsumptionProducts(products,'range').sort((a,b)=>b.amount-a.amount).slice(0,8).map((r)=>({name:r.name,itemName:r.name,amount:r.amount,share:totalAmount?r.amount/totalAmount*100:0,serviceId:''}));
-    const alerts=[];const recurrences=[];let durables=0;
+    const alerts=[];const recurrences=[];const durableAlerts=[];
     services.forEach((service)=>{const stats=rangeStats(serviceMonthly.get(service.service_id),keys);if(stats.variation!=null&&stats.variation>=40&&stats.last>=10000)alerts.push({severity:stats.variation>=80?3:2,impact:stats.last-stats.first,serviceId:service.service_id,serviceName:service.service_name,title:'Gasto en crecimiento dentro del rango',detail:`${formatCurrency(stats.first)} al inicio → ${formatCurrency(stats.last)} al final (${formatSignedPercent(stats.variation)}).`,icon:'bi-graph-up-arrow'});});
-    products.forEach((row)=>{const map=productMonthly.get(`${row.service_id}|${row.material_key}`);const stats=rangeStats(map,keys,'quantity');const durable=isDurableConsumptionItem({materialId:row.material_id,itemName:row.item_name});if(stats.activeMonths>=Math.min(3,keys.length)&&keys.length>=3){const rec={serviceId:row.service_id,serviceName:row.service_name,itemName:row.item_name,unit:row.unit||'unidad',activeMonths:stats.activeMonths,periodMonths:keys.length,totalQuantity:number(row.range_quantity),totalAmount:number(row.range_amount),durable};recurrences.push(rec);if(durable&&stats.activeMonths>=Math.min(3,keys.length)){durables+=1;alerts.push({severity:3,impact:number(row.range_amount),serviceId:row.service_id,serviceName:row.service_name,itemName:row.item_name,title:'Elemento durable pedido repetidamente',detail:`${row.item_name} tuvo consumo en ${stats.activeMonths} de ${keys.length} meses · ${formatQty(row.range_quantity)} ${row.unit||'unidad'} acumuladas.`,icon:'bi-arrow-repeat'});}}});
-    alerts.sort((a,b)=>b.severity-a.severity||b.impact-a.impact);recurrences.sort((a,b)=>Number(b.durable)-Number(a.durable)||b.activeMonths-a.activeMonths||b.totalAmount-a.totalAmount);
-    E.consumptionInsightAlerts.textContent=String(alerts.length);E.consumptionInsightDurables.textContent=String(durables);
+    products.forEach((row)=>{
+      const map=productMonthly.get(`${row.service_id}|${row.material_key}`)||new Map();
+      const profile=consumptionRecurrenceProfile({serviceId:row.service_id,serviceName:row.service_name,materialKey:row.material_key,materialId:row.material_id,itemName:row.item_name,sku:row.item_sku,unit:row.unit||'unidad'},keys,(key)=>map.get(key));
+      if(!profile)return;recurrences.push(profile);
+      if(profile.durableRepeat){const alert={severity:3,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Elemento durable pedido repetidamente',detail:`${profile.itemName} tuvo consumo en ${profile.activeMonths} de los últimos ${profile.periodMonths} meses analizados · ${formatQty(profile.totalQuantity)} ${profile.unit} en ${formatQty(profile.totalOrders)} pedidos.`,icon:'bi-arrow-repeat'};alerts.push(alert);durableAlerts.push(alert);}
+      else if(profile.highVolume)alerts.push({severity:2,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Cantidad alta de forma recurrente',detail:`${profile.itemName}: promedio ${formatQty(profile.avgActiveQuantity)} ${profile.unit} por mes activo · ${formatQty(profile.totalQuantity)} ${profile.unit} acumuladas.`,icon:'bi-boxes'});
+    });
+    alerts.sort((a,b)=>b.severity-a.severity||b.impact-a.impact);recurrences.sort((a,b)=>b.score-a.score||b.totalAmount-a.totalAmount);
+    E.consumptionInsightAlerts.textContent=String(alerts.length);E.consumptionInsightDurables.textContent=String(durableAlerts.length);
     const max=Math.max(1,...trend.map(r=>r.amount));E.consumptionTrendBars.innerHTML=trend.map((row)=>`<div class="consumption-trend-column" title="${ea(`${row.label}: ${formatCurrency(row.amount)}`)}"><div class="consumption-trend-value">${eh(compactCurrency(row.amount))}</div><div class="consumption-trend-track"><span style="height:${Math.max(row.amount>0?5:1,row.amount/max*100).toFixed(1)}%"></span></div><div class="consumption-trend-label">${eh(row.shortLabel)}</div></div>`).join('');
-    E.consumptionTopServices.innerHTML=topServices.map((r,i)=>rankingItemHtml(i+1,r.name,formatCurrency(r.amount),r.share,r.serviceId)).join('')||'<div class="consumption-empty compact">Sin gasto registrado.</div>';E.consumptionTopProducts.innerHTML=topProducts.map((r,i)=>rankingItemHtml(i+1,r.name,formatCurrency(r.amount),r.share,r.serviceId,r.itemName)).join('')||'<div class="consumption-empty compact">Sin productos registrados.</div>';E.consumptionRecurringList.innerHTML=recurrences.slice(0,12).map(consumptionRecurrenceHtml).join('')||'<div class="consumption-empty compact">No se detectaron recurrencias suficientes dentro del rango.</div>';E.consumptionAlertsList.innerHTML=alerts.slice(0,14).map(consumptionAlertHtml).join('')||'<div class="consumption-alert-empty"><i class="bi bi-check-circle-fill"></i><div><strong>Sin desvíos relevantes</strong><span>No se detectaron patrones atípicos dentro del rango seleccionado.</span></div></div>';E.consumptionAlertsCaption.textContent=alerts.length?`${alerts.length} señales priorizadas`:'Sin señales críticas';
-    const best=topServices[0];E.consumptionDecisionSummary.innerHTML=totalAmount<=0?'<strong>Sin consumo confirmado en el rango.</strong>':`${best?`<strong>${eh(best.name)}</strong> concentra el mayor gasto (${eh(formatCurrency(best.amount))}). `:''}${alerts.length?`Hay <strong>${alerts.length}</strong> señales para revisar.`:'No se detectaron desvíos relevantes.'}${selectedServiceId?' El análisis está filtrado al servicio seleccionado.':''}`;
+    E.consumptionTopServices.innerHTML=topServices.map((r,i)=>rankingItemHtml(i+1,r.name,formatCurrency(r.amount),r.share,r.serviceId)).join('')||'<div class="consumption-empty compact">Sin gasto registrado.</div>';E.consumptionTopProducts.innerHTML=topProducts.map((r,i)=>rankingItemHtml(i+1,r.name,formatCurrency(r.amount),r.share,r.serviceId,r.itemName)).join('')||'<div class="consumption-empty compact">Sin productos registrados.</div>';
+    renderConsumptionRecurrenceSections(recurrences);
+    E.consumptionAlertsList.innerHTML=alerts.slice(0,20).map(consumptionAlertHtml).join('')||'<div class="consumption-alert-empty"><i class="bi bi-check-circle-fill"></i><div><strong>Sin desvíos relevantes</strong><span>No se detectaron patrones atípicos dentro del rango seleccionado.</span></div></div>';E.consumptionAlertsCaption.textContent=alerts.length?`${alerts.length} señales priorizadas`:'Sin señales críticas';
+    const best=topServices[0];E.consumptionDecisionSummary.innerHTML=totalAmount<=0?'<strong>Sin consumo confirmado en el rango.</strong>':`${best?`<strong>${eh(best.name)}</strong> concentra el mayor gasto (${eh(formatCurrency(best.amount))}). `:''}${recurrences.length?`Se detectaron <strong>${recurrences.length}</strong> patrones recurrentes en <strong>${buildConsumptionRecurrenceServiceSummaries(recurrences).length}</strong> servicios. `:''}${alerts.length?`Hay <strong>${alerts.length}</strong> señales para revisar.`:'No se detectaron desvíos relevantes.'}${selectedServiceId?' El análisis está filtrado al servicio seleccionado.':''}`;
   }
 
   function serviceHistoryButton(serviceId) {return `<button class="btn btn-outline-secondary btn-sm consumption-service-history-button" type="button" data-consumption-service-history="${ea(serviceId)}"><i class="bi bi-clock-history me-1"></i>Histórico</button>`;}
@@ -7271,8 +7280,7 @@
       || '<div class="consumption-empty compact">Sin gasto registrado en el mes.</div>';
     E.consumptionTopProducts.innerHTML = analytics.topProducts.map((row, index) => rankingItemHtml(index + 1, row.name, formatCurrency(row.amount), row.share, row.serviceId, row.itemName)).join('')
       || '<div class="consumption-empty compact">Sin productos registrados en el mes.</div>';
-    E.consumptionRecurringList.innerHTML = analytics.recurrences.map(consumptionRecurrenceHtml).join('')
-      || '<div class="consumption-empty compact">Todavía no hay suficientes meses de consumo para detectar recurrencias.</div>';
+    renderConsumptionRecurrenceSections(analytics.recurrences);
 
     E.consumptionAlertsList.innerHTML = analytics.alerts.slice(0, 14).map(consumptionAlertHtml).join('')
       || `<div class="consumption-alert-empty"><i class="bi bi-check-circle-fill"></i><div><strong>Sin desvíos relevantes</strong><span>No se detectaron patrones fuera de los umbrales configurados para ${eh(monthLabel(month))}.</span></div></div>`;
@@ -7299,25 +7307,16 @@
       serviceMonth.get(serviceKey).months.set(key, number(serviceMonth.get(serviceKey).months.get(key)) + number(row.amount));
       const productKey = `${row.service_id}|${row.material_key}`;
       if (!productMonth.has(productKey)) productMonth.set(productKey, {
-        serviceId: row.service_id,
-        serviceName: row.service_name,
-        materialKey: row.material_key,
-        materialId: row.material_id,
-        itemName: row.item_name,
-        sku: row.item_sku,
-        unit: row.unit || 'unidad',
+        serviceId: row.service_id, serviceName: row.service_name, materialKey: row.material_key, materialId: row.material_id,
+        itemName: row.item_name, sku: row.item_sku, unit: row.unit || 'unidad',
         months: new Map(monthKeys.map((k) => [k, { quantity: 0, amount: 0, orders: 0 }]))
       });
       const bucket = productMonth.get(productKey).months.get(key);
-      bucket.quantity += number(row.quantity);
-      bucket.amount += number(row.amount);
-      bucket.orders += number(row.orders);
+      bucket.quantity += number(row.quantity); bucket.amount += number(row.amount); bucket.orders += number(row.orders);
     });
 
     const advancedAvailable = rows.length > 0;
-    if (!advancedAvailable) {
-      amountByMonth.set(month, S.consumptionServiceRows.reduce((sum, row) => sum + number(row.month_amount), 0));
-    }
+    if (!advancedAvailable) amountByMonth.set(month, S.consumptionServiceRows.reduce((sum, row) => sum + number(row.month_amount), 0));
     const currentTotal = number(amountByMonth.get(month));
     const prevKeys = monthKeys.slice(-4, -1);
     const previous3Average = advancedAvailable
@@ -7332,85 +7331,56 @@
 
     const productAggregate = new Map();
     if (advancedAvailable) [...productMonth.values()].forEach((row) => {
-      const current = row.months.get(month);
-      if (!current || current.amount <= 0) return;
+      const current = row.months.get(month); if (!current || current.amount <= 0) return;
       const key = row.materialId ? `material:${row.materialId}` : (row.sku ? `sku:${normalize(row.sku)}` : `name:${normalize(row.itemName)}`);
       if (!productAggregate.has(key)) productAggregate.set(key, { name: row.itemName, itemName: row.itemName, amount: 0, serviceId: '' });
       productAggregate.get(key).amount += current.amount;
     });
-    if (!advancedAvailable) {
-      S.consumptionRows.filter((row)=>number(row.month_amount)>0).forEach((row)=>{
-        const key=row.material_id ? `material:${row.material_id}` : (row.item_sku ? `sku:${normalize(row.item_sku)}` : `name:${normalize(row.item_name)}`);
-        if (!productAggregate.has(key)) productAggregate.set(key,{name:row.item_name,itemName:row.item_name,amount:0,serviceId:''});
-        productAggregate.get(key).amount += number(row.month_amount);
-      });
-    }
+    if (!advancedAvailable) S.consumptionRows.filter((row)=>number(row.month_amount)>0).forEach((row)=>{
+      const key=row.material_id ? `material:${row.material_id}` : (row.item_sku ? `sku:${normalize(row.item_sku)}` : `name:${normalize(row.item_name)}`);
+      if (!productAggregate.has(key)) productAggregate.set(key,{name:row.item_name,itemName:row.item_name,amount:0,serviceId:''});
+      productAggregate.get(key).amount += number(row.month_amount);
+    });
     const topProducts = [...productAggregate.values()].sort((a,b)=>b.amount-a.amount).slice(0,8).map((row)=>({ ...row, share: currentTotal > 0 ? row.amount/currentTotal*100 : 0 }));
 
-    const alerts = [];
-    const durableAlerts = [];
-    const recurrences = [];
-
+    const alerts=[]; const durableAlerts=[]; const recurrences=[];
     if (advancedAvailable) currentServiceRows.forEach((service) => {
-      const current = service.amount;
-      const prev = prevKeys.map((key)=>number(service.months.get(key)));
-      const avg = prev.length ? prev.reduce((a,b)=>a+b,0)/prev.length : 0;
-      const variation = avg > 0 ? (current-avg)/avg*100 : null;
-      if (variation != null && variation >= 35 && current >= 10000) {
-        alerts.push({ type:'service-spike', severity: variation >= 70 ? 3 : 2, impact: current-avg, serviceId:service.serviceId, serviceName:service.name, title:'Gasto del servicio por encima de lo habitual', detail:`${formatCurrency(current)} en el mes · ${formatSignedPercent(variation)} frente al promedio de 3 meses.`, icon:'bi-graph-up-arrow' });
-      }
-      const last4 = monthKeys.slice(-4).map((key)=>number(service.months.get(key)));
-      if (last4.every((value)=>value>0) && last4[1] > last4[0]*1.05 && last4[2] > last4[1]*1.05 && last4[3] > last4[2]*1.05) {
-        alerts.push({ type:'service-growth', severity:2, impact:last4[3]-last4[0], serviceId:service.serviceId, serviceName:service.name, title:'Crecimiento sostenido del gasto', detail:`El gasto aumentó durante 4 meses consecutivos: ${formatCurrency(last4[0])} → ${formatCurrency(last4[3])}.`, icon:'bi-arrow-up-right-circle' });
-      }
+      const current=service.amount; const prev=prevKeys.map((key)=>number(service.months.get(key))); const avg=prev.length?prev.reduce((a,b)=>a+b,0)/prev.length:0; const variation=avg>0?(current-avg)/avg*100:null;
+      if (variation != null && variation >= 35 && current >= 10000) alerts.push({ type:'service-spike', severity: variation >= 70 ? 3 : 2, impact: current-avg, serviceId:service.serviceId, serviceName:service.name, title:'Gasto del servicio por encima de lo habitual', detail:`${formatCurrency(current)} en el mes · ${formatSignedPercent(variation)} frente al promedio de 3 meses.`, icon:'bi-graph-up-arrow' });
+      const last4=monthKeys.slice(-4).map((key)=>number(service.months.get(key)));
+      if (last4.every((value)=>value>0) && last4[1]>last4[0]*1.05 && last4[2]>last4[1]*1.05 && last4[3]>last4[2]*1.05) alerts.push({ type:'service-growth', severity:2, impact:last4[3]-last4[0], serviceId:service.serviceId, serviceName:service.name, title:'Crecimiento sostenido del gasto', detail:`El gasto aumentó durante 4 meses consecutivos: ${formatCurrency(last4[0])} → ${formatCurrency(last4[3])}.`, icon:'bi-arrow-up-right-circle' });
     });
 
     if (advancedAvailable) [...productMonth.values()].forEach((row) => {
-      const current = row.months.get(month) || { quantity:0, amount:0, orders:0 };
-      if (current.quantity <= 0) return;
-      const prev = prevKeys.map((key)=>number(row.months.get(key)?.quantity));
-      const avg = prev.length ? prev.reduce((a,b)=>a+b,0)/prev.length : 0;
-      const activePrev = prev.filter((value)=>value>0).length;
-      const variation = avg > 0 ? (current.quantity-avg)/avg*100 : null;
-      if (variation != null && variation >= 50 && activePrev >= 2) {
-        alerts.push({ type:'product-spike', severity: variation >= 100 ? 3 : 2, impact:current.amount, serviceId:row.serviceId, serviceName:row.serviceName, itemName:row.itemName, title:'Aumento fuerte de un insumo', detail:`${row.itemName}: ${formatQty(current.quantity)} ${row.unit} · ${formatSignedPercent(variation)} frente al promedio reciente.`, icon:'bi-exclamation-diamond' });
-      }
-      const last6Buckets = monthKeys.slice(-6).map((key)=>row.months.get(key) || {quantity:0,amount:0,orders:0});
-      const active6All = last6Buckets.filter((bucket)=>number(bucket.quantity)>0).length;
-      const totalQty6 = last6Buckets.reduce((sum,bucket)=>sum+number(bucket.quantity),0);
-      const totalAmount6 = last6Buckets.reduce((sum,bucket)=>sum+number(bucket.amount),0);
-      const durable = isDurableConsumptionItem(row);
-      if (active6All >= 4) recurrences.push({serviceId:row.serviceId,serviceName:row.serviceName,itemName:row.itemName,unit:row.unit,activeMonths:active6All,totalQuantity:totalQty6,totalAmount:totalAmount6,durable});
-      const streak = trailingPositiveStreak(monthKeys.map((key)=>number(row.months.get(key)?.quantity)));
-      if (durable && streak >= 3) {
-        const lastValues = monthKeys.slice(-streak).map((key)=>number(row.months.get(key)?.quantity));
-        const totalQty = lastValues.reduce((a,b)=>a+b,0);
-        const alert = { type:'durable-repeat', severity:3, impact:current.amount, serviceId:row.serviceId, serviceName:row.serviceName, itemName:row.itemName, title:'Reposición reiterada de un elemento durable', detail:`${row.itemName} fue pedido ${streak} meses consecutivos · ${formatQty(totalQty)} ${row.unit} acumuladas en ese período.`, icon:'bi-arrow-repeat' };
-        alerts.push(alert); durableAlerts.push(alert);
-      } else {
-        const last6 = last6Buckets.map((bucket)=>number(bucket.quantity));
-        const active6 = active6All;
-        if (active6 >= 5 && current.amount >= 5000 && variation != null && variation >= 20) {
-          alerts.push({ type:'frequent-item', severity:1, impact:current.amount, serviceId:row.serviceId, serviceName:row.serviceName, itemName:row.itemName, title:'Insumo de reposición muy frecuente', detail:`${row.itemName} tuvo consumo en ${active6} de los últimos 6 meses y este mes subió ${formatSignedPercent(variation)}.`, icon:'bi-calendar-check' });
-        }
+      const current=row.months.get(month)||{quantity:0,amount:0,orders:0};
+      const prev=prevKeys.map((key)=>number(row.months.get(key)?.quantity)); const avg=prev.length?prev.reduce((a,b)=>a+b,0)/prev.length:0; const activePrev=prev.filter((value)=>value>0).length; const variation=avg>0?(current.quantity-avg)/avg*100:null;
+      if (current.quantity>0 && variation!=null && variation>=50 && activePrev>=2) alerts.push({ type:'product-spike', severity:variation>=100?3:2, impact:current.amount, serviceId:row.serviceId, serviceName:row.serviceName, itemName:row.itemName, title:'Aumento fuerte de un insumo', detail:`${row.itemName}: ${formatQty(current.quantity)} ${row.unit} · ${formatSignedPercent(variation)} frente al promedio reciente.`, icon:'bi-exclamation-diamond' });
+      const profile=consumptionRecurrenceProfile(row,monthKeys,(key)=>row.months.get(key));
+      if(!profile) return;
+      recurrences.push(profile);
+      if(profile.durableRepeat){
+        const alert={type:'durable-repeat',severity:3,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Reposición reiterada de un elemento durable',detail:`${profile.itemName} apareció en ${profile.activeMonths} de los últimos ${profile.periodMonths} meses · ${formatQty(profile.totalQuantity)} ${profile.unit} en ${formatQty(profile.totalOrders)} pedidos. No necesita ser consecutivo para quedar marcado.`,icon:'bi-arrow-repeat'};
+        alerts.push(alert);durableAlerts.push(alert);
+      } else if(profile.highVolume){
+        alerts.push({type:'high-volume-repeat',severity:2,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Cantidad alta de forma recurrente',detail:`${profile.itemName}: promedio ${formatQty(profile.avgActiveQuantity)} ${profile.unit} por mes activo · ${formatQty(profile.totalQuantity)} ${profile.unit} en los últimos ${profile.periodMonths} meses.`,icon:'bi-boxes'});
+      } else if(profile.frequent && profile.rising){
+        alerts.push({type:'frequent-rising',severity:2,impact:profile.currentAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Insumo frecuente y en aumento',detail:`${profile.itemName} tuvo consumo en ${profile.activeMonths}/${profile.periodMonths} meses y el último mes quedó por encima de su promedio reciente.`,icon:'bi-calendar-check'});
       }
     });
 
-    const unique = new Map();
-    alerts.forEach((alert)=>{
-      const key=`${alert.type}|${alert.serviceId}|${normalize(alert.itemName||'')}`;
-      if (!unique.has(key) || unique.get(key).severity < alert.severity) unique.set(key, alert);
-    });
-    const sortedAlerts=[...unique.values()].sort((a,b)=>b.severity-a.severity || b.impact-a.impact);
-    recurrences.sort((a,b)=>Number(b.durable)-Number(a.durable) || b.activeMonths-a.activeMonths || b.totalAmount-a.totalAmount);
-    return { currentTotal, previous3Average, vsPrevious3, monthTrend, topServices, topProducts, alerts:sortedAlerts, durableAlerts, recurrences:recurrences.slice(0,12) };
+    const unique=new Map();alerts.forEach((alert)=>{const key=`${alert.type}|${alert.serviceId}|${normalize(alert.itemName||'')}`;if(!unique.has(key)||unique.get(key).severity<alert.severity)unique.set(key,alert);});
+    const sortedAlerts=[...unique.values()].sort((a,b)=>b.severity-a.severity||b.impact-a.impact);
+    recurrences.sort((a,b)=>b.score-a.score||b.totalAmount-a.totalAmount);
+    return { currentTotal, previous3Average, vsPrevious3, monthTrend, topServices, topProducts, alerts:sortedAlerts, durableAlerts, recurrences, recurrenceServices:buildConsumptionRecurrenceServiceSummaries(recurrences) };
   }
 
   function consumptionRecurrenceHtml(row) {
-    return `<button class="consumption-recurrence-item ${row.durable ? 'is-durable' : ''}" type="button" data-consumption-focus-service="${ea(row.serviceId)}" data-consumption-focus-item="${ea(row.itemName)}">
-      <div class="consumption-recurrence-head"><strong>${eh(row.itemName)}</strong>${row.durable ? '<span>Durable · revisar</span>' : `<span>${row.activeMonths}/${row.periodMonths||6} meses</span>`}</div>
+    const classes=[row.durableRepeat?'is-durable':'',row.highVolume?'is-volume':'',row.frequent?'is-frequent':''].filter(Boolean).join(' ');
+    const last=row.lastMonth?monthLabel(row.lastMonth):'Sin dato';
+    return `<button class="consumption-recurrence-item ${classes}" type="button" data-consumption-focus-service="${ea(row.serviceId)}" data-consumption-focus-item="${ea(row.itemName)}">
+      <div class="consumption-recurrence-head"><strong>${eh(row.itemName)}</strong><span>${eh(row.pattern)}</span></div>
       <div class="consumption-recurrence-service">${eh(row.serviceName)}</div>
-      <div class="consumption-recurrence-metrics"><span><b>${formatQty(row.totalQuantity)}</b> ${eh(row.unit)}</span><span>${eh(formatCurrency(row.totalAmount))}</span><span>${row.activeMonths} meses con consumo</span></div>
+      <div class="consumption-recurrence-metrics"><span><b>${row.activeMonths}/${row.periodMonths}</b> meses recientes</span>${row.totalMonths>row.periodMonths?`<span><b>${row.activeMonths12}/${row.totalMonths}</b> meses del histórico</span>`:''}<span><b>${formatQty(row.totalQuantity)}</b> ${eh(row.unit)}</span><span><b>${formatQty(row.totalOrders)}</b> pedidos</span><span><b>${formatQty(row.avgActiveQuantity)}</b> ${eh(row.unit)}/mes activo</span><span>${eh(formatCurrency(row.totalAmount))}</span><span>Último: ${eh(last)}</span></div>
     </button>`;
   }
 
@@ -7436,6 +7406,7 @@
     if (analytics.vsPrevious3 != null) pieces.push(`El gasto está <strong>${Math.abs(analytics.vsPrevious3).toLocaleString('es-AR',{maximumFractionDigits:1})}% ${analytics.vsPrevious3>=0?'por encima':'por debajo'}</strong> del promedio reciente.`);
     if (analytics.topServices[0]) pieces.push(`<strong>${eh(analytics.topServices[0].name)}</strong> es el mayor gasto del período (${eh(formatCurrency(analytics.topServices[0].amount))}).`);
     if (analytics.durableAlerts.length) pieces.push(`Hay <strong>${analytics.durableAlerts.length}</strong> reposiciones reiteradas de elementos durables para revisar.`);
+    if (analytics.recurrences?.length) pieces.push(`Se detectaron <strong>${analytics.recurrences.length}</strong> patrones recurrentes en <strong>${analytics.recurrenceServices?.length || buildConsumptionRecurrenceServiceSummaries(analytics.recurrences).length}</strong> servicios.`);
     else if (!analytics.alerts.length) pieces.push('No se detectaron patrones operativos atípicos con los umbrales actuales.');
     if (selectedServiceId) pieces.push('El análisis está filtrado al servicio seleccionado.');
     return pieces.join(' ');
@@ -7497,6 +7468,98 @@
     const text=normalize(`${row.itemName||''} ${material?.name||''} ${material?.category||''}`);
     const durableTerms=['escoba','escobillon','balde','mopa','lampazo','cabo','pala','secador','haragan','pulverizador','rociador','cepillo','plumero','carro','dispenser','jarra','embudo','recogedor','porta mopa'];
     return durableTerms.some((term)=>text.includes(term));
+  }
+
+
+  function maxPositiveStreak(values) {
+    let best=0,current=0;
+    values.forEach((value)=>{if(number(value)>0){current+=1;best=Math.max(best,current);}else current=0;});
+    return best;
+  }
+
+  function consumptionRecurrenceProfile(meta, monthKeys, bucketGetter) {
+    const keys=[...monthKeys];
+    if(!keys.length) return null;
+    const buckets=keys.map((key)=>{const raw=bucketGetter(key)||{};return{key,quantity:number(raw.quantity),amount:number(raw.amount),orders:number(raw.orders)};});
+    const recentCount=Math.min(6,buckets.length);
+    const recent=buckets.slice(-recentCount);
+    const activeRecent=recent.filter((b)=>b.quantity>0);
+    const activeAll=buckets.filter((b)=>b.quantity>0);
+    if(!activeAll.length) return null;
+    const totalQuantity=recent.reduce((sum,b)=>sum+b.quantity,0);
+    const totalAmount=recent.reduce((sum,b)=>sum+b.amount,0);
+    const totalOrders=recent.reduce((sum,b)=>sum+b.orders,0);
+    const avgActiveQuantity=activeRecent.length?totalQuantity/activeRecent.length:0;
+    const avgActiveAmount=activeRecent.length?totalAmount/activeRecent.length:0;
+    const recentValues=recent.map((b)=>b.quantity);
+    const streak=trailingPositiveStreak(recentValues);
+    const maxStreak=maxPositiveStreak(recentValues);
+    const lastActive=[...buckets].reverse().find((b)=>b.quantity>0);
+    const lastActiveIndex=lastActive?keys.indexOf(lastActive.key):-1;
+    const monthsSinceLast=lastActiveIndex>=0?keys.length-1-lastActiveIndex:999;
+    const durable=isDurableConsumptionItem({materialId:meta.materialId,itemName:meta.itemName});
+    const recentRatio=recentCount?activeRecent.length/recentCount:0;
+    const allRatio=keys.length?activeAll.length/keys.length:0;
+    const durableRepeat=durable && (activeRecent.length>=2 || (activeAll.length>=3 && monthsSinceLast<=2));
+    const frequent=(recentCount>=4 && activeRecent.length>=Math.max(3,Math.ceil(recentCount*.65))) || (keys.length>=8 && activeAll.length>=Math.ceil(keys.length*.65) && monthsSinceLast<=2);
+    const repeated=activeRecent.length>=3 || (recentCount<=3 && activeRecent.length>=2);
+    const highVolume=(activeRecent.length>=2 && (avgActiveQuantity>=2.5 || totalQuantity>=8 || totalOrders>=5));
+    const previousActive=recent.slice(0,-1).filter((b)=>b.quantity>0);
+    const previousAverage=previousActive.length?previousActive.reduce((sum,b)=>sum+b.quantity,0)/previousActive.length:0;
+    const current=recent[recent.length-1]||{quantity:0,amount:0,orders:0};
+    const rising=current.quantity>0 && previousActive.length>=2 && previousAverage>0 && current.quantity>=previousAverage*1.5;
+    const candidate=durableRepeat || frequent || repeated || highVolume;
+    if(!candidate) return null;
+    let pattern='Recurrente';
+    let patternType='recurring';
+    if(durableRepeat){pattern='Durable repetido';patternType='durable';}
+    else if(highVolume){pattern='Cantidad alta recurrente';patternType='volume';}
+    else if(frequent){pattern='Muy frecuente';patternType='frequent';}
+    if(rising && patternType==='recurring'){pattern='Recurrente en aumento';patternType='rising';}
+    const score=(durableRepeat?60:0)+(highVolume?30:0)+(frequent?25:0)+(rising?15:0)+activeRecent.length*9+activeAll.length*2+Math.min(18,totalOrders*2)+Math.min(15,avgActiveQuantity*3)+Math.min(10,totalAmount/20000);
+    return {
+      serviceId:meta.serviceId,serviceName:meta.serviceName,materialKey:meta.materialKey||'',materialId:meta.materialId||null,itemName:meta.itemName,sku:meta.sku||'',unit:meta.unit||'unidad',
+      activeMonths:activeRecent.length,periodMonths:recentCount,activeMonths12:activeAll.length,totalMonths:keys.length,totalQuantity,totalAmount,totalOrders,avgActiveQuantity,avgActiveAmount,
+      streak,maxStreak,lastMonth:lastActive?.key||'',monthsSinceLast,durable,durableRepeat,frequent,highVolume,rising,recentRatio,allRatio,pattern,patternType,score,currentQuantity:current.quantity,currentAmount:current.amount
+    };
+  }
+
+  function filterConsumptionRecurrences(rows) {
+    const filter=E.consumptionRecurringFilter?.value||'all';
+    if(filter==='durable') return rows.filter((r)=>r.durableRepeat);
+    if(filter==='volume') return rows.filter((r)=>r.highVolume);
+    if(filter==='frequent') return rows.filter((r)=>r.frequent);
+    return rows;
+  }
+
+  function buildConsumptionRecurrenceServiceSummaries(rows) {
+    const map=new Map();
+    rows.forEach((row)=>{
+      if(!map.has(row.serviceId)) map.set(row.serviceId,{serviceId:row.serviceId,serviceName:row.serviceName,items:[],durables:0,highVolume:0,frequent:0,totalAmount:0,totalQuantity:0,score:0});
+      const service=map.get(row.serviceId);service.items.push(row);service.durables+=row.durableRepeat?1:0;service.highVolume+=row.highVolume?1:0;service.frequent+=row.frequent?1:0;service.totalAmount+=row.totalAmount;service.totalQuantity+=row.totalQuantity;service.score+=row.score;
+    });
+    return [...map.values()].map((service)=>({...service,items:service.items.sort((a,b)=>b.score-a.score||b.totalAmount-a.totalAmount)})).sort((a,b)=>b.durables-a.durables||b.score-a.score||b.totalAmount-a.totalAmount);
+  }
+
+  function consumptionRecurrenceServiceHtml(row) {
+    const flags=[];
+    if(row.durables) flags.push(`<span class="is-danger">${row.durables} durable${row.durables===1?'':'s'}</span>`);
+    if(row.highVolume) flags.push(`<span>${row.highVolume} cantidad alta</span>`);
+    if(row.frequent) flags.push(`<span>${row.frequent} muy frecuente${row.frequent===1?'':'s'}</span>`);
+    const items=row.items.slice(0,4).map((item)=>`<li><strong>${eh(item.itemName)}</strong><span>${item.activeMonths}/${item.periodMonths} meses · ${formatQty(item.totalQuantity)} ${eh(item.unit)} · ${formatQty(item.totalOrders)} pedidos</span></li>`).join('');
+    return `<article class="consumption-recurrence-service-card"><div class="consumption-recurrence-service-title"><div><strong>${eh(row.serviceName)}</strong><small>${row.items.length} ${row.items.length===1?'patrón':'patrones'} recurrentes</small></div><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-focus-service="${ea(row.serviceId)}">Ver servicio</button></div><div class="consumption-recurrence-service-flags">${flags.join('')}</div><ul>${items}</ul></article>`;
+  }
+
+  function renderConsumptionRecurrenceSections(allRows) {
+    const rows=filterConsumptionRecurrences(allRows);
+    const services=buildConsumptionRecurrenceServiceSummaries(rows);
+    const durableCount=allRows.filter((r)=>r.durableRepeat).length;
+    const volumeCount=allRows.filter((r)=>r.highVolume).length;
+    if(E.consumptionRecurringBadge) E.consumptionRecurringBadge.textContent=`${allRows.length} patrones · ${durableCount} durables · ${volumeCount} de cantidad alta`;
+    if(E.consumptionRecurringServiceCount) E.consumptionRecurringServiceCount.textContent=`${services.length} ${services.length===1?'servicio':'servicios'}`;
+    if(E.consumptionRecurringDetailCount) E.consumptionRecurringDetailCount.textContent=`${rows.length} ${rows.length===1?'patrón':'patrones'}`;
+    if(E.consumptionRecurringServices) E.consumptionRecurringServices.innerHTML=services.map(consumptionRecurrenceServiceHtml).join('')||'<div class="consumption-empty compact">No hay servicios con recurrencias para el filtro seleccionado.</div>';
+    if(E.consumptionRecurringList) E.consumptionRecurringList.innerHTML=rows.map(consumptionRecurrenceHtml).join('')||'<div class="consumption-empty compact">No se detectaron patrones recurrentes con este filtro.</div>';
   }
 
 

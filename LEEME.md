@@ -1,45 +1,53 @@
-# Pedidos Clean It — tablero robusto de consumos
+# Pedidos Clean It — recurrencias de consumo afinadas
 
-## Mejoras de esta versión
+## Qué mejora esta versión
 
-La sección **Consumos** incorpora una capa de análisis adicional sin eliminar las vistas existentes:
+Se mantiene el tablero robusto de Consumos y se amplía la detección de patrones recurrentes.
 
-- Ranking completo de servicios, ordenado de mayor a menor gasto.
-- Gasto, participación sobre el total, pedidos, gasto promedio por pedido y evolución de cada servicio.
-- Ranking general de insumos consolidando el mismo SKU entre todos los servicios.
-- El ranking de insumos puede ordenarse por **gasto**, **cantidad**, **cantidad de pedidos** o **cantidad de servicios que lo utilizan**.
-- Gráficos de concentración para identificar rápidamente qué servicios e insumos explican la mayor parte del gasto.
-- Ficha histórica de cada servicio con evolución mensual de gasto, pedidos e insumos distintos.
-- Dentro de cada servicio se muestra qué productos explican el gasto del período seleccionado.
-- Ficha histórica global de cada insumo, con evolución mensual de:
-  - cantidad consumida;
-  - gasto;
-  - cantidad de pedidos;
-  - cantidad de servicios que lo utilizaron;
-  - variación contra el mes anterior.
-- La ficha del insumo permite filtrar por un servicio específico para comparar su evolución individual.
-- Ranking de los servicios que más consumen cada insumo.
+La lógica anterior era demasiado restrictiva: un insumo podía dejar de aparecer como recurrente si no se había pedido justo en el mes analizado o si un durable no se había pedido tres meses consecutivos.
 
-Todo el tablero respeta el filtro principal de **mes**, **rango personalizado** y **servicio**.
+Ahora se analizan también:
+
+- repeticiones no consecutivas dentro de los últimos 6 meses;
+- recurrencia dentro del histórico de 12 meses;
+- cantidad de meses con consumo;
+- cantidad total solicitada;
+- cantidad de pedidos donde apareció el insumo;
+- promedio solicitado por mes activo;
+- elementos durables solicitados más de una vez;
+- insumos de alta frecuencia;
+- cantidades altas repetidas;
+- recurrencias que además vienen aumentando.
+
+## Vista por servicio
+
+En **Consumos → Patrones de consumo recurrente** aparece primero un resumen por servicio con los insumos que viene pidiendo reiteradamente.
+
+Para cada servicio se muestran sus principales patrones, incluyendo meses de actividad, cantidades y pedidos. Después aparece el detalle completo de las recurrencias detectadas.
+
+Se puede filtrar por:
+
+- Todos los patrones.
+- Solo durables.
+- Cantidad alta.
+- Muy frecuentes.
+
+Un elemento durable ya no necesita aparecer tres meses consecutivos para quedar marcado. Por ejemplo, un escobillón pedido en junio, agosto y octubre queda identificado como una reposición reiterada.
 
 ## Supabase
 
-Esta mejora no agrega una migración SQL nueva. Utiliza las funciones analíticas de consumo que ya tiene la app.
+Esta mejora no necesita una migración SQL nueva. Usa la analítica de 12 meses que ya tiene la app.
 
-Si todavía no ejecutaste la corrección de analítica de consumos, ejecutá una sola vez en Supabase → SQL Editor:
-
-`corregir-analitica-consumos.sql`
-
-Si la sección Consumos ya carga sin errores técnicos, no hace falta volver a ejecutarlo.
+Si Consumos ya funciona sin errores de Supabase, no ejecutes ningún SQL adicional.
 
 ## Publicación
 
-Subí los archivos normalmente al repositorio:
-
 ```powershell
 git add .
-git commit -m "Mejorar tablero de consumos"
+git commit -m "Afinar recurrencias de consumo"
 git push origin main
 ```
 
-Después del deploy de GitHub Pages, hacé `Ctrl + Shift + R`. Si usás la PWA instalada, cerrala y volvé a abrirla para tomar la nueva caché.
+Después del deploy: `Ctrl + Shift + R`.
+
+Si usás la PWA instalada, cerrala completamente y volvé a abrirla para tomar la nueva caché.
