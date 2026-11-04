@@ -6896,23 +6896,101 @@
     renderServiceMaterials();
   }
 
+  function sameMaterialIdSet(a, b) {
+    if (a.size !== b.size) return false;
+    for (const id of a) if (!b.has(id)) return false;
+    return true;
+  }
+
+  async function fetchPersistedHiddenMaterials(serviceId) {
+    const { data, error } = await S.sb
+      .from('service_material_exclusions')
+      .select('service_id,material_id')
+      .eq('service_id', serviceId);
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function repairServiceMaterialsDirectly(serviceId, desiredIds, currentRows) {
+    const currentIds = new Set((currentRows || []).map((row) => row.material_id));
+    const toAdd = [...desiredIds].filter((id) => !currentIds.has(id));
+    const toRemove = [...currentIds].filter((id) => !desiredIds.has(id));
+
+    // Agregamos primero para no dejar el servicio sin configuración si una operación posterior falla.
+    if (toAdd.length) {
+      const payload = toAdd.map((materialId) => ({ service_id: serviceId, material_id: materialId }));
+      const { error } = await S.sb.from('service_material_exclusions').insert(payload);
+      if (error) throw error;
+    }
+
+    if (toRemove.length) {
+      const { error } = await S.sb
+        .from('service_material_exclusions')
+        .delete()
+        .eq('service_id', serviceId)
+        .in('material_id', toRemove);
+      if (error) throw error;
+    }
+  }
+
   async function saveServiceMaterials() {
     if (!canManageMasterData()) { toast('No tenés permisos para guardar esta configuración.', 'error'); return; }
     const serviceId = S.selectedServiceMaterialsId;
     const service = serviceById(serviceId);
     if (!service) return;
+
+    const validMaterialIds = new Set(S.materials.map((material) => material.id));
+    const desiredIds = new Set(
+      [...S.serviceMaterialsDraftHidden].filter((materialId) => validMaterialIds.has(materialId))
+    );
+
     buttonBusy(E.saveServiceMaterialsButton, true, 'Guardando...');
     try {
-      const { error } = await S.sb.rpc('admin_set_service_hidden_materials', {
+      let rpcError = null;
+      const rpcResult = await S.sb.rpc('admin_set_service_hidden_materials', {
         p_service_id: serviceId,
-        p_hidden_material_ids: [...S.serviceMaterialsDraftHidden]
+        p_hidden_material_ids: [...desiredIds]
       });
-      if (error) throw error;
+      rpcError = rpcResult.error || null;
+
+      // No confiamos solo en la respuesta de la RPC: comprobamos lo que realmente quedó en la tabla.
+      let persistedRows = await fetchPersistedHiddenMaterials(serviceId);
+      let persistedIds = new Set(persistedRows.map((row) => row.material_id));
+
+      if (rpcError || !sameMaterialIdSet(desiredIds, persistedIds)) {
+        console.warn('La RPC no dejó la configuración esperada. Se intenta reparación directa.', rpcError || {
+          expected: [...desiredIds],
+          persisted: [...persistedIds]
+        });
+
+        try {
+          await repairServiceMaterialsDirectly(serviceId, desiredIds, persistedRows);
+        } catch (directError) {
+          const rpcMessage = rpcError?.message ? ` RPC: ${rpcError.message}` : '';
+          const directMessage = directError?.message ? ` Escritura directa: ${directError.message}` : '';
+          throw new Error(`Supabase no pudo persistir los insumos del servicio.${rpcMessage}${directMessage} Ejecutá fix-service-materials.sql en Supabase y volvé a intentar.`);
+        }
+
+        persistedRows = await fetchPersistedHiddenMaterials(serviceId);
+        persistedIds = new Set(persistedRows.map((row) => row.material_id));
+      }
+
+      if (!sameMaterialIdSet(desiredIds, persistedIds)) {
+        throw new Error('La base respondió, pero la configuración no quedó guardada. Ejecutá fix-service-materials.sql en Supabase y volvé a intentar.');
+      }
+
+      // Actualizamos el estado local con datos verificados antes de cerrar el modal.
+      S.serviceMaterialExclusions = [
+        ...S.serviceMaterialExclusions.filter((row) => row.service_id !== serviceId),
+        ...persistedRows
+      ];
+      S.serviceMaterialsDraftHidden = new Set(persistedIds);
+      renderServices();
 
       M.serviceMaterials.hide();
       S.selectedServiceMaterialsId = null;
       await refreshAdmin(false);
-      toast(`Configuración de ${service.name} actualizada.`, 'success');
+      toast(`Configuración de ${service.name} guardada y verificada.`, 'success');
     } catch (error) {
       console.error(error);
       toast(error.message || 'No se pudo guardar la configuración.', 'error');

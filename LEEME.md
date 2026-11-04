@@ -54,3 +54,11 @@ Volvé a ejecutar `consumos-supabase.sql` en Supabase → SQL Editor. La versió
 - El bloque **Control de límites de pedidos** clasifica cada pedido con las mismas referencias presupuestarias guardadas en el pedido: dentro del límite, sobre límite operativo, sobre 7% o sin configurar.
 - El control de límites usa el mes de creación del pedido para mostrar recurrencia operativa.
 - Esta versión no requiere un SQL adicional: utiliza pedidos e ítems que la administración ya carga en la app.
+
+## Corrección de insumos por servicio
+
+Si al activar/desactivar insumos en **Administración → Servicios** aparece el mensaje de configuración actualizada pero al volver a abrir el servicio todos figuran activos, ejecutá una vez `fix-service-materials.sql` en **Supabase → SQL Editor**.
+
+La app ahora también valida contra `service_material_exclusions` que los cambios hayan quedado realmente persistidos. Si la RPC no actualiza la tabla, intenta una reparación directa y, si Supabase la bloquea por permisos/RLS, muestra un error explícito en lugar de un falso mensaje de éxito.
+
+Después de publicar esta versión, hacé `Ctrl + Shift + R`. Si usás la PWA, cerrala por completo y volvé a abrirla para tomar el nuevo service worker.
