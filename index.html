@@ -329,7 +329,7 @@
               <div id="consumptionMonthWrap" class="col-md-4 col-xl-2"><label for="consumptionMonth" class="form-label">Mes analizado</label><input id="consumptionMonth" class="form-control" type="month"></div>
               <div id="consumptionRangeWrap" class="col-md-8 col-xl-4 d-none"><div class="row g-2"><div class="col-6"><label for="consumptionRangeStart" class="form-label">Desde</label><input id="consumptionRangeStart" class="form-control" type="date"></div><div class="col-6"><label for="consumptionRangeEnd" class="form-label">Hasta</label><input id="consumptionRangeEnd" class="form-control" type="date"></div></div></div>
               <div class="col-md-8 col-xl-3"><label for="consumptionServiceFilter" class="form-label">Servicio</label><select id="consumptionServiceFilter" class="form-select"><option value="">Todos los servicios</option></select></div>
-              <div class="col-md-4 col-xl-2"><label for="consumptionAnalysisView" class="form-label">Vista de análisis</label><select id="consumptionAnalysisView" class="form-select"><option value="complete">Completo</option><option value="executive">Ejecutivo</option><option value="services">Servicios</option><option value="products">Insumos</option><option value="recurrence">Recurrencias</option></select></div>
+              <div class="col-md-4 col-xl-2"><label for="consumptionAnalysisView" class="form-label">Vista de análisis</label><select id="consumptionAnalysisView" class="form-select"><option value="complete">Completo</option><option value="visual">Analítica visual</option><option value="executive">Ejecutivo</option><option value="services">Servicios</option><option value="products">Insumos</option><option value="recurrence">Recurrencias</option></select></div>
               <div class="col-xl-3"><label for="consumptionSearch" class="form-label">Buscar insumo</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="consumptionSearch" class="form-control" type="search" placeholder="Producto, SKU o servicio"></div></div>
             </div>
             <div id="consumptionRangeQuickButtons" class="consumption-range-quick d-none mt-3"><span>Rangos rápidos:</span><button type="button" class="btn btn-sm btn-light" data-consumption-quick-months="2">2 meses</button><button type="button" class="btn btn-sm btn-light" data-consumption-quick-months="3">3 meses</button><button type="button" class="btn btn-sm btn-light" data-consumption-quick-months="6">6 meses</button><button type="button" class="btn btn-sm btn-light" data-consumption-quick-months="12">12 meses</button></div>
@@ -406,6 +406,47 @@
             <div class="row g-4">
               <div id="consumptionServiceRankingBlock" class="col-12"><h3 class="h6 fw-black mb-2">Ranking completo de servicios</h3><div class="table-responsive consumption-ranking-table-wrap"><table class="table admin-table align-middle mb-0"><thead><tr><th>#</th><th>Servicio</th><th>Gasto</th><th>% total</th><th>Pedidos</th><th>Gasto/pedido</th><th>Evolución</th><th></th></tr></thead><tbody id="consumptionFullServiceRankingBody"></tbody></table></div></div>
               <div id="consumptionProductRankingBlock" class="col-12"><div class="d-flex flex-wrap align-items-end justify-content-between gap-2 mb-2"><div><h3 class="h6 fw-black mb-1">Ranking general de insumos</h3><p class="text-secondary small mb-0">Consolida el mismo SKU/producto entre todos los servicios. Al ordenar por cantidad, tené en cuenta la unidad de pedido de cada producto.</p></div><div><label for="consumptionProductRankingSort" class="form-label small mb-1">Ordenar insumos por</label><select id="consumptionProductRankingSort" class="form-select form-select-sm"><option value="amount">Mayor gasto</option><option value="quantity">Mayor cantidad</option><option value="orders">Más pedidos</option><option value="services">Más servicios</option></select></div></div><div class="table-responsive consumption-ranking-table-wrap"><table class="table admin-table align-middle mb-0"><thead><tr><th>#</th><th>Insumo</th><th>Tipo</th><th>Cantidad</th><th>Gasto</th><th>% total</th><th>Pedidos</th><th>Servicios</th><th>Δ cantidad</th><th>Δ precio</th><th></th></tr></thead><tbody id="consumptionFullProductRankingBody"></tbody></table></div></div>
+            </div>
+          </div>
+
+          <div id="consumptionAnalyticsStudioSection" class="section-card mb-4 consumption-analytics-studio">
+            <div class="consumption-studio-heading">
+              <div><span class="eyebrow">Analytics Studio</span><h2 class="section-title mb-1">Explorador visual de consumos</h2><p class="text-secondary mb-0">Cruzá servicio, insumo, período y métrica. Compará tendencias, cantidades, gasto, pedidos y precio efectivo sin perder el contexto.</p></div>
+              <div class="d-flex gap-2 flex-wrap"><button id="consumptionStudioResetButton" type="button" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-counterclockwise me-1"></i>Limpiar</button><button id="consumptionStudioApplyButton" type="button" class="btn btn-sm btn-primary fw-bold"><i class="bi bi-funnel me-1"></i>Aplicar período</button></div>
+            </div>
+            <div class="consumption-studio-filters mt-3">
+              <div><label class="form-label" for="consumptionStudioPeriod">Período</label><select id="consumptionStudioPeriod" class="form-select"><option value="6">Últimos 6 meses</option><option value="12" selected>Últimos 12 meses</option><option value="24">Últimos 24 meses</option><option value="36">Últimos 36 meses</option><option value="custom">Personalizado</option></select></div>
+              <div id="consumptionStudioCustomStartWrap" class="d-none"><label class="form-label" for="consumptionStudioStart">Desde</label><input id="consumptionStudioStart" class="form-control" type="date"></div>
+              <div id="consumptionStudioCustomEndWrap" class="d-none"><label class="form-label" for="consumptionStudioEnd">Hasta</label><input id="consumptionStudioEnd" class="form-control" type="date"></div>
+              <div><label class="form-label" for="consumptionStudioService">Servicio</label><select id="consumptionStudioService" class="form-select"><option value="">Todos los servicios</option></select></div>
+              <div><label class="form-label" for="consumptionStudioMaterial">Insumo</label><select id="consumptionStudioMaterial" class="form-select"><option value="">Todos los insumos</option></select></div>
+              <div><label class="form-label" for="consumptionStudioClassification">Tipo</label><select id="consumptionStudioClassification" class="form-select"><option value="all">Todos</option><option value="consumable">Consumibles</option><option value="semidurable">Semidurables</option><option value="durable">Durables</option></select></div>
+              <div><label class="form-label" for="consumptionStudioMetric">Métrica</label><select id="consumptionStudioMetric" class="form-select"><option value="amount">Gasto</option><option value="quantity">Cantidad</option><option value="price">Precio efectivo</option><option value="orders">Pedidos</option></select></div>
+              <div><label class="form-label" for="consumptionStudioBreakdown">Desagregar</label><select id="consumptionStudioBreakdown" class="form-select"><option value="auto">Automático</option><option value="product">Por insumo</option><option value="service">Por servicio</option><option value="total">Total consolidado</option></select></div>
+              <div><label class="form-label" for="consumptionStudioScale">Escala</label><select id="consumptionStudioScale" class="form-select"><option value="absolute">Valores reales</option><option value="index">Índice base 100</option></select></div>
+              <div><label class="form-label" for="consumptionStudioTopN">Series</label><select id="consumptionStudioTopN" class="form-select"><option value="5">Top 5</option><option value="10" selected>Top 10</option><option value="15">Top 15</option></select></div>
+            </div>
+            <div id="consumptionStudioSelections" class="consumption-studio-selections mt-3"></div>
+            <div id="consumptionStudioNotice" class="alert alert-info py-2 mt-3 mb-0 d-none"></div>
+            <div id="consumptionStudioError" class="alert alert-danger py-2 mt-3 mb-0 d-none"></div>
+            <div id="consumptionStudioLoading" class="consumption-studio-loading d-none"><div class="spinner-border spinner-border-sm text-primary" role="status"></div><span>Preparando análisis multidimensional...</span></div>
+            <div id="consumptionStudioContent" class="mt-4">
+              <div class="row g-3 mb-3">
+                <div class="col-6 col-xl"><div class="consumption-studio-kpi"><span id="consumptionStudioKpiTotalLabel">Total período</span><strong id="consumptionStudioKpiTotal">—</strong><small id="consumptionStudioKpiTotalFoot">Métrica seleccionada</small></div></div>
+                <div class="col-6 col-xl"><div class="consumption-studio-kpi"><span>Promedio mensual</span><strong id="consumptionStudioKpiAverage">—</strong><small>Sobre meses del período</small></div></div>
+                <div class="col-6 col-xl"><div class="consumption-studio-kpi"><span>Último mes</span><strong id="consumptionStudioKpiCurrent">—</strong><small id="consumptionStudioKpiCurrentFoot">Último dato</small></div></div>
+                <div class="col-6 col-xl"><div class="consumption-studio-kpi"><span>Vs. mes anterior</span><strong id="consumptionStudioKpiVariation">—</strong><small>Cambio de la métrica</small></div></div>
+                <div class="col-6 col-xl"><div class="consumption-studio-kpi"><span>Máximo mensual</span><strong id="consumptionStudioKpiPeak">—</strong><small id="consumptionStudioKpiPeakFoot">Pico del período</small></div></div>
+              </div>
+              <div class="row g-3 mb-3">
+                <div class="col-xl-8"><div class="consumption-studio-panel h-100"><div class="consumption-studio-panel-head"><div><strong id="consumptionStudioTrendTitle">Evolución mensual</strong><span>Hacé clic sobre la leyenda para ocultar o mostrar series.</span></div><span id="consumptionStudioSeriesBadge" class="badge text-bg-light">0 series</span></div><div class="consumption-studio-chart-wrap"><canvas id="consumptionStudioTrendChart"></canvas></div></div></div>
+                <div class="col-xl-4"><div class="consumption-studio-panel h-100"><div class="consumption-studio-panel-head"><div><strong>Comparación acumulada</strong><span>Click en una barra para usarla como filtro.</span></div></div><div class="consumption-studio-ranking-wrap"><canvas id="consumptionStudioRankingChart"></canvas></div></div></div>
+              </div>
+              <div class="row g-3 mb-3">
+                <div class="col-xl-5"><div class="consumption-studio-panel h-100"><div class="consumption-studio-panel-head"><div><strong>Lectura automática del filtro</strong><span>Señales priorizadas sobre el alcance seleccionado.</span></div></div><div id="consumptionStudioInsights" class="consumption-studio-insights"></div></div></div>
+                <div class="col-xl-7"><div class="consumption-studio-panel h-100"><div class="consumption-studio-panel-head"><div><strong>Resumen por serie</strong><span>Totales, variación, meses activos y pico.</span></div></div><div class="table-responsive"><table class="table admin-table align-middle mb-0 consumption-studio-summary-table"><thead><tr><th>Serie</th><th>Total</th><th>Promedio</th><th>Último</th><th>Δ mes</th><th>Meses activos</th><th>Pico</th></tr></thead><tbody id="consumptionStudioSummaryBody"></tbody></table></div></div></div>
+              </div>
+              <div class="consumption-studio-panel"><div class="consumption-studio-panel-head"><div><strong>Matriz mes a mes</strong><span>Mapa de intensidad para detectar rápidamente picos, caídas y recurrencias.</span></div><span class="badge text-bg-light">Más intensidad = mayor valor dentro de cada serie</span></div><div class="table-responsive"><table class="table admin-table align-middle mb-0 consumption-studio-matrix"><thead id="consumptionStudioMatrixHead"></thead><tbody id="consumptionStudioMatrixBody"></tbody></table></div></div>
             </div>
           </div>
 
@@ -911,8 +952,9 @@
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
-  <!-- Build: inteligencia avanzada de consumos + conciliación IVA + facturas IA + PWA 2026-11-04-v1 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <!-- Build: Analytics Studio + inteligencia avanzada de consumos + conciliación IVA + facturas IA + PWA 2026-11-04-v2 -->
   <script src="config.js"></script>
-  <script src="app.js?v=20261104-consumos-inteligencia1"></script>
+  <script src="app.js?v=20261104-consumos-analytics-studio2"></script>
 </body>
 </html>

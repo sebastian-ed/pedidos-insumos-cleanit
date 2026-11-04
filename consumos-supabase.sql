@@ -260,6 +260,27 @@ begin
       on x.x_service_id = d.d_service_id
      and x.x_material_key = d.d_material_key
     group by d.d_service_id, d.d_material_key, x.x_material_id, x.x_item_name, x.x_item_sku, x.x_unit, date_trunc('month', d.d_consumed_at)::date
+  ),
+  monthly_service_summary as (
+    select
+      d.d_service_id as service_id,
+      max(d.d_service_name) as service_name,
+      date_trunc('month', d.d_consumed_at)::date as consumption_month,
+      sum(d.d_line_total)::numeric as amount,
+      count(distinct d.d_order_id)::bigint as orders,
+      count(distinct d.d_material_key)::bigint as products
+    from delivered d
+    group by d.d_service_id, date_trunc('month', d.d_consumed_at)::date
+  ),
+  monthly_total_summary as (
+    select
+      date_trunc('month', d.d_consumed_at)::date as consumption_month,
+      sum(d.d_line_total)::numeric as amount,
+      count(distinct d.d_order_id)::bigint as orders,
+      count(distinct d.d_material_key)::bigint as products,
+      count(distinct d.d_service_id)::bigint as services
+    from delivered d
+    group by date_trunc('month', d.d_consumed_at)::date
   )
   select jsonb_build_object(
     'services', coalesce((
@@ -303,6 +324,27 @@ begin
         'orders', ms.orders
       ) order by ms.consumption_month, ms.m_service_name, ms.m_item_name)
       from monthly_summary ms
+    ), '[]'::jsonb),
+    'monthly_services', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'service_id', x.service_id,
+        'service_name', x.service_name,
+        'consumption_month', x.consumption_month,
+        'amount', x.amount,
+        'orders', x.orders,
+        'products', x.products
+      ) order by x.consumption_month, x.service_name)
+      from monthly_service_summary x
+    ), '[]'::jsonb),
+    'monthly_total', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'consumption_month', x.consumption_month,
+        'amount', x.amount,
+        'orders', x.orders,
+        'products', x.products,
+        'services', x.services
+      ) order by x.consumption_month)
+      from monthly_total_summary x
     ), '[]'::jsonb)
   ) into result;
 

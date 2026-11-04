@@ -32,3 +32,10 @@ git push origin main
 ```
 
 Después del deploy hacé `Ctrl + Shift + R`. Si usás la PWA, cerrala completamente y volvé a abrirla.
+
+
+## Analytics Studio de consumos
+La sección Consumos incluye un explorador visual multidimensional para cruzar período, servicio, insumo, clasificación y métrica (gasto, cantidad, precio efectivo y pedidos). Permite comparar series, usar índice base 100, ver una matriz mes a mes y saltar desde alertas recurrentes al gráfico correspondiente.
+
+### SQL requerido para conteos exactos
+Volvé a ejecutar `consumos-supabase.sql` en Supabase → SQL Editor. La versión actual amplía `admin_consumption_range_bundle` con `monthly_services` y `monthly_total`, necesarios para contar pedidos sin duplicarlos cuando se comparan servicios. No modifica pedidos ni borra datos.
