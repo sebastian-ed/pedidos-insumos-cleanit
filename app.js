@@ -40,6 +40,7 @@
     history: [],
     priceHistory: [],
     serviceMaterialExclusions: [],
+    serviceMaterialsSaving: false,
     selectedServiceMaterialsId: null,
     serviceMaterialsDraftHidden: new Set(),
     publicServiceId: null,
@@ -1427,7 +1428,7 @@
       const [servicesResult, materialsResult, exclusionsResult, ordersResult, itemsResult, profilesResult, historyResult, priceHistoryResult, invoicesResult] = await Promise.all([
         S.sb.from('services').select('*').order('name'),
         S.sb.from('materials').select('*').order('category').order('sort_order').order('name'),
-        S.sb.from('service_material_exclusions').select('service_id,material_id'),
+        S.sb.rpc('admin_get_service_material_exclusions_v3'),
         S.sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
         S.sb.from('order_items').select('*').order('sort_order').order('created_at'),
         S.sb.from('profiles').select('*').order('full_name'),
@@ -1442,7 +1443,7 @@
 
       S.services = servicesResult.data || [];
       S.materials = materialsResult.data || [];
-      S.serviceMaterialExclusions = exclusionsResult.data || [];
+      if (!S.serviceMaterialsSaving) S.serviceMaterialExclusions = Array.isArray(exclusionsResult.data) ? exclusionsResult.data : [];
       S.orders = ordersResult.data || [];
       S.orderItems = itemsResult.data || [];
       S.profiles = profilesResult.data || [];
@@ -1489,6 +1490,7 @@
   }
 
   function scheduleAdminRefresh() {
+    if (S.serviceMaterialsSaving) return;
     clearTimeout(S.refreshTimer);
     S.refreshTimer = setTimeout(() => refreshAdmin(false), 500);
   }
@@ -6903,98 +6905,48 @@
   }
 
   async function fetchPersistedHiddenMaterials(serviceId) {
-    const { data, error } = await S.sb
-      .from('service_material_exclusions')
-      .select('service_id,material_id')
-      .eq('service_id', serviceId);
-    if (error) throw error;
-    return data || [];
-  }
-
-  async function repairServiceMaterialsDirectly(serviceId, desiredIds, currentRows) {
-    const currentIds = new Set((currentRows || []).map((row) => row.material_id));
-    const toAdd = [...desiredIds].filter((id) => !currentIds.has(id));
-    const toRemove = [...currentIds].filter((id) => !desiredIds.has(id));
-
-    // Agregamos primero para no dejar el servicio sin configuración si una operación posterior falla.
-    if (toAdd.length) {
-      const payload = toAdd.map((materialId) => ({ service_id: serviceId, material_id: materialId }));
-      const { error } = await S.sb.from('service_material_exclusions').insert(payload);
-      if (error) throw error;
-    }
-
-    if (toRemove.length) {
-      const { error } = await S.sb
-        .from('service_material_exclusions')
-        .delete()
-        .eq('service_id', serviceId)
-        .in('material_id', toRemove);
-      if (error) throw error;
-    }
+    // Lectura confiable con permisos de administrador; no depende del RLS de la tabla.
+    const { data, error } = await S.sb.rpc('admin_get_service_material_exclusions_v3');
+    if (error) throw new Error(`No se pudo verificar configuración en Supabase: ${error.message}. Ejecutá fix-insumos-v3.sql.`);
+    if (!Array.isArray(data)) throw new Error('Supabase devolvió una configuración inválida.');
+    return data.filter((row) => row.service_id === serviceId);
   }
 
   async function saveServiceMaterials() {
     if (!canManageMasterData()) { toast('No tenés permisos para guardar esta configuración.', 'error'); return; }
     const serviceId = S.selectedServiceMaterialsId;
     const service = serviceById(serviceId);
-    if (!service) return;
-
+    if (!service || S.serviceMaterialsSaving) return;
     const validMaterialIds = new Set(S.materials.map((material) => material.id));
-    const desiredIds = new Set(
-      [...S.serviceMaterialsDraftHidden].filter((materialId) => validMaterialIds.has(materialId))
-    );
-
+    const desiredIds = new Set([...S.serviceMaterialsDraftHidden].filter((id) => validMaterialIds.has(id)));
+    S.serviceMaterialsSaving = true;
+    clearTimeout(S.refreshTimer);
     buttonBusy(E.saveServiceMaterialsButton, true, 'Guardando...');
     try {
-      let rpcError = null;
-      const rpcResult = await S.sb.rpc('admin_set_service_hidden_materials', {
-        p_service_id: serviceId,
-        p_hidden_material_ids: [...desiredIds]
+      const { data, error } = await S.sb.rpc('admin_set_service_hidden_materials_v3', {
+        p_service_id: serviceId, p_hidden_material_ids: [...desiredIds]
       });
-      rpcError = rpcResult.error || null;
-
-      // No confiamos solo en la respuesta de la RPC: comprobamos lo que realmente quedó en la tabla.
-      let persistedRows = await fetchPersistedHiddenMaterials(serviceId);
-      let persistedIds = new Set(persistedRows.map((row) => row.material_id));
-
-      if (rpcError || !sameMaterialIdSet(desiredIds, persistedIds)) {
-        console.warn('La RPC no dejó la configuración esperada. Se intenta reparación directa.', rpcError || {
-          expected: [...desiredIds],
-          persisted: [...persistedIds]
-        });
-
-        try {
-          await repairServiceMaterialsDirectly(serviceId, desiredIds, persistedRows);
-        } catch (directError) {
-          const rpcMessage = rpcError?.message ? ` RPC: ${rpcError.message}` : '';
-          const directMessage = directError?.message ? ` Escritura directa: ${directError.message}` : '';
-          throw new Error(`Supabase no pudo persistir los insumos del servicio.${rpcMessage}${directMessage} Ejecutá fix-service-materials.sql en Supabase y volvé a intentar.`);
-        }
-
-        persistedRows = await fetchPersistedHiddenMaterials(serviceId);
-        persistedIds = new Set(persistedRows.map((row) => row.material_id));
+      if (error) throw new Error(`No se guardó en Supabase: ${error.message}. Comprobá haber ejecutado fix-insumos-v3.sql.`);
+      if (!data || data.saved !== true || !sameMaterialIdSet(desiredIds, new Set(data.hidden_material_ids || []))) {
+        throw new Error('La función no confirmó los insumos solicitados.');
       }
-
-      if (!sameMaterialIdSet(desiredIds, persistedIds)) {
-        throw new Error('La base respondió, pero la configuración no quedó guardada. Ejecutá fix-service-materials.sql en Supabase y volvé a intentar.');
-      }
-
-      // Actualizamos el estado local con datos verificados antes de cerrar el modal.
+      const persistedRows = await fetchPersistedHiddenMaterials(serviceId);
+      const persistedIds = new Set(persistedRows.map((row) => row.material_id));
+      if (!sameMaterialIdSet(desiredIds, persistedIds)) throw new Error('La configuración guardada no coincide con lo solicitado.');
       S.serviceMaterialExclusions = [
         ...S.serviceMaterialExclusions.filter((row) => row.service_id !== serviceId),
         ...persistedRows
       ];
-      S.serviceMaterialsDraftHidden = new Set(persistedIds);
+      S.serviceMaterialsDraftHidden = persistedIds;
       renderServices();
-
       M.serviceMaterials.hide();
       S.selectedServiceMaterialsId = null;
-      await refreshAdmin(false);
       toast(`Configuración de ${service.name} guardada y verificada.`, 'success');
     } catch (error) {
-      console.error(error);
+      console.error('Error configuración de insumos:', error);
       toast(error.message || 'No se pudo guardar la configuración.', 'error');
     } finally {
+      S.serviceMaterialsSaving = false;
       buttonBusy(E.saveServiceMaterialsButton, false);
     }
   }
