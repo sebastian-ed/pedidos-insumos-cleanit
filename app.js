@@ -80,6 +80,9 @@
     consumptionStudioLoading: false,
     consumptionStudioCharts: { trend: null, ranking: null },
     consumptionStudioInitialized: false,
+    consumptionStudioCustomServices: new Set(),
+    consumptionStudioCustomMaterials: new Set(),
+    consumptionStudioCustomInitialized: false,
     priceImportWorkbook: null,
     priceImportRows: [],
     priceImportFileName: '',
@@ -329,7 +332,13 @@
     E.consumptionStudioMetric?.addEventListener('change', renderConsumptionAnalyticsStudio);
     E.consumptionStudioBreakdown?.addEventListener('change', renderConsumptionAnalyticsStudio);
     E.consumptionStudioScale?.addEventListener('change', renderConsumptionAnalyticsStudio);
-    E.consumptionStudioTopN?.addEventListener('change', renderConsumptionAnalyticsStudio);
+    E.consumptionStudioTopN?.addEventListener('change', handleConsumptionStudioSeriesModeChange);
+    E.consumptionStudioCustomPicker?.addEventListener('click', handleConsumptionStudioCustomPickerClick);
+    E.consumptionStudioCustomPicker?.addEventListener('change', handleConsumptionStudioCustomPickerChange);
+    E.consumptionStudioServiceSearch?.addEventListener('input', renderConsumptionStudioCustomPicker);
+    E.consumptionStudioMaterialSearch?.addEventListener('input', renderConsumptionStudioCustomPicker);
+    E.consumptionStudioCustomClose?.addEventListener('click', () => E.consumptionStudioCustomPicker?.classList.add('d-none'));
+    E.consumptionStudioSelections?.addEventListener('click', (event) => {if(event.target.closest('[data-studio-open-picker]')){E.consumptionStudioCustomPicker?.classList.remove('d-none');renderConsumptionStudioCustomPicker();}});
     E.refreshConsumptionButton.addEventListener('click', () => loadConsumptionReport(true));
     E.exportConsumptionButton.addEventListener('click', exportConsumptionCsv);
     E.exportConsumptionXlsxButton?.addEventListener('click', exportConsumptionXlsx);
@@ -7866,6 +7875,75 @@
     else if(preferredName){const target=rows.find((r)=>normalize(r.name)===normalize(preferredName)||normalize(r.name).includes(normalize(preferredName)));if(target)E.consumptionStudioMaterial.value=target.key;}
   }
 
+
+  function consumptionStudioAvailableMaterials() {
+    const map=new Map();
+    (S.consumptionStudioRows||[]).forEach((r)=>{const key=consumptionMaterialIdentity(r);if(!map.has(key))map.set(key,{key,name:r.item_name||'Insumo',sku:r.item_sku||'',unit:r.unit||'unidad'});});
+    if(!map.size)(S.materials||[]).forEach((m)=>map.set(`material:${m.id}`,{key:`material:${m.id}`,name:m.name||'Insumo',sku:m.sku||'',unit:m.unit||'unidad'}));
+    return [...map.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'es'));
+  }
+
+  function initializeConsumptionStudioCustomSelection(force=false) {
+    if(S.consumptionStudioCustomInitialized&&!force)return;
+    S.consumptionStudioCustomServices=new Set((S.services||[]).map((x)=>x.id));
+    S.consumptionStudioCustomMaterials=new Set(consumptionStudioAvailableMaterials().map((x)=>x.key));
+    S.consumptionStudioCustomInitialized=true;
+  }
+
+  function reconcileConsumptionStudioCustomSelection() {
+    if(!S.consumptionStudioCustomInitialized)return;
+    const serviceIds=new Set((S.services||[]).map((x)=>x.id));
+    const materialKeys=new Set(consumptionStudioAvailableMaterials().map((x)=>x.key));
+    S.consumptionStudioCustomServices=new Set([...S.consumptionStudioCustomServices].filter((x)=>serviceIds.has(x)));
+    S.consumptionStudioCustomMaterials=new Set([...S.consumptionStudioCustomMaterials].filter((x)=>materialKeys.has(x)));
+  }
+
+  function handleConsumptionStudioSeriesModeChange() {
+    const mode=E.consumptionStudioTopN?.value||'10';
+    if(mode==='custom'){
+      initializeConsumptionStudioCustomSelection(false);
+      E.consumptionStudioCustomPicker?.classList.remove('d-none');
+      renderConsumptionStudioCustomPicker();
+    }else E.consumptionStudioCustomPicker?.classList.add('d-none');
+    renderConsumptionAnalyticsStudio();
+  }
+
+  function renderConsumptionStudioCustomPicker() {
+    if(!E.consumptionStudioCustomPicker)return;
+    if((E.consumptionStudioTopN?.value||'10')!=='custom'){E.consumptionStudioCustomPicker.classList.add('d-none');return;}
+    initializeConsumptionStudioCustomSelection(false);reconcileConsumptionStudioCustomSelection();
+    const serviceSearch=normalize(E.consumptionStudioServiceSearch?.value||'');
+    const materialSearch=normalize(E.consumptionStudioMaterialSearch?.value||'');
+    const services=(S.services||[]).slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'es')).filter((x)=>!serviceSearch||normalize(x.name||'').includes(serviceSearch));
+    const materials=consumptionStudioAvailableMaterials().filter((x)=>!materialSearch||normalize(`${x.name} ${x.sku||''}`).includes(materialSearch));
+    if(E.consumptionStudioCustomServiceCount)E.consumptionStudioCustomServiceCount.textContent=`${S.consumptionStudioCustomServices.size} seleccionados`;
+    if(E.consumptionStudioCustomMaterialCount)E.consumptionStudioCustomMaterialCount.textContent=`${S.consumptionStudioCustomMaterials.size} seleccionados`;
+    E.consumptionStudioServicePicker.innerHTML=services.map((x)=>`<label class="consumption-studio-picker-option"><input type="checkbox" data-studio-custom-service="${ea(x.id)}" ${S.consumptionStudioCustomServices.has(x.id)?'checked':''}><span>${eh(x.name||'Servicio')}</span></label>`).join('')||'<div class="consumption-studio-picker-empty">Sin servicios para este filtro.</div>';
+    E.consumptionStudioMaterialPicker.innerHTML=materials.map((x)=>`<label class="consumption-studio-picker-option"><input type="checkbox" data-studio-custom-material="${ea(x.key)}" ${S.consumptionStudioCustomMaterials.has(x.key)?'checked':''}><span>${eh(x.name)}${x.sku?`<small>${eh(x.sku)}</small>`:''}</span></label>`).join('')||'<div class="consumption-studio-picker-empty">Sin insumos para este filtro.</div>';
+  }
+
+  function handleConsumptionStudioCustomPickerClick(event) {
+    const btn=event.target.closest('[data-studio-select-action]');
+    if(!btn)return;
+    const action=btn.dataset.studioSelectAction;
+    if(action==='services-all')S.consumptionStudioCustomServices=new Set((S.services||[]).map((x)=>x.id));
+    if(action==='services-none')S.consumptionStudioCustomServices=new Set();
+    if(action==='materials-all')S.consumptionStudioCustomMaterials=new Set(consumptionStudioAvailableMaterials().map((x)=>x.key));
+    if(action==='materials-none')S.consumptionStudioCustomMaterials=new Set();
+    renderConsumptionStudioCustomPicker();renderConsumptionAnalyticsStudio();
+  }
+
+  function handleConsumptionStudioCustomPickerChange(event) {
+    const service=event.target.closest('[data-studio-custom-service]');
+    const material=event.target.closest('[data-studio-custom-material]');
+    if(service){const id=service.dataset.studioCustomService;if(service.checked)S.consumptionStudioCustomServices.add(id);else S.consumptionStudioCustomServices.delete(id);}
+    if(material){const key=material.dataset.studioCustomMaterial;if(material.checked)S.consumptionStudioCustomMaterials.add(key);else S.consumptionStudioCustomMaterials.delete(key);}
+    if(!service&&!material)return;
+    if(E.consumptionStudioCustomServiceCount)E.consumptionStudioCustomServiceCount.textContent=`${S.consumptionStudioCustomServices.size} seleccionados`;
+    if(E.consumptionStudioCustomMaterialCount)E.consumptionStudioCustomMaterialCount.textContent=`${S.consumptionStudioCustomMaterials.size} seleccionados`;
+    renderConsumptionAnalyticsStudio();
+  }
+
   async function loadConsumptionAnalyticsStudio(force=false) {
     if(!isFullAdmin()||!E.consumptionAnalyticsStudioSection||S.consumptionStudioLoading)return;
     let range;
@@ -7941,7 +8019,7 @@
       S.consumptionStudioServiceRows=monthlyServiceRows;
       S.consumptionStudioTotalRows=monthlyTotalRows;
       S.consumptionStudioLoadedKey=key;
-      syncConsumptionStudioServiceOptions();syncConsumptionStudioMaterialOptions();
+      syncConsumptionStudioServiceOptions();syncConsumptionStudioMaterialOptions();reconcileConsumptionStudioCustomSelection();if((E.consumptionStudioTopN?.value||'')==='custom')renderConsumptionStudioCustomPicker();
 
       if(!monthlyRows.length){
         const errors=[analyticsResult.error,bundleResult.error,overviewResult.error].filter(Boolean).map((e)=>String(e.message||e.details||e.code||'Error')).join(' · ');
@@ -7966,7 +8044,7 @@
         const allowedMonths=new Set(consumptionStudioMonthKeys());
         S.consumptionStudioRows=S.consumptionAnalyticsRows.filter((r)=>allowedMonths.has(String(r.consumption_month||'').slice(0,7)));
         S.consumptionStudioServiceRows=[];S.consumptionStudioTotalRows=[];S.consumptionStudioLoadedKey=key;
-        syncConsumptionStudioServiceOptions();syncConsumptionStudioMaterialOptions();
+        syncConsumptionStudioServiceOptions();syncConsumptionStudioMaterialOptions();reconcileConsumptionStudioCustomSelection();if((E.consumptionStudioTopN?.value||'')==='custom')renderConsumptionStudioCustomPicker();
         E.consumptionStudioNotice.innerHTML='<strong>Modo de respaldo activo.</strong> Analytics Studio está utilizando el histórico que ya cargó el módulo de Consumos. Gasto, cantidades y precios continúan disponibles.';
         E.consumptionStudioNotice.classList.remove('d-none');
         S.consumptionStudioLoading=false;
@@ -7978,7 +8056,7 @@
   }
 
   function resetConsumptionAnalyticsStudio() {
-    E.consumptionStudioPeriod.value='12';E.consumptionStudioService.value='';E.consumptionStudioMaterial.value='';E.consumptionStudioClassification.value='all';E.consumptionStudioMetric.value='amount';E.consumptionStudioBreakdown.value='auto';E.consumptionStudioScale.value='absolute';E.consumptionStudioTopN.value='10';updateConsumptionStudioPeriodControls();S.consumptionStudioLoadedKey='';loadConsumptionAnalyticsStudio(true);
+    E.consumptionStudioPeriod.value='12';E.consumptionStudioService.value='';E.consumptionStudioMaterial.value='';E.consumptionStudioClassification.value='all';E.consumptionStudioMetric.value='amount';E.consumptionStudioBreakdown.value='auto';E.consumptionStudioScale.value='absolute';E.consumptionStudioTopN.value='10';S.consumptionStudioCustomServices=new Set();S.consumptionStudioCustomMaterials=new Set();S.consumptionStudioCustomInitialized=false;E.consumptionStudioCustomPicker?.classList.add('d-none');if(E.consumptionStudioServiceSearch)E.consumptionStudioServiceSearch.value='';if(E.consumptionStudioMaterialSearch)E.consumptionStudioMaterialSearch.value='';updateConsumptionStudioPeriodControls();S.consumptionStudioLoadedKey='';loadConsumptionAnalyticsStudio(true);
   }
 
   async function openConsumptionAnalyticsStudio(serviceId='',materialKey='',itemName='') {
@@ -8015,10 +8093,12 @@
   }
 
   function consumptionStudioFilteredRows() {
-    const serviceId=E.consumptionStudioService?.value||'',materialKey=E.consumptionStudioMaterial?.value||'',classification=E.consumptionStudioClassification?.value||'all';
+    const serviceId=E.consumptionStudioService?.value||'',materialKey=E.consumptionStudioMaterial?.value||'',classification=E.consumptionStudioClassification?.value||'all',seriesMode=E.consumptionStudioTopN?.value||'10',custom=seriesMode==='custom';
     return (S.consumptionStudioRows||[]).filter((r)=>{
       if(serviceId&&r.service_id!==serviceId)return false;
       const key=consumptionMaterialIdentity(r);if(materialKey&&key!==materialKey)return false;
+      if(custom&&!S.consumptionStudioCustomServices.has(r.service_id))return false;
+      if(custom&&!S.consumptionStudioCustomMaterials.has(key))return false;
       if(classification!=='all'&&consumptionItemClassification({materialId:r.material_id,itemName:r.item_name}).key!==classification)return false;
       return true;
     });
@@ -8033,12 +8113,17 @@
   }
 
   function buildConsumptionStudioSeries() {
-    const metric=consumptionStudioMetricConfig(),serviceId=E.consumptionStudioService?.value||'',materialKey=E.consumptionStudioMaterial?.value||'',classification=E.consumptionStudioClassification?.value||'all',breakdown=consumptionStudioResolvedBreakdown(metric.key,serviceId,materialKey),months=consumptionStudioMonthKeys(),rows=consumptionStudioFilteredRows();
+    const metric=consumptionStudioMetricConfig(),serviceId=E.consumptionStudioService?.value||'',materialKey=E.consumptionStudioMaterial?.value||'',classification=E.consumptionStudioClassification?.value||'all',seriesMode=E.consumptionStudioTopN?.value||'10';
+    if(seriesMode==='custom')initializeConsumptionStudioCustomSelection(false);
+    const breakdown=consumptionStudioResolvedBreakdown(metric.key,serviceId,materialKey),months=consumptionStudioMonthKeys(),rows=consumptionStudioFilteredRows();
+    const availableMaterials=consumptionStudioAvailableMaterials(),customAllMaterials=seriesMode!=='custom'||S.consumptionStudioCustomMaterials.size===availableMaterials.length,customAllServices=seriesMode!=='custom'||S.consumptionStudioCustomServices.size===(S.services||[]).length;
     const map=new Map();
     const ensure=(key,label,meta={})=>{if(!map.has(key))map.set(key,{key,label,meta,months:new Map(months.map((m)=>[m,{amount:0,quantity:0,orders:0}]))});return map.get(key);};
-    if(breakdown==='service'&&(!materialKey)&&classification==='all'&&['amount','orders'].includes(metric.key)&&S.consumptionStudioServiceRows.length){
-      (S.consumptionStudioServiceRows||[]).filter((r)=>!serviceId||r.service_id===serviceId).forEach((r)=>{const month=String(r.consumption_month||'').slice(0,7);if(!months.includes(month))return;const s=ensure(`service:${r.service_id}`,r.service_name||'Servicio',{type:'service',serviceId:r.service_id});const b=s.months.get(month);b.amount+=number(r.amount);if(r.orders!=null)b.orders+=number(r.orders);});
-    } else if(breakdown==='total'&&!materialKey&&classification==='all'&&['amount','orders'].includes(metric.key)&&S.consumptionStudioTotalRows.length){
+    if(breakdown==='service'&&(!materialKey)&&classification==='all'&&['amount','orders'].includes(metric.key)&&S.consumptionStudioServiceRows.length&&customAllMaterials){
+      (S.consumptionStudioServiceRows||[]).filter((r)=>(!serviceId||r.service_id===serviceId)&&(seriesMode!=='custom'||S.consumptionStudioCustomServices.has(r.service_id))).forEach((r)=>{const month=String(r.consumption_month||'').slice(0,7);if(!months.includes(month))return;const s=ensure(`service:${r.service_id}`,r.service_name||'Servicio',{type:'service',serviceId:r.service_id});const b=s.months.get(month);b.amount+=number(r.amount);if(r.orders!=null)b.orders+=number(r.orders);});
+    } else if(breakdown==='total'&&!materialKey&&classification==='all'&&['amount','orders'].includes(metric.key)&&S.consumptionStudioServiceRows.length&&customAllMaterials&&(serviceId||(seriesMode==='custom'&&!customAllServices))){
+      (S.consumptionStudioServiceRows||[]).filter((r)=>(!serviceId||r.service_id===serviceId)&&(seriesMode!=='custom'||S.consumptionStudioCustomServices.has(r.service_id))).forEach((r)=>{const month=String(r.consumption_month||'').slice(0,7);if(!months.includes(month))return;const s=ensure('total','Total consolidado',{type:'total'});const b=s.months.get(month);b.amount+=number(r.amount);if(r.orders!=null)b.orders+=number(r.orders);});
+    } else if(breakdown==='total'&&!materialKey&&classification==='all'&&['amount','orders'].includes(metric.key)&&S.consumptionStudioTotalRows.length&&customAllMaterials&&customAllServices&&!serviceId){
       (S.consumptionStudioTotalRows||[]).forEach((r)=>{const month=String(r.consumption_month||'').slice(0,7);if(!months.includes(month))return;const s=ensure('total','Total consolidado',{type:'total'});const b=s.months.get(month);b.amount+=number(r.amount);b.orders+=number(r.orders);});
     } else {
       rows.forEach((r)=>{const month=String(r.consumption_month||'').slice(0,7);if(!months.includes(month))return;let key,label,meta;
@@ -8049,8 +8134,12 @@
       });
     }
     const series=[...map.values()].map((s)=>{const values=months.map((m)=>{const b=s.months.get(m)||{amount:0,quantity:0,orders:0};return metric.key==='price'?(b.quantity>0?b.amount/b.quantity:0):number(b[metric.key]);});const total=metric.key==='price'?(()=>{const buckets=[...s.months.values()],q=buckets.reduce((a,b)=>a+b.quantity,0),a=buckets.reduce((x,b)=>x+b.amount,0);return q>0?a/q:0;})():values.reduce((a,b)=>a+b,0);const active=values.filter((v)=>v>0).length,current=values.at(-1)||0,previous=values.at(-2)||0,variation=previous>0?(current-previous)/previous*100:(current>0?100:null),average=months.length?values.reduce((a,b)=>a+b,0)/months.length:0,max=Math.max(0,...values),peakIndex=values.indexOf(max);return{...s,values,total,active,current,previous,variation,average,max,peakMonth:peakIndex>=0?months[peakIndex]:''};});
-    const topN=Math.max(1,number(E.consumptionStudioTopN?.value)||10);series.sort((a,b)=>b.total-a.total||String(a.label).localeCompare(String(b.label),'es'));
-    return{metric,breakdown,months,series:series.slice(0,topN),allSeries:series,rows};
+    series.sort((a,b)=>b.total-a.total||String(a.label).localeCompare(String(b.label),'es'));
+    let visibleSeries;
+    if(seriesMode==='all'||seriesMode==='custom')visibleSeries=series;
+    else if(seriesMode==='none')visibleSeries=[];
+    else visibleSeries=series.slice(0,Math.max(1,number(seriesMode)||10));
+    return{metric,breakdown,months,series:visibleSeries,allSeries:series,rows,seriesMode};
   }
 
   function consumptionStudioColor(index,alpha=1) {
@@ -8069,12 +8158,14 @@
     if(!S.consumptionStudioLoadedKey){E.consumptionStudioContent?.classList.add('d-none');return;}
     const data=buildConsumptionStudioSeries(),{metric,breakdown,months,series}=data,scale=E.consumptionStudioScale?.value||'absolute';
     E.consumptionStudioContent.classList.remove('d-none');
-    const range=consumptionStudioDateRange();const serviceText=E.consumptionStudioService?.selectedOptions?.[0]?.textContent||'Todos los servicios',materialText=E.consumptionStudioMaterial?.selectedOptions?.[0]?.textContent||'Todos los insumos',classText=E.consumptionStudioClassification?.selectedOptions?.[0]?.textContent||'Todos';
-    E.consumptionStudioSelections.innerHTML=[range.label,serviceText,materialText,classText,metric.label,breakdown==='service'?'Por servicio':breakdown==='product'?'Por insumo':'Total'].map((x)=>`<span>${eh(x)}</span>`).join('');
+    const range=consumptionStudioDateRange();const serviceText=E.consumptionStudioService?.selectedOptions?.[0]?.textContent||'Todos los servicios',materialText=E.consumptionStudioMaterial?.selectedOptions?.[0]?.textContent||'Todos los insumos',classText=E.consumptionStudioClassification?.selectedOptions?.[0]?.textContent||'Todos',seriesMode=E.consumptionStudioTopN?.value||'10',seriesText=E.consumptionStudioTopN?.selectedOptions?.[0]?.textContent||'Series';
+    const selectionChips=[range.label,serviceText,materialText,classText,metric.label,breakdown==='service'?'Por servicio':breakdown==='product'?'Por insumo':'Total',seriesText].map((x)=>`<span>${eh(x)}</span>`).join('');
+    const customChip=seriesMode==='custom'?`<span class="is-custom"><i class="bi bi-check2-square"></i>${S.consumptionStudioCustomServices.size} servicios · ${S.consumptionStudioCustomMaterials.size} insumos</span><button type="button" class="btn btn-sm btn-outline-primary consumption-studio-edit-selection" data-studio-open-picker><i class="bi bi-sliders me-1"></i>Editar selección</button>`:'';
+    E.consumptionStudioSelections.innerHTML=selectionChips+customChip;
     if((metric.key==='quantity'||metric.key==='price')&&!E.consumptionStudioMaterial.value){E.consumptionStudioNotice.innerHTML='<strong>Lectura correcta:</strong> las cantidades y precios de productos diferentes no se consolidan entre sí. El tablero los compara como series independientes. Seleccioná un insumo concreto para obtener totales y contrastarlo entre servicios.';E.consumptionStudioNotice.classList.remove('d-none');}
     else if(!S.consumptionStudioServiceRows.length&&S.consumptionStudioRows.length){E.consumptionStudioNotice.innerHTML='<strong>Compatibilidad parcial:</strong> gasto, cantidad y precio funcionan. Para contar pedidos sin duplicarlos por producto, ejecutá la versión actualizada de <code>consumos-supabase.sql</code>.';E.consumptionStudioNotice.classList.remove('d-none');}
     else E.consumptionStudioNotice.classList.add('d-none');
-    if(!series.length){destroyConsumptionStudioCharts();E.consumptionStudioInsights.innerHTML='<div class="consumption-empty compact"><strong>No hay series para mostrar.</strong><br>Probá otro período o tocá <em>Aplicar análisis</em>. Si el resto de Consumos tiene datos, el Studio intentará reutilizarlos automáticamente.</div>';E.consumptionStudioSummaryBody.innerHTML='<tr><td colspan="7" class="text-center text-secondary py-4">Sin datos.</td></tr>';E.consumptionStudioMatrixHead.innerHTML='';E.consumptionStudioMatrixBody.innerHTML='';['consumptionStudioKpiTotal','consumptionStudioKpiAverage','consumptionStudioKpiCurrent','consumptionStudioKpiVariation','consumptionStudioKpiPeak'].forEach((id)=>{if(E[id])E[id].textContent='—';});return;}
+    if(!series.length){destroyConsumptionStudioCharts();const hidden=seriesMode==='none',customEmpty=seriesMode==='custom'&&(!S.consumptionStudioCustomServices.size||!S.consumptionStudioCustomMaterials.size);E.consumptionStudioInsights.innerHTML=hidden?'<div class="consumption-empty compact"><strong>Todas las series están ocultas.</strong><br>Elegí Top 5/10/15, Todos o Selección personalizada para volver a visualizarlas.</div>':customEmpty?'<div class="consumption-empty compact"><strong>La selección personalizada está vacía.</strong><br>Elegí al menos un servicio y un insumo para construir la comparación.</div>':'<div class="consumption-empty compact"><strong>No hay series para mostrar.</strong><br>Probá otro período o combinación de filtros.</div>';E.consumptionStudioSummaryBody.innerHTML=`<tr><td colspan="7" class="text-center text-secondary py-4">${hidden?'Series ocultas':customEmpty?'Selección vacía':'Sin datos'}.</td></tr>`;E.consumptionStudioMatrixHead.innerHTML='';E.consumptionStudioMatrixBody.innerHTML='';['consumptionStudioKpiTotal','consumptionStudioKpiAverage','consumptionStudioKpiCurrent','consumptionStudioKpiVariation','consumptionStudioKpiPeak'].forEach((id)=>{if(E[id])E[id].textContent='—';});E.consumptionStudioSeriesBadge.textContent='0 series';return;}
     const metricSeries=data.allSeries||series,materialKey=E.consumptionStudioMaterial?.value||'';
     const aggregate=months.map((_,i)=>metricSeries.reduce((sum,s)=>sum+s.values[i],0));
     let total=aggregate.reduce((a,b)=>a+b,0),avg=months.length?total/months.length:0,current=aggregate.at(-1)||0,prev=aggregate.at(-2)||0,variation=prev>0?(current-prev)/prev*100:(current>0?100:null),peak=Math.max(0,...aggregate),peakIndex=aggregate.indexOf(peak),aggregateAllowed=true;

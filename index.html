@@ -424,9 +424,27 @@
               <div><label class="form-label" for="consumptionStudioMetric">Métrica</label><select id="consumptionStudioMetric" class="form-select"><option value="amount">Gasto</option><option value="quantity">Cantidad</option><option value="price">Precio efectivo</option><option value="orders">Pedidos</option></select></div>
               <div><label class="form-label" for="consumptionStudioBreakdown">Desagregar</label><select id="consumptionStudioBreakdown" class="form-select"><option value="auto">Automático</option><option value="product">Por insumo</option><option value="service">Por servicio</option><option value="total">Total consolidado</option></select></div>
               <div><label class="form-label" for="consumptionStudioScale">Escala</label><select id="consumptionStudioScale" class="form-select"><option value="absolute">Valores reales</option><option value="index">Índice base 100</option></select></div>
-              <div><label class="form-label" for="consumptionStudioTopN">Series</label><select id="consumptionStudioTopN" class="form-select"><option value="5">Top 5</option><option value="10" selected>Top 10</option><option value="15">Top 15</option></select></div>
+              <div><label class="form-label" for="consumptionStudioTopN">Series</label><select id="consumptionStudioTopN" class="form-select"><option value="5">Top 5</option><option value="10" selected>Top 10</option><option value="15">Top 15</option><option value="all">Todos</option><option value="none">Ocultar todos</option><option value="custom">Selección personalizada</option></select></div>
             </div>
             <div id="consumptionStudioSelections" class="consumption-studio-selections mt-3"></div>
+            <div id="consumptionStudioCustomPicker" class="consumption-studio-custom-picker mt-3 d-none">
+              <div class="consumption-studio-custom-head">
+                <div><strong>Selección personalizada</strong><span>Elegí servicios e insumos. Podés usar ambas selecciones como filtros cruzados y cambiar el desagregado sin perderlas.</span></div>
+                <button id="consumptionStudioCustomClose" type="button" class="btn btn-sm btn-outline-secondary">Cerrar panel</button>
+              </div>
+              <div class="consumption-studio-custom-grid">
+                <section class="consumption-studio-picker-group">
+                  <div class="consumption-studio-picker-title"><div><strong>Servicios</strong><span id="consumptionStudioCustomServiceCount">0 seleccionados</span></div><div class="btn-group btn-group-sm"><button type="button" class="btn btn-outline-primary" data-studio-select-action="services-all">Todos</button><button type="button" class="btn btn-outline-secondary" data-studio-select-action="services-none">Ninguno</button></div></div>
+                  <div class="input-group input-group-sm mb-2"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="consumptionStudioServiceSearch" type="search" class="form-control" placeholder="Buscar servicio..."></div>
+                  <div id="consumptionStudioServicePicker" class="consumption-studio-picker-list"></div>
+                </section>
+                <section class="consumption-studio-picker-group">
+                  <div class="consumption-studio-picker-title"><div><strong>Insumos</strong><span id="consumptionStudioCustomMaterialCount">0 seleccionados</span></div><div class="btn-group btn-group-sm"><button type="button" class="btn btn-outline-primary" data-studio-select-action="materials-all">Todos</button><button type="button" class="btn btn-outline-secondary" data-studio-select-action="materials-none">Ninguno</button></div></div>
+                  <div class="input-group input-group-sm mb-2"><span class="input-group-text"><i class="bi bi-search"></i></span><input id="consumptionStudioMaterialSearch" type="search" class="form-control" placeholder="Buscar insumo o SKU..."></div>
+                  <div id="consumptionStudioMaterialPicker" class="consumption-studio-picker-list"></div>
+                </section>
+              </div>
+            </div>
             <div id="consumptionStudioNotice" class="alert alert-info py-2 mt-3 mb-0 d-none"></div>
             <div id="consumptionStudioError" class="alert alert-danger py-2 mt-3 mb-0 d-none"></div>
             <div id="consumptionStudioLoading" class="consumption-studio-loading d-none"><div class="spinner-border spinner-border-sm text-primary" role="status"></div><span>Preparando análisis multidimensional...</span></div>
@@ -953,8 +971,8 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <!-- Build: Analytics Studio + inteligencia avanzada de consumos + conciliación IVA + facturas IA + PWA 2026-11-04-v3-studio-fallback -->
+  <!-- Build: Analytics Studio + inteligencia avanzada de consumos + conciliación IVA + facturas IA + PWA 2026-11-04-v4-studio-multiselect -->
   <script src="config.js"></script>
-  <script src="app.js?v=20261104-studio-render-fix-v2"></script>
+  <script src="app.js?v=20261104-studio-multiselect-v1"></script>
 </body>
 </html>
