@@ -1,29 +1,34 @@
-# Pedidos Clean It — análisis integral de consumos
+# Pedidos Clean It — inteligencia avanzada de consumos
 
-## Qué agrega
+## Qué incorpora
 
-- Exportación del análisis de consumos a PDF y XLSX.
-- XLSX con hojas: Resumen, Ranking servicios, Ranking insumos, Recurrencias, Detalle servicio-insumo y Evolución mensual.
-- PDF gerencial con conclusiones cualitativas, KPIs, ranking completo de servicios, ranking completo de insumos y patrones recurrentes.
-- Diagnóstico cuantitativo y cualitativo en pantalla.
-- Concentración Top 5 de servicios e insumos, gasto promedio por pedido, mayores consumidores y recurrencias.
-- Vista seleccionable: Completo, Ejecutivo, Servicios, Insumos o Recurrencias.
-- El análisis respeta el período seleccionado: mes o rango personalizado, además del filtro por servicio.
+- análisis por mes o rango personalizado;
+- ranking completo de servicios e insumos;
+- gráficos de gasto, pedidos, frecuencia y evolución;
+- score de prioridad de revisión 0–100 por servicio;
+- comparación del consumo contra facturación mensual y límite operativo;
+- Pareto 80/20 para focalizar controles;
+- clasificación automática Consumible / Semidurable / Durable;
+- recurrencias y reposiciones potencialmente anómalas;
+- explorador individual por servicio con gasto, pedidos y desagregado mensual por insumo;
+- explorador individual por insumo con cantidad, gasto y precio efectivo mes a mes;
+- separación aproximada del efecto cantidad y efecto precio sobre el gasto;
+- exportaciones PDF, XLSX y CSV. El XLSX incluye una hoja de Prioridad de auditoría.
 
-## Criterio
+Solo se consideran pedidos en estado **Entregado**. Las alertas indican qué conviene revisar; no afirman automáticamente que exista desperdicio.
 
-Solo se consideran pedidos en estado Entregado. Las señales de fuga o desvío son indicadores para revisión; no se clasifican automáticamente como desperdicio sin validación operativa.
+## Supabase — paso necesario
 
-## Supabase
+Ejecutá una vez `consumos-supabase.sql` desde **Supabase > SQL Editor**. El archivo usa `CREATE OR REPLACE`: actualiza las funciones analíticas sin borrar pedidos ni datos. La nueva función `admin_consumption_overview` permite contar pedidos mensuales de forma exacta, sin duplicarlos por cada línea de insumo.
 
-No requiere una migración SQL nueva si el módulo de Consumos ya funciona correctamente. Se conserva `corregir-analitica-consumos.sql` como referencia de la última corrección instalada.
+La app sigue cargando si esa función todavía no fue instalada, pero los gráficos históricos de cantidad de pedidos exactos requieren este SQL.
 
 ## Publicación
 
 ```powershell
 git add .
-git commit -m "Analisis integral de consumos"
+git commit -m "Inteligencia avanzada de consumos"
 git push origin main
 ```
 
-Después del deploy: `Ctrl + Shift + R`. Si usás la PWA, cerrala por completo y volvé a abrirla.
+Después del deploy hacé `Ctrl + Shift + R`. Si usás la PWA, cerrala completamente y volvé a abrirla.

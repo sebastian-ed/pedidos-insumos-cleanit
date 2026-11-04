@@ -61,6 +61,7 @@
     consumptionRows: [],
     consumptionServiceRows: [],
     consumptionAnalyticsRows: [],
+    consumptionOverviewRows: [],
     consumptionRangeRows: [],
     consumptionRangeServiceRows: [],
     consumptionRangeMonthlyRows: [],
@@ -306,6 +307,9 @@
     E.consumptionServiceFilter.addEventListener('change', () => loadConsumptionReport(true));
     E.consumptionSearch.addEventListener('input', renderConsumption);
     E.consumptionProductRankingSort.addEventListener('change', renderConsumptionFullRankings);
+    E.consumptionServiceChartMetric?.addEventListener('change', renderConsumptionFullRankings);
+    E.consumptionProductChartMetric?.addEventListener('change', renderConsumptionFullRankings);
+    E.consumptionTrendMetric?.addEventListener('change', renderConsumption);
     E.consumptionAnalysisView?.addEventListener('change', applyConsumptionAnalysisView);
     E.consumptionRecurringFilter?.addEventListener('change', renderConsumption);
     E.refreshConsumptionButton.addEventListener('click', () => loadConsumptionReport(true));
@@ -1309,6 +1313,11 @@
     S.serviceMaterialExclusions = [];
     S.consumptionRows = [];
     S.consumptionServiceRows = [];
+    S.consumptionAnalyticsRows = [];
+    S.consumptionOverviewRows = [];
+    S.consumptionRangeRows = [];
+    S.consumptionRangeServiceRows = [];
+    S.consumptionRangeMonthlyRows = [];
     S.consumptionLoadedKey = '';
     S.consumptionLoading = false;
     S.consumptionHistoryContext = null;
@@ -7112,6 +7121,21 @@
     return keys;
   }
 
+  function monthEndDate(month) {
+    const [year,mon]=String(month).split('-').map(Number);const d=new Date(year,mon,0);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  function consumptionOverviewMap() {
+    const map=new Map();(S.consumptionOverviewRows||[]).forEach((r)=>map.set(String(r.consumption_month||'').slice(0,7),{amount:number(r.amount),orders:number(r.orders),products:number(r.products),services:number(r.services)}));return map;
+  }
+
+  function consumptionTrendMetricConfig() {
+    const metric=E.consumptionTrendMetric?.value||'amount';
+    if(metric==='orders')return{field:'orders',label:'Pedidos entregados',format:(v)=>`${formatQty(v)} ped.`};
+    if(metric==='products')return{field:'products',label:'Insumos distintos',format:(v)=>formatQty(v)};
+    return{field:'amount',label:'Gasto confirmado',format:(v)=>compactCurrency(v)};
+  }
+
   async function loadConsumptionReport(force = false) {
     if (!isFullAdmin() || S.mode !== 'admin') return;
     const mode = getConsumptionMode();
@@ -7143,9 +7167,14 @@
         ]);
         if(servicesResult.error)throw servicesResult.error;if(productsResult.error)throw productsResult.error;
         S.consumptionServiceRows=servicesResult.data||[];S.consumptionRows=productsResult.data||[];
-        const analyticsResult=await S.sb.rpc('admin_consumption_analytics',{p_until_month:`${month}-01`,p_months:12,p_service_id:serviceId});
+        const overviewFrom=previousMonthKeys(month,12)[0];
+        const [analyticsResult,overviewResult]=await Promise.all([
+          S.sb.rpc('admin_consumption_analytics',{p_until_month:`${month}-01`,p_months:12,p_service_id:serviceId}),
+          S.sb.rpc('admin_consumption_overview',{p_from_date:`${overviewFrom}-01`,p_to_date:monthEndDate(month),p_service_id:serviceId})
+        ]);
         if(analyticsResult.error){console.warn('Analítica avanzada:',analyticsResult.error);S.consumptionAnalyticsRows=[];const detail=String(analyticsResult.error.message||analyticsResult.error.details||'Error desconocido');E.consumptionAnalyticsNotice.textContent=`No se pudo cargar la analítica avanzada: ${detail}`;E.consumptionAnalyticsNotice.classList.remove('d-none');}
         else{S.consumptionAnalyticsRows=analyticsResult.data||[];E.consumptionAnalyticsNotice.classList.add('d-none');}
+        if(overviewResult.error){console.warn('Overview consumos:',overviewResult.error);S.consumptionOverviewRows=[];}else S.consumptionOverviewRows=overviewResult.data||[];
       } else {
         const {start,end}=consumptionRangeValues();
         const rangeResult=await S.sb.rpc('admin_consumption_range_bundle',{p_from_date:start,p_to_date:end,p_service_id:serviceId});
@@ -7155,11 +7184,13 @@
         S.consumptionRangeRows=Array.isArray(payload.products)?payload.products:[];
         S.consumptionRangeMonthlyRows=Array.isArray(payload.monthly)?payload.monthly:[];
         S.consumptionAnalyticsRows=S.consumptionRangeMonthlyRows;
+        const overviewResult=await S.sb.rpc('admin_consumption_overview',{p_from_date:start,p_to_date:end,p_service_id:serviceId});
+        if(overviewResult.error){console.warn('Overview consumos:',overviewResult.error);S.consumptionOverviewRows=[];}else S.consumptionOverviewRows=overviewResult.data||[];
         E.consumptionAnalyticsNotice.classList.add('d-none');
       }
       S.consumptionLoadedKey=key;
     } catch(error) {
-      console.error(error);S.consumptionServiceRows=[];S.consumptionRows=[];S.consumptionAnalyticsRows=[];S.consumptionRangeRows=[];S.consumptionRangeServiceRows=[];S.consumptionRangeMonthlyRows=[];S.consumptionLoadedKey='';
+      console.error(error);S.consumptionServiceRows=[];S.consumptionRows=[];S.consumptionAnalyticsRows=[];S.consumptionRangeRows=[];S.consumptionRangeServiceRows=[];S.consumptionRangeMonthlyRows=[];S.consumptionOverviewRows=[];S.consumptionLoadedKey='';
       E.consumptionError.textContent=consumptionErrorMessage(error);E.consumptionError.classList.remove('d-none');
     } finally {S.consumptionLoading=false;buttonBusy(E.refreshConsumptionButton,false);renderConsumption();}
   }
@@ -7242,11 +7273,12 @@
       const profile=consumptionRecurrenceProfile({serviceId:row.service_id,serviceName:row.service_name,materialKey:row.material_key,materialId:row.material_id,itemName:row.item_name,sku:row.item_sku,unit:row.unit||'unidad'},keys,(key)=>map.get(key));
       if(!profile)return;recurrences.push(profile);
       if(profile.durableRepeat){const alert={severity:3,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Elemento durable pedido repetidamente',detail:`${profile.itemName} tuvo consumo en ${profile.activeMonths} de los últimos ${profile.periodMonths} meses analizados · ${formatQty(profile.totalQuantity)} ${profile.unit} en ${formatQty(profile.totalOrders)} pedidos.`,icon:'bi-arrow-repeat'};alerts.push(alert);durableAlerts.push(alert);}
+      else if(profile.semiDurableRepeat) alerts.push({severity:2,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Elemento semidurable pedido repetidamente',detail:`${profile.itemName} aparece repetidamente. Revisar vida útil, rotura y stock físico.`,icon:'bi-arrow-repeat'});
       else if(profile.highVolume)alerts.push({severity:2,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Cantidad alta de forma recurrente',detail:`${profile.itemName}: promedio ${formatQty(profile.avgActiveQuantity)} ${profile.unit} por mes activo · ${formatQty(profile.totalQuantity)} ${profile.unit} acumuladas.`,icon:'bi-boxes'});
     });
     alerts.sort((a,b)=>b.severity-a.severity||b.impact-a.impact);recurrences.sort((a,b)=>b.score-a.score||b.totalAmount-a.totalAmount);
     E.consumptionInsightAlerts.textContent=String(alerts.length);E.consumptionInsightDurables.textContent=String(durableAlerts.length);
-    const max=Math.max(1,...trend.map(r=>r.amount));E.consumptionTrendBars.innerHTML=trend.map((row)=>`<div class="consumption-trend-column" title="${ea(`${row.label}: ${formatCurrency(row.amount)}`)}"><div class="consumption-trend-value">${eh(compactCurrency(row.amount))}</div><div class="consumption-trend-track"><span style="height:${Math.max(row.amount>0?5:1,row.amount/max*100).toFixed(1)}%"></span></div><div class="consumption-trend-label">${eh(row.shortLabel)}</div></div>`).join('');
+    const metricCfg=consumptionTrendMetricConfig(),overview=consumptionOverviewMap();const metricTrend=trend.map((row)=>{const exact=overview.get(row.key);const value=metricCfg.field==='amount'?(exact?exact.amount:row.amount):(exact?number(exact[metricCfg.field]):0);return{...row,value};});const max=Math.max(1,...metricTrend.map(r=>r.value));E.consumptionTrendDescription.textContent=(metricCfg.field!=='amount'&&!S.consumptionOverviewRows.length)?`${metricCfg.label}: requiere instalar la función SQL de inteligencia para contar sin duplicar.`:`${metricCfg.label} dentro del rango seleccionado.`;E.consumptionTrendBars.innerHTML=metricTrend.map((row)=>`<div class="consumption-trend-column" title="${ea(`${row.label}: ${metricCfg.field==='amount'?formatCurrency(row.value):metricCfg.format(row.value)}`)}"><div class="consumption-trend-value">${eh(metricCfg.format(row.value))}</div><div class="consumption-trend-track"><span style="height:${Math.max(row.value>0?5:1,row.value/max*100).toFixed(1)}%"></span></div><div class="consumption-trend-label">${eh(row.shortLabel)}</div></div>`).join('');
     E.consumptionTopServices.innerHTML=topServices.map((r,i)=>rankingItemHtml(i+1,r.name,formatCurrency(r.amount),r.share,r.serviceId)).join('')||'<div class="consumption-empty compact">Sin gasto registrado.</div>';E.consumptionTopProducts.innerHTML=topProducts.map((r,i)=>rankingItemHtml(i+1,r.name,formatCurrency(r.amount),r.share,r.serviceId,r.itemName)).join('')||'<div class="consumption-empty compact">Sin productos registrados.</div>';
     renderConsumptionRecurrenceSections(recurrences);
     E.consumptionAlertsList.innerHTML=alerts.slice(0,20).map(consumptionAlertHtml).join('')||'<div class="consumption-alert-empty"><i class="bi bi-check-circle-fill"></i><div><strong>Sin desvíos relevantes</strong><span>No se detectaron patrones atípicos dentro del rango seleccionado.</span></div></div>';E.consumptionAlertsCaption.textContent=alerts.length?`${alerts.length} señales priorizadas`:'Sin señales críticas';
@@ -7268,16 +7300,11 @@
     E.consumptionInsightAlerts.textContent = String(analytics.alerts.length);
     E.consumptionInsightDurables.textContent = String(analytics.durableAlerts.length);
 
-    const maxTrend = Math.max(1, ...analytics.monthTrend.map((row) => row.amount));
-    E.consumptionTrendBars.innerHTML = analytics.monthTrend.map((row) => {
-      const height = Math.max(row.amount > 0 ? 5 : 1, (row.amount / maxTrend) * 100);
-      const current = row.key === month;
-      return `<div class="consumption-trend-column ${current ? 'is-current' : ''}" title="${ea(`${row.label}: ${formatCurrency(row.amount)}`)}">
-        <div class="consumption-trend-value">${eh(compactCurrency(row.amount))}</div>
-        <div class="consumption-trend-track"><span style="height:${height.toFixed(1)}%"></span></div>
-        <div class="consumption-trend-label">${eh(row.shortLabel)}</div>
-      </div>`;
-    }).join('');
+    const metricCfg=consumptionTrendMetricConfig(),overview=consumptionOverviewMap();
+    const trendRows=analytics.monthTrend.map((row)=>{const exact=overview.get(row.key);const value=metricCfg.field==='amount'?(exact?exact.amount:row.amount):(exact?number(exact[metricCfg.field]):0);return{...row,value};});
+    const maxTrend=Math.max(1,...trendRows.map((row)=>row.value));
+    E.consumptionTrendDescription.textContent=(metricCfg.field!=='amount'&&!S.consumptionOverviewRows.length)?`${metricCfg.label}: requiere instalar la función SQL de inteligencia para contar sin duplicar.`:`${metricCfg.label} mes a mes para detectar tendencia y estacionalidad.`;
+    E.consumptionTrendBars.innerHTML=trendRows.map((row)=>{const height=Math.max(row.value>0?5:1,row.value/maxTrend*100),current=row.key===month;return`<div class="consumption-trend-column ${current?'is-current':''}" title="${ea(`${row.label}: ${metricCfg.field==='amount'?formatCurrency(row.value):metricCfg.format(row.value)}`)}"><div class="consumption-trend-value">${eh(metricCfg.format(row.value))}</div><div class="consumption-trend-track"><span style="height:${height.toFixed(1)}%"></span></div><div class="consumption-trend-label">${eh(row.shortLabel)}</div></div>`;}).join('');
 
     E.consumptionTopServices.innerHTML = analytics.topServices.map((row, index) => rankingItemHtml(index + 1, row.name, formatCurrency(row.amount), row.share, row.serviceId)).join('')
       || '<div class="consumption-empty compact">Sin gasto registrado en el mes.</div>';
@@ -7364,6 +7391,8 @@
       if(profile.durableRepeat){
         const alert={type:'durable-repeat',severity:3,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Reposición reiterada de un elemento durable',detail:`${profile.itemName} apareció en ${profile.activeMonths} de los últimos ${profile.periodMonths} meses · ${formatQty(profile.totalQuantity)} ${profile.unit} en ${formatQty(profile.totalOrders)} pedidos. No necesita ser consecutivo para quedar marcado.`,icon:'bi-arrow-repeat'};
         alerts.push(alert);durableAlerts.push(alert);
+      } else if(profile.semiDurableRepeat){
+        alerts.push({type:'semidurable-repeat',severity:2,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Reposición reiterada de un elemento semidurable',detail:`${profile.itemName} apareció en ${profile.activeMonths} de los últimos ${profile.periodMonths} meses. Conviene validar vida útil, rotura y stock físico.`,icon:'bi-arrow-repeat'});
       } else if(profile.highVolume){
         alerts.push({type:'high-volume-repeat',severity:2,impact:profile.totalAmount,serviceId:profile.serviceId,serviceName:profile.serviceName,itemName:profile.itemName,title:'Cantidad alta de forma recurrente',detail:`${profile.itemName}: promedio ${formatQty(profile.avgActiveQuantity)} ${profile.unit} por mes activo · ${formatQty(profile.totalQuantity)} ${profile.unit} en los últimos ${profile.periodMonths} meses.`,icon:'bi-boxes'});
       } else if(profile.frequent && profile.rising){
@@ -7378,7 +7407,7 @@
   }
 
   function consumptionRecurrenceHtml(row) {
-    const classes=[row.durableRepeat?'is-durable':'',row.highVolume?'is-volume':'',row.frequent?'is-frequent':''].filter(Boolean).join(' ');
+    const classes=[row.durableRepeat?'is-durable':'',row.semiDurableRepeat?'is-semidurable':'',row.highVolume?'is-volume':'',row.frequent?'is-frequent':''].filter(Boolean).join(' ');
     const last=row.lastMonth?monthLabel(row.lastMonth):'Sin dato';
     return `<button class="consumption-recurrence-item ${classes}" type="button" data-consumption-focus-service="${ea(row.serviceId)}" data-consumption-focus-item="${ea(row.itemName)}">
       <div class="consumption-recurrence-head"><strong>${eh(row.itemName)}</strong><span>${eh(row.pattern)}</span></div>
@@ -7466,13 +7495,24 @@
     let count=0; for(let i=values.length-1;i>=0;i-=1){if(number(values[i])>0) count+=1; else break;} return count;
   }
 
-  function isDurableConsumptionItem(row) {
-    const material=S.materials.find((item)=>item.id===row.materialId);
-    const text=normalize(`${row.itemName||''} ${material?.name||''} ${material?.category||''}`);
-    const durableTerms=['escoba','escobillon','balde','mopa','lampazo','cabo','pala','secador','haragan','pulverizador','rociador','cepillo','plumero','carro','dispenser','jarra','embudo','recogedor','porta mopa'];
-    return durableTerms.some((term)=>text.includes(term));
+  function consumptionItemClassification(meta) {
+    const material=S.materials.find((item)=>item.id===meta.materialId);
+    const text=normalize(`${meta.itemName||meta.name||''} ${material?.name||''} ${material?.category||''} ${material?.detail||''}`);
+    const durableTerms=['escoba','escobillon','balde','mopa','lampazo','cabo','pala','secador','haragan','pulverizador','rociador','cepillo','plumero','carro','dispenser','jarra','embudo','recogedor','porta mopa','medidor','globo telarana'];
+    const semiTerms=['microfibra','rejilla','trapo','esponja','fibra','guante','ballerina','paño','pano','cobertor'];
+    if(durableTerms.some((term)=>text.includes(term))) return {key:'durable',label:'Durable',riskWeight:1};
+    if(semiTerms.some((term)=>text.includes(term))) return {key:'semidurable',label:'Semidurable',riskWeight:.55};
+    return {key:'consumable',label:'Consumible',riskWeight:.2};
   }
 
+  function consumptionClassificationBadge(meta) {
+    const c=consumptionItemClassification(meta);
+    return `<span class="consumption-classification is-${ea(c.key)}">${eh(c.label)}</span>`;
+  }
+
+  function isDurableConsumptionItem(row) {
+    return consumptionItemClassification({materialId:row.materialId,itemName:row.itemName}).key==='durable';
+  }
 
   function maxPositiveStreak(values) {
     let best=0,current=0;
@@ -7500,10 +7540,13 @@
     const lastActive=[...buckets].reverse().find((b)=>b.quantity>0);
     const lastActiveIndex=lastActive?keys.indexOf(lastActive.key):-1;
     const monthsSinceLast=lastActiveIndex>=0?keys.length-1-lastActiveIndex:999;
-    const durable=isDurableConsumptionItem({materialId:meta.materialId,itemName:meta.itemName});
+    const classification=consumptionItemClassification({materialId:meta.materialId,itemName:meta.itemName});
+    const durable=classification.key==='durable';
+    const semiDurable=classification.key==='semidurable';
     const recentRatio=recentCount?activeRecent.length/recentCount:0;
     const allRatio=keys.length?activeAll.length/keys.length:0;
     const durableRepeat=durable && (activeRecent.length>=2 || (activeAll.length>=3 && monthsSinceLast<=2));
+    const semiDurableRepeat=semiDurable && (activeRecent.length>=3 || (activeAll.length>=4 && monthsSinceLast<=2));
     const frequent=(recentCount>=4 && activeRecent.length>=Math.max(3,Math.ceil(recentCount*.65))) || (keys.length>=8 && activeAll.length>=Math.ceil(keys.length*.65) && monthsSinceLast<=2);
     const repeated=activeRecent.length>=3 || (recentCount<=3 && activeRecent.length>=2);
     const highVolume=(activeRecent.length>=2 && (avgActiveQuantity>=2.5 || totalQuantity>=8 || totalOrders>=5));
@@ -7511,25 +7554,27 @@
     const previousAverage=previousActive.length?previousActive.reduce((sum,b)=>sum+b.quantity,0)/previousActive.length:0;
     const current=recent[recent.length-1]||{quantity:0,amount:0,orders:0};
     const rising=current.quantity>0 && previousActive.length>=2 && previousAverage>0 && current.quantity>=previousAverage*1.5;
-    const candidate=durableRepeat || frequent || repeated || highVolume;
+    const candidate=durableRepeat || semiDurableRepeat || frequent || repeated || highVolume;
     if(!candidate) return null;
     let pattern='Recurrente';
     let patternType='recurring';
     if(durableRepeat){pattern='Durable repetido';patternType='durable';}
+    else if(semiDurableRepeat){pattern='Semidurable repetido';patternType='semidurable';}
     else if(highVolume){pattern='Cantidad alta recurrente';patternType='volume';}
     else if(frequent){pattern='Muy frecuente';patternType='frequent';}
     if(rising && patternType==='recurring'){pattern='Recurrente en aumento';patternType='rising';}
-    const score=(durableRepeat?60:0)+(highVolume?30:0)+(frequent?25:0)+(rising?15:0)+activeRecent.length*9+activeAll.length*2+Math.min(18,totalOrders*2)+Math.min(15,avgActiveQuantity*3)+Math.min(10,totalAmount/20000);
+    const score=(durableRepeat?60:0)+(semiDurableRepeat?30:0)+(highVolume?30:0)+(frequent?25:0)+(rising?15:0)+activeRecent.length*9+activeAll.length*2+Math.min(18,totalOrders*2)+Math.min(15,avgActiveQuantity*3)+Math.min(10,totalAmount/20000);
     return {
       serviceId:meta.serviceId,serviceName:meta.serviceName,materialKey:meta.materialKey||'',materialId:meta.materialId||null,itemName:meta.itemName,sku:meta.sku||'',unit:meta.unit||'unidad',
       activeMonths:activeRecent.length,periodMonths:recentCount,activeMonths12:activeAll.length,totalMonths:keys.length,totalQuantity,totalAmount,totalOrders,avgActiveQuantity,avgActiveAmount,
-      streak,maxStreak,lastMonth:lastActive?.key||'',monthsSinceLast,durable,durableRepeat,frequent,highVolume,rising,recentRatio,allRatio,pattern,patternType,score,currentQuantity:current.quantity,currentAmount:current.amount
+      streak,maxStreak,lastMonth:lastActive?.key||'',monthsSinceLast,durable,semiDurable,classification:classification.key,durableRepeat,semiDurableRepeat,frequent,highVolume,rising,recentRatio,allRatio,pattern,patternType,score,currentQuantity:current.quantity,currentAmount:current.amount
     };
   }
 
   function filterConsumptionRecurrences(rows) {
     const filter=E.consumptionRecurringFilter?.value||'all';
     if(filter==='durable') return rows.filter((r)=>r.durableRepeat);
+    if(filter==='semidurable') return rows.filter((r)=>r.semiDurableRepeat);
     if(filter==='volume') return rows.filter((r)=>r.highVolume);
     if(filter==='frequent') return rows.filter((r)=>r.frequent);
     return rows;
@@ -7538,8 +7583,8 @@
   function buildConsumptionRecurrenceServiceSummaries(rows) {
     const map=new Map();
     rows.forEach((row)=>{
-      if(!map.has(row.serviceId)) map.set(row.serviceId,{serviceId:row.serviceId,serviceName:row.serviceName,items:[],durables:0,highVolume:0,frequent:0,totalAmount:0,totalQuantity:0,score:0});
-      const service=map.get(row.serviceId);service.items.push(row);service.durables+=row.durableRepeat?1:0;service.highVolume+=row.highVolume?1:0;service.frequent+=row.frequent?1:0;service.totalAmount+=row.totalAmount;service.totalQuantity+=row.totalQuantity;service.score+=row.score;
+      if(!map.has(row.serviceId)) map.set(row.serviceId,{serviceId:row.serviceId,serviceName:row.serviceName,items:[],durables:0,semidurables:0,highVolume:0,frequent:0,totalAmount:0,totalQuantity:0,score:0});
+      const service=map.get(row.serviceId);service.items.push(row);service.durables+=row.durableRepeat?1:0;service.semidurables+=row.semiDurableRepeat?1:0;service.highVolume+=row.highVolume?1:0;service.frequent+=row.frequent?1:0;service.totalAmount+=row.totalAmount;service.totalQuantity+=row.totalQuantity;service.score+=row.score;
     });
     return [...map.values()].map((service)=>({...service,items:service.items.sort((a,b)=>b.score-a.score||b.totalAmount-a.totalAmount)})).sort((a,b)=>b.durables-a.durables||b.score-a.score||b.totalAmount-a.totalAmount);
   }
@@ -7547,6 +7592,7 @@
   function consumptionRecurrenceServiceHtml(row) {
     const flags=[];
     if(row.durables) flags.push(`<span class="is-danger">${row.durables} durable${row.durables===1?'':'s'}</span>`);
+    if(row.semidurables) flags.push(`<span>${row.semidurables} semidurable${row.semidurables===1?'':'s'}</span>`);
     if(row.highVolume) flags.push(`<span>${row.highVolume} cantidad alta</span>`);
     if(row.frequent) flags.push(`<span>${row.frequent} muy frecuente${row.frequent===1?'':'s'}</span>`);
     const items=row.items.slice(0,4).map((item)=>`<li><strong>${eh(item.itemName)}</strong><span>${item.activeMonths}/${item.periodMonths} meses · ${formatQty(item.totalQuantity)} ${eh(item.unit)} · ${formatQty(item.totalOrders)} pedidos</span></li>`).join('');
@@ -7557,8 +7603,9 @@
     const rows=filterConsumptionRecurrences(allRows);
     const services=buildConsumptionRecurrenceServiceSummaries(rows);
     const durableCount=allRows.filter((r)=>r.durableRepeat).length;
+    const semiDurableCount=allRows.filter((r)=>r.semiDurableRepeat).length;
     const volumeCount=allRows.filter((r)=>r.highVolume).length;
-    if(E.consumptionRecurringBadge) E.consumptionRecurringBadge.textContent=`${allRows.length} patrones · ${durableCount} durables · ${volumeCount} de cantidad alta`;
+    if(E.consumptionRecurringBadge) E.consumptionRecurringBadge.textContent=`${allRows.length} patrones · ${durableCount} durables · ${semiDurableCount} semidurables · ${volumeCount} de cantidad alta`;
     if(E.consumptionRecurringServiceCount) E.consumptionRecurringServiceCount.textContent=`${services.length} ${services.length===1?'servicio':'servicios'}`;
     if(E.consumptionRecurringDetailCount) E.consumptionRecurringDetailCount.textContent=`${rows.length} ${rows.length===1?'patrón':'patrones'}`;
     if(E.consumptionRecurringServices) E.consumptionRecurringServices.innerHTML=services.map(consumptionRecurrenceServiceHtml).join('')||'<div class="consumption-empty compact">No hay servicios con recurrencias para el filtro seleccionado.</div>';
@@ -7589,26 +7636,72 @@
     return [...rows].sort((a,b)=>number(b[field])-number(a[field]) || number(b.amount)-number(a.amount));
   }
 
+  function consumptionProductMonthlyComparison(materialKey) {
+    const source=getConsumptionMode()==='range'?S.consumptionRangeMonthlyRows:S.consumptionAnalyticsRows;
+    const serviceId=E.consumptionServiceFilter.value||'';
+    let currentKey,previousKey;
+    if(getConsumptionMode()==='range'){
+      const keys=consumptionRangeMonthKeys();currentKey=keys[keys.length-1]||'';previousKey=keys[keys.length-2]||previousMonthKey(currentKey);
+    }else{currentKey=E.consumptionMonth.value||monthInputValue(new Date());previousKey=previousMonthKey(currentKey);}
+    const aggregate=(key)=>{let quantity=0,amount=0;for(const row of (source||[])){if(String(row.consumption_month||'').slice(0,7)!==key)continue;if(serviceId&&row.service_id!==serviceId)continue;if(consumptionMaterialIdentity(row)!==materialKey)continue;quantity+=number(row.quantity);amount+=number(row.amount);}return{quantity,amount,price:quantity>0?amount/quantity:0};};
+    const current=aggregate(currentKey),previous=aggregate(previousKey);
+    return {currentKey,previousKey,current,previous,quantityVariation:previous.quantity>0?(current.quantity-previous.quantity)/previous.quantity*100:null,priceVariation:previous.price>0?(current.price-previous.price)/previous.price*100:null,spendVariation:previous.amount>0?(current.amount-previous.amount)/previous.amount*100:null};
+  }
+
   function buildConsumptionFullRankings() {
     const mode=getConsumptionMode();
     const serviceId=E.consumptionServiceFilter.value||'';
     if(mode==='range'){
       const keys=consumptionRangeMonthKeys();const serviceMonthly=rangeServiceMonthlyMap();
       const services=S.consumptionRangeServiceRows.filter((r)=>(!serviceId||r.service_id===serviceId)&&number(r.range_orders)>0).map((r)=>{const stats=rangeStats(serviceMonthly.get(r.service_id),keys);return{serviceId:r.service_id,name:r.service_name,amount:number(r.range_amount),orders:number(r.range_orders),products:number(r.range_products),variation:stats.variation};}).sort((a,b)=>b.amount-a.amount);
-      const products=aggregateConsumptionProducts(S.consumptionRangeRows.filter((r)=>!serviceId||r.service_id===serviceId),'range').map((r)=>{
-        const monthMap=new Map();S.consumptionRangeMonthlyRows.filter((m)=>consumptionMaterialIdentity(m)===r.materialKey&&(!serviceId||m.service_id===serviceId)).forEach((m)=>{const k=String(m.consumption_month).slice(0,7);monthMap.set(k,number(monthMap.get(k))+number(m.quantity));});const vals=keys.map((k)=>number(monthMap.get(k)));const first=vals[0]||0,last=vals[vals.length-1]||0;return{...r,variation:first>0?(last-first)/first*100:null};
-      });
+      const products=aggregateConsumptionProducts(S.consumptionRangeRows.filter((r)=>!serviceId||r.service_id===serviceId),'range').map((r)=>{const cmp=consumptionProductMonthlyComparison(r.materialKey);return{...r,variation:cmp.quantityVariation,priceVariation:cmp.priceVariation,currentUnitPrice:cmp.current.price,previousUnitPrice:cmp.previous.price,spendVariation:cmp.spendVariation,classification:consumptionItemClassification(r).key};});
       const sortedProducts=sortConsumptionProductRanking(products);
       return {services,products:sortedProducts,total:services.reduce((s,r)=>s+r.amount,0),period:consumptionPeriodLabel()};
     }
     const services=S.consumptionServiceRows.filter((r)=>(!serviceId||r.service_id===serviceId)&&number(r.month_orders)>0).map((r)=>({serviceId:r.service_id,name:r.service_name,amount:number(r.month_amount),orders:number(r.month_orders),products:number(r.month_products),variation:number(r.previous_month_amount)>0?(number(r.month_amount)-number(r.previous_month_amount))/number(r.previous_month_amount)*100:null})).sort((a,b)=>b.amount-a.amount);
-    const products=sortConsumptionProductRanking(aggregateConsumptionProducts(S.consumptionRows.filter((r)=>!serviceId||r.service_id===serviceId),'month').map((r)=>({...r,variation:r.previousQuantity>0?(r.quantity-r.previousQuantity)/r.previousQuantity*100:null})));
+    const products=sortConsumptionProductRanking(aggregateConsumptionProducts(S.consumptionRows.filter((r)=>!serviceId||r.service_id===serviceId),'month').map((r)=>{const cmp=consumptionProductMonthlyComparison(r.materialKey);return{...r,variation:cmp.quantityVariation,priceVariation:cmp.priceVariation,currentUnitPrice:cmp.current.price|| (r.quantity>0?r.amount/r.quantity:0),previousUnitPrice:cmp.previous.price,spendVariation:cmp.spendVariation,classification:consumptionItemClassification(r).key};}));
     return {services,products,total:services.reduce((s,r)=>s+r.amount,0),period:monthLabel(E.consumptionMonth.value||monthInputValue(new Date()))};
   }
 
-  function consumptionShareBars(rows, total, type) {
-    const max=Math.max(1,...rows.slice(0,10).map((r)=>r.amount));
-    return rows.slice(0,10).map((r,i)=>`<button type="button" class="consumption-share-row" ${type==='service'?`data-consumption-service-history="${ea(r.serviceId)}"`:`data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}"`}><span class="consumption-share-rank">${i+1}</span><span class="consumption-share-name">${eh(r.name)}</span><span class="consumption-share-track"><i style="width:${Math.max(2,r.amount/max*100).toFixed(1)}%"></i></span><strong>${eh(formatCurrency(r.amount))}</strong><small>${total>0?formatPercent(r.amount/total*100):'0%'} del total</small></button>`).join('')||'<div class="consumption-empty compact">Sin datos para el período.</div>';
+  function consumptionMetricBars(rows,type,metric) {
+    const field=metric==='orders'?'orders':metric==='services'?'serviceCount':metric==='quantity'?'quantity':'amount';
+    const sorted=[...rows].sort((a,b)=>number(b[field])-number(a[field])||number(b.amount)-number(a.amount)).slice(0,10),max=Math.max(1,...sorted.map((r)=>number(r[field]))),total=sorted.reduce((sum,r)=>sum+number(r[field]),0);
+    const valueLabel=(r)=>field==='amount'?formatCurrency(r.amount):field==='quantity'?`${formatQty(r.quantity)} ${r.unit||''}`:field==='services'?`${formatQty(r.serviceCount)} servicios`:`${formatQty(r.orders)} pedidos`;
+    return sorted.map((r,i)=>`<button type="button" class="consumption-share-row" ${type==='service'?`data-consumption-service-history="${ea(r.serviceId)}"`:`data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}"`}><span class="consumption-share-rank">${i+1}</span><span class="consumption-share-name">${eh(r.name)}</span><span class="consumption-share-track"><i style="width:${Math.max(2,number(r[field])/max*100).toFixed(1)}%"></i></span><strong>${eh(valueLabel(r))}</strong><small>${total>0?formatPercent(number(r[field])/total*100):'0%'} del Top 10</small></button>`).join('')||'<div class="consumption-empty compact">Sin datos para el período.</div>';
+  }
+
+  function consumptionParetoCount(rows,total,target=.8) {
+    if(total<=0)return 0;let acc=0;for(let i=0;i<rows.length;i+=1){acc+=number(rows[i].amount);if(acc/total>=target)return i+1;}return rows.length;
+  }
+
+  function buildConsumptionServicePriorities(data=buildConsumptionFullRankings()) {
+    const recurrences=currentConsumptionRecurrences();
+    const byService=new Map();recurrences.forEach((r)=>{if(!byService.has(r.serviceId))byService.set(r.serviceId,[]);byService.get(r.serviceId).push(r);});
+    let monthlyFactor=1;if(getConsumptionMode()==='range'){try{const range=consumptionRangeValues(),days=Math.max(1,(new Date(`${range.end}T12:00:00`)-new Date(`${range.start}T12:00:00`))/86400000+1);monthlyFactor=30.44/days;}catch(_){monthlyFactor=1/Math.max(1,consumptionRangeMonthKeys().length);}}
+    const total=number(data.total);
+    return (data.services||[]).map((row)=>{
+      const service=S.services.find((s)=>s.id===row.serviceId)||{};
+      const monthlyEquivalent=number(row.amount)*monthlyFactor;
+      const billing=number(service.monthly_billing);const limitPercent=number(service.budget_limit_percent||5);const billingShare=billing>0?monthlyEquivalent/billing*100:null;
+      const rec=byService.get(row.serviceId)||[];const durables=rec.filter((r)=>r.durableRepeat).length;const semidurables=rec.filter((r)=>r.semiDurableRepeat).length;const highVolume=rec.filter((r)=>r.highVolume).length;const frequent=rec.filter((r)=>r.frequent).length;
+      let score=0;const reasons=[];
+      if(billingShare!=null){if(billingShare>7){score+=35;reasons.push(`consume ${formatPercent(billingShare)} de la facturación`);}else if(billingShare>limitPercent){score+=25;reasons.push(`supera límite ${formatPercent(limitPercent)}`);}else if(billingShare>=limitPercent*.8){score+=10;reasons.push('cerca del límite operativo');}}
+      const variation=number(row.variation);if(row.variation!=null){if(variation>=60){score+=28;reasons.push(`gasto ${formatSignedPercent(variation)}`);}else if(variation>=30){score+=18;reasons.push(`gasto ${formatSignedPercent(variation)}`);}else if(variation>=15){score+=8;reasons.push(`gasto ${formatSignedPercent(variation)}`);}}
+      if(durables){score+=Math.min(30,durables*15);reasons.push(`${durables} durable${durables===1?'':'s'} repetido${durables===1?'':'s'}`);}if(semidurables){score+=Math.min(14,semidurables*7);reasons.push(`${semidurables} semidurable${semidurables===1?'':'s'} repetido${semidurables===1?'':'s'}`);}if(highVolume){score+=Math.min(16,highVolume*8);reasons.push(`${highVolume} consumo${highVolume===1?'':'s'} de volumen alto`);}if(frequent){score+=Math.min(10,frequent*4);}
+      if(total>0&&row.amount/total>=.15){score+=8;reasons.push('alta participación en gasto total');}
+      score=Math.min(100,Math.round(score));const priority=score>=60?'high':score>=35?'medium':'normal';
+      return {...row,score,priority,billing,billingShare,limitPercent,monthlyEquivalent,reasons,durables,semidurables,highVolume,frequent};
+    }).sort((a,b)=>b.score-a.score||b.amount-a.amount);
+  }
+
+  function consumptionPriorityBadge(row) {
+    const label=row.priority==='high'?'Alta':row.priority==='medium'?'Media':'Normal';return `<span class="consumption-priority-badge is-${ea(row.priority)}">${label}</span>`;
+  }
+
+  function renderConsumptionPriorities(data) {
+    if(!E.consumptionPriorityBody)return;const rows=buildConsumptionServicePriorities(data);const high=rows.filter((r)=>r.priority==='high').length,medium=rows.filter((r)=>r.priority==='medium').length,normal=rows.filter((r)=>r.priority==='normal').length;
+    E.consumptionPriorityPeriod.textContent=data.period;E.consumptionPriorityHigh.textContent=String(high);E.consumptionPriorityMedium.textContent=String(medium);E.consumptionPriorityNormal.textContent=String(normal);
+    E.consumptionPriorityBody.innerHTML=rows.map((r,i)=>`<tr><td><span class="consumption-rank-number">${i+1}</span></td><td><strong>${eh(r.name)}</strong></td><td>${consumptionPriorityBadge(r)}</td><td><strong>${r.score}/100</strong></td><td>${eh(formatCurrency(r.amount))}</td><td>${r.billingShare==null?'<span class="text-secondary">Sin facturación</span>':`${formatPercent(r.billingShare)}<small class="d-block text-secondary">límite ${formatPercent(r.limitPercent)}</small>`}</td><td>${consumptionVariationBadge(r.variation)}</td><td><span class="consumption-priority-reasons">${eh(r.reasons.slice(0,3).join(' · ')||'Sin señales relevantes')}</span></td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-service-history="${ea(r.serviceId)}"><i class="bi bi-search me-1"></i>Analizar</button></td></tr>`).join('')||'<tr><td colspan="9" class="text-center text-secondary py-4">Sin servicios con consumo.</td></tr>';
   }
 
   function renderConsumptionFullRankings() {
@@ -7617,12 +7710,11 @@
     E.consumptionFullRankingPeriod.textContent=data.period;
     E.consumptionFullServiceRankingCount.textContent=`${data.services.length} servicios`;
     E.consumptionFullProductRankingCount.textContent=`${data.products.length} insumos`;
-    E.consumptionServiceConcentration.innerHTML=consumptionShareBars(data.services,total,'service');
-    E.consumptionProductConcentration.innerHTML=consumptionShareBars([...data.products].sort((a,b)=>b.amount-a.amount),total,'product');
+    E.consumptionServiceConcentration.innerHTML=consumptionMetricBars(data.services,'service',E.consumptionServiceChartMetric?.value||'amount');
+    E.consumptionProductConcentration.innerHTML=consumptionMetricBars(data.products,'product',E.consumptionProductChartMetric?.value||'amount');
     E.consumptionFullServiceRankingBody.innerHTML=data.services.map((r,i)=>`<tr><td><span class="consumption-rank-number">${i+1}</span></td><td><strong>${eh(r.name)}</strong></td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td>${formatQty(r.orders)}</td><td>${eh(formatCurrency(r.orders>0?r.amount/r.orders:0))}</td><td>${consumptionVariationBadge(r.variation)}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-service-history="${ea(r.serviceId)}"><i class="bi bi-graph-up me-1"></i>Analizar</button></td></tr>`).join('')||'<tr><td colspan="8" class="text-center text-secondary py-4">Sin servicios con consumo.</td></tr>';
-    E.consumptionFullProductRankingBody.innerHTML=data.products.map((r,i)=>`<tr><td><span class="consumption-rank-number">${i+1}</span></td><td><strong>${eh(r.name)}</strong>${r.sku?`<small class="d-block text-secondary">SKU ${eh(r.sku)}</small>`:''}</td><td>${formatQty(r.quantity)} ${eh(r.unit)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td>${formatQty(r.orders)}</td><td>${formatQty(r.serviceCount)}</td><td>${consumptionVariationBadge(r.variation)}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}"><i class="bi bi-graph-up me-1"></i>Evolución</button></td></tr>`).join('')||'<tr><td colspan="9" class="text-center text-secondary py-4">Sin insumos consumidos.</td></tr>';
-    renderConsumptionManagementAnalysis(data);
-    applyConsumptionAnalysisView();
+    E.consumptionFullProductRankingBody.innerHTML=data.products.map((r,i)=>`<tr><td><span class="consumption-rank-number">${i+1}</span></td><td><strong>${eh(r.name)}</strong>${r.sku?`<small class="d-block text-secondary">SKU ${eh(r.sku)}</small>`:''}</td><td>${consumptionClassificationBadge(r)}</td><td>${formatQty(r.quantity)} ${eh(r.unit)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td>${formatQty(r.orders)}</td><td>${formatQty(r.serviceCount)}</td><td>${consumptionVariationBadge(r.variation)}</td><td>${consumptionVariationBadge(r.priceVariation)}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}"><i class="bi bi-graph-up me-1"></i>Evolución</button></td></tr>`).join('')||'<tr><td colspan="11" class="text-center text-secondary py-4">Sin insumos consumidos.</td></tr>';
+    renderConsumptionManagementAnalysis(data);renderConsumptionPriorities(data);applyConsumptionAnalysisView();
   }
 
   function currentConsumptionRecurrences() {
@@ -7658,80 +7750,37 @@
   }
 
   function buildConsumptionManagementAnalysis(data = buildConsumptionFullRankings()) {
-    const total = number(data.total);
-    const services = data.services || [];
-    const productsByAmount = [...(data.products || [])].sort((a,b)=>b.amount-a.amount);
-    const productsByQuantity = [...(data.products || [])].sort((a,b)=>b.quantity-a.quantity || b.amount-a.amount);
-    const productsByOrders = [...(data.products || [])].sort((a,b)=>b.orders-a.orders || b.amount-a.amount);
-    const totalOrders = services.reduce((sum,row)=>sum+number(row.orders),0);
-    const top5ServicesAmount = services.slice(0,5).reduce((sum,row)=>sum+number(row.amount),0);
-    const top5ProductsAmount = productsByAmount.slice(0,5).reduce((sum,row)=>sum+number(row.amount),0);
-    const top5ServicesShare = total>0 ? top5ServicesAmount/total*100 : 0;
-    const top5ProductsShare = total>0 ? top5ProductsAmount/total*100 : 0;
-    const recurrences = currentConsumptionRecurrences();
-    const durable = recurrences.filter((r)=>r.durableRepeat);
-    const highVolume = recurrences.filter((r)=>r.highVolume);
-    const frequent = recurrences.filter((r)=>r.frequent);
-    const findings = [];
-    if (total <= 0) findings.push({level:'info',title:'Sin consumo confirmado',detail:'No hay pedidos Entregados dentro del período y filtros elegidos.'});
-    if (services[0]) findings.push({level:'info',title:'Servicio con mayor gasto',detail:`${services[0].name} concentra ${formatCurrency(services[0].amount)} (${formatPercent(total>0?services[0].amount/total*100:0)} del total).`});
-    if (top5ServicesShare >= 60) findings.push({level:'warning',title:'Alta concentración del gasto',detail:`Los 5 servicios de mayor gasto explican ${formatPercent(top5ServicesShare)} del consumo económico. Conviene focalizar controles y estandarización en ese grupo.`});
-    else if (top5ServicesShare > 0) findings.push({level:'normal',title:'Concentración por servicio',detail:`Los 5 servicios principales representan ${formatPercent(top5ServicesShare)} del gasto del período.`});
-    if (productsByAmount[0]) findings.push({level:'info',title:'Insumo de mayor impacto económico',detail:`${productsByAmount[0].name} suma ${formatCurrency(productsByAmount[0].amount)} y representa ${formatPercent(total>0?productsByAmount[0].amount/total*100:0)} del gasto.`});
-    if (productsByOrders[0]) findings.push({level:'normal',title:'Insumo más recurrente en pedidos',detail:`${productsByOrders[0].name} aparece en ${formatQty(productsByOrders[0].orders)} pedidos y acumula ${formatQty(productsByOrders[0].quantity)} ${productsByOrders[0].unit}.`});
-    if (services.length > 1) { const low=services[services.length-1]; findings.push({level:'info',title:'Servicio de menor gasto con consumo',detail:`${low.name} registra ${formatCurrency(low.amount)} en el período. Sirve como referencia inferior para comparar estructuras operativas similares.`}); }
-    if (productsByAmount.length > 1) { const low=productsByAmount[productsByAmount.length-1]; findings.push({level:'info',title:'Insumo de menor impacto económico',detail:`${low.name} representa ${formatCurrency(low.amount)} (${formatQty(low.quantity)} ${low.unit}) dentro del período analizado.`}); }
-    if (durable.length) findings.push({level:'danger',title:'Posibles fugas en elementos durables',detail:`Hay ${durable.length} patrones de reposición reiterada de elementos durables. Prioridad: ${durable.slice(0,3).map((r)=>`${r.serviceName} / ${r.itemName}`).join(' · ')}.`});
-    if (highVolume.length) findings.push({level:'warning',title:'Volumen recurrente elevado',detail:`Se detectaron ${highVolume.length} combinaciones servicio-insumo con cantidades reiteradamente altas. Revisar dosificación, frecuencia y stock físico.`});
-    const growingServices = services.filter((r)=>r.variation!=null && r.variation>=30).sort((a,b)=>b.variation-a.variation);
-    if (growingServices.length) findings.push({level:'warning',title:'Servicios con aumento fuerte',detail:`${growingServices.slice(0,3).map((r)=>`${r.name} (${formatSignedPercent(r.variation)})`).join(' · ')} muestran crecimiento relevante frente a su referencia.`});
-    const growingProducts = productsByAmount.filter((r)=>r.variation!=null && r.variation>=40).sort((a,b)=>b.variation-a.variation);
-    if (growingProducts.length) findings.push({level:'warning',title:'Insumos en aumento',detail:`${growingProducts.slice(0,3).map((r)=>`${r.name} (${formatSignedPercent(r.variation)})`).join(' · ')} merecen revisión por incremento de consumo.`});
-    if (!durable.length && !highVolume.length && !growingServices.length && total>0) findings.push({level:'normal',title:'Sin señales críticas por los umbrales actuales',detail:'No se observan reposiciones durables reiteradas, cantidades recurrentes altas ni saltos fuertes de gasto en el período seleccionado.'});
-    return {
-      period:data.period,total,totalOrders,avgOrder:totalOrders?total/totalOrders:0,services,productsByAmount,productsByQuantity,productsByOrders,
-      top5ServicesShare,top5ProductsShare,recurrences,durable,highVolume,frequent,findings,
-      topService:services[0]||null,topProduct:productsByAmount[0]||null,mostQuantity:productsByQuantity[0]||null,mostFrequent:productsByOrders[0]||null
-    };
+    const total=number(data.total),services=data.services||[],productsByAmount=[...(data.products||[])].sort((a,b)=>b.amount-a.amount),productsByQuantity=[...(data.products||[])].sort((a,b)=>b.quantity-a.quantity||b.amount-a.amount),productsByOrders=[...(data.products||[])].sort((a,b)=>b.orders-a.orders||b.amount-a.amount);
+    const totalOrders=services.reduce((sum,row)=>sum+number(row.orders),0),top5ServicesAmount=services.slice(0,5).reduce((sum,row)=>sum+number(row.amount),0),top5ProductsAmount=productsByAmount.slice(0,5).reduce((sum,row)=>sum+number(row.amount),0),top5ServicesShare=total>0?top5ServicesAmount/total*100:0,top5ProductsShare=total>0?top5ProductsAmount/total*100:0;
+    const recurrences=currentConsumptionRecurrences(),durable=recurrences.filter((r)=>r.durableRepeat),semidurable=recurrences.filter((r)=>r.semiDurableRepeat),highVolume=recurrences.filter((r)=>r.highVolume),frequent=recurrences.filter((r)=>r.frequent),priorities=buildConsumptionServicePriorities(data),highPriority=priorities.filter((r)=>r.priority==='high');
+    const paretoServices=consumptionParetoCount(services,total,.8),paretoProducts=consumptionParetoCount(productsByAmount,total,.8);const findings=[];
+    if(total<=0)findings.push({level:'info',title:'Sin consumo confirmado',detail:'No hay pedidos Entregados dentro del período y filtros elegidos.'});
+    if(highPriority.length)findings.push({level:'danger',title:'Servicios prioritarios para auditoría',detail:`${highPriority.length} servicio${highPriority.length===1?'':'s'} presentan señales combinadas. Prioridad: ${highPriority.slice(0,3).map((r)=>`${r.name} (${r.score}/100)`).join(' · ')}.`});
+    if(services[0])findings.push({level:'info',title:'Servicio con mayor gasto',detail:`${services[0].name} concentra ${formatCurrency(services[0].amount)} (${formatPercent(total>0?services[0].amount/total*100:0)} del total).`});
+    if(paretoServices)findings.push({level:'normal',title:'Pareto de servicios',detail:`${paretoServices} de ${services.length} servicios explican aproximadamente el 80% del gasto. Ese grupo debería concentrar el control operativo.`});
+    if(paretoProducts)findings.push({level:'normal',title:'Pareto de insumos',detail:`${paretoProducts} de ${productsByAmount.length} insumos explican aproximadamente el 80% del gasto. Son los productos con mayor impacto para negociación, dosificación y stock.`});
+    if(productsByAmount[0])findings.push({level:'info',title:'Insumo de mayor impacto económico',detail:`${productsByAmount[0].name} suma ${formatCurrency(productsByAmount[0].amount)} y representa ${formatPercent(total>0?productsByAmount[0].amount/total*100:0)} del gasto.`});
+    const priceIncreases=productsByAmount.filter((r)=>r.priceVariation!=null&&r.priceVariation>=10).sort((a,b)=>b.priceVariation-a.priceVariation);
+    if(priceIncreases.length)findings.push({level:'warning',title:'Aumentos de precio efectivo',detail:`${priceIncreases.slice(0,3).map((r)=>`${r.name} (${formatSignedPercent(r.priceVariation)})`).join(' · ')} aumentaron su precio efectivo. Separar este efecto del aumento de cantidades antes de atribuir el desvío a consumo.`});
+    if(productsByOrders[0])findings.push({level:'normal',title:'Insumo más recurrente en pedidos',detail:`${productsByOrders[0].name} aparece en ${formatQty(productsByOrders[0].orders)} pedidos y acumula ${formatQty(productsByOrders[0].quantity)} ${productsByOrders[0].unit}.`});
+    if(durable.length)findings.push({level:'danger',title:'Posibles fugas en elementos durables',detail:`Hay ${durable.length} patrones de reposición reiterada de durables. Prioridad: ${durable.slice(0,3).map((r)=>`${r.serviceName} / ${r.itemName}`).join(' · ')}.`});
+    if(semidurable.length)findings.push({level:'warning',title:'Semidurables con reposición reiterada',detail:`Hay ${semidurable.length} patrones de microfibras, rejillas, trapos u otros semidurables que merecen revisar vida útil y reposición.`});
+    if(highVolume.length)findings.push({level:'warning',title:'Volumen recurrente elevado',detail:`Se detectaron ${highVolume.length} combinaciones servicio-insumo con cantidades reiteradamente altas. Revisar dosificación, frecuencia y stock físico.`});
+    const growingServices=services.filter((r)=>r.variation!=null&&r.variation>=30).sort((a,b)=>b.variation-a.variation);if(growingServices.length)findings.push({level:'warning',title:'Servicios con aumento fuerte',detail:`${growingServices.slice(0,3).map((r)=>`${r.name} (${formatSignedPercent(r.variation)})`).join(' · ')} muestran crecimiento relevante frente a su referencia.`});
+    if(!durable.length&&!highVolume.length&&!growingServices.length&&!highPriority.length&&total>0)findings.push({level:'normal',title:'Sin señales críticas por los umbrales actuales',detail:'No se observan reposiciones durables reiteradas, cantidades recurrentes altas ni saltos fuertes de gasto en el período seleccionado.'});
+    return{period:data.period,total,totalOrders,avgOrder:totalOrders?total/totalOrders:0,services,productsByAmount,productsByQuantity,productsByOrders,top5ServicesShare,top5ProductsShare,recurrences,durable,semidurable,highVolume,frequent,findings,priorities,highPriority,paretoServices,paretoProducts,priceIncreases,topService:services[0]||null,topProduct:productsByAmount[0]||null,mostQuantity:productsByQuantity[0]||null,mostFrequent:productsByOrders[0]||null};
   }
 
   function renderConsumptionManagementAnalysis(data) {
-    if (!E.consumptionManagementAnalysis) return;
-    const a = buildConsumptionManagementAnalysis(data);
-    E.consumptionManagementPeriod.textContent = a.period;
-    E.consumptionMgmtTop5Services.textContent = formatPercent(a.top5ServicesShare);
-    E.consumptionMgmtTop5Products.textContent = formatPercent(a.top5ProductsShare);
-    E.consumptionMgmtAvgOrder.textContent = formatCurrency(a.avgOrder);
-    E.consumptionMgmtTopService.textContent = a.topService?.name || '—';
-    E.consumptionMgmtTopServiceFoot.textContent = a.topService ? `${formatCurrency(a.topService.amount)} · ${formatPercent(a.total>0?a.topService.amount/a.total*100:0)}` : 'Sin datos';
-    E.consumptionMgmtTopProduct.textContent = a.topProduct?.name || '—';
-    E.consumptionMgmtTopProductFoot.textContent = a.topProduct ? `${formatCurrency(a.topProduct.amount)} · ${formatQty(a.topProduct.quantity)} ${a.topProduct.unit}` : 'Sin datos';
-    E.consumptionMgmtRecurring.textContent = String(a.recurrences.length);
-    E.consumptionMgmtRecurringFoot.textContent = `${a.durable.length} durables · ${a.highVolume.length} cantidad alta`;
-    E.consumptionManagementFindings.innerHTML = a.findings.map((f)=>`<article class="consumption-management-finding is-${ea(f.level)}"><i class="bi ${f.level==='danger'?'bi-exclamation-octagon-fill':f.level==='warning'?'bi-exclamation-triangle-fill':f.level==='normal'?'bi-check-circle-fill':'bi-info-circle-fill'}"></i><div><strong>${eh(f.title)}</strong><p>${eh(f.detail)}</p></div></article>`).join('');
-    const quantity = a.mostQuantity ? `${a.mostQuantity.name}: ${formatQty(a.mostQuantity.quantity)} ${a.mostQuantity.unit}` : 'Sin datos';
-    const frequent = a.mostFrequent ? `${a.mostFrequent.name}: ${formatQty(a.mostFrequent.orders)} pedidos` : 'Sin datos';
-    E.consumptionManagementQuantitative.innerHTML = `
-      <div><span>Gasto total</span><strong>${eh(formatCurrency(a.total))}</strong></div>
-      <div><span>Pedidos entregados</span><strong>${formatQty(a.totalOrders)}</strong></div>
-      <div><span>Servicios activos</span><strong>${formatQty(a.services.length)}</strong></div>
-      <div><span>SKUs / productos</span><strong>${formatQty(a.productsByAmount.length)}</strong></div>
-      <div><span>Mayor cantidad de un insumo</span><strong>${eh(quantity)}</strong></div>
-      <div><span>Mayor frecuencia</span><strong>${eh(frequent)}</strong></div>
-      <div><span>Menor gasto · servicio</span><strong>${eh(a.services.length ? `${a.services[a.services.length-1].name}: ${formatCurrency(a.services[a.services.length-1].amount)}` : 'Sin datos')}</strong></div>
-      <div><span>Menor gasto · insumo</span><strong>${eh(a.productsByAmount.length ? `${a.productsByAmount[a.productsByAmount.length-1].name}: ${formatCurrency(a.productsByAmount[a.productsByAmount.length-1].amount)}` : 'Sin datos')}</strong></div>`;
+    if(!E.consumptionManagementAnalysis)return;const a=buildConsumptionManagementAnalysis(data);E.consumptionManagementPeriod.textContent=a.period;E.consumptionMgmtTop5Services.textContent=formatPercent(a.top5ServicesShare);E.consumptionMgmtTop5Products.textContent=formatPercent(a.top5ProductsShare);E.consumptionMgmtAvgOrder.textContent=formatCurrency(a.avgOrder);E.consumptionMgmtTopService.textContent=a.topService?.name||'—';E.consumptionMgmtTopServiceFoot.textContent=a.topService?`${formatCurrency(a.topService.amount)} · ${formatPercent(a.total>0?a.topService.amount/a.total*100:0)}`:'Sin datos';E.consumptionMgmtTopProduct.textContent=a.topProduct?.name||'—';E.consumptionMgmtTopProductFoot.textContent=a.topProduct?`${formatCurrency(a.topProduct.amount)} · ${formatQty(a.topProduct.quantity)} ${a.topProduct.unit}`:'Sin datos';E.consumptionMgmtRecurring.textContent=String(a.recurrences.length);E.consumptionMgmtRecurringFoot.textContent=`${a.durable.length} durables · ${a.semidurable.length} semidurables`;
+    E.consumptionManagementFindings.innerHTML=a.findings.map((f)=>`<article class="consumption-management-finding is-${ea(f.level)}"><i class="bi ${f.level==='danger'?'bi-exclamation-octagon-fill':f.level==='warning'?'bi-exclamation-triangle-fill':f.level==='normal'?'bi-check-circle-fill':'bi-info-circle-fill'}"></i><div><strong>${eh(f.title)}</strong><p>${eh(f.detail)}</p></div></article>`).join('');
+    const quantity=a.mostQuantity?`${a.mostQuantity.name}: ${formatQty(a.mostQuantity.quantity)} ${a.mostQuantity.unit}`:'Sin datos',frequent=a.mostFrequent?`${a.mostFrequent.name}: ${formatQty(a.mostFrequent.orders)} pedidos`:'Sin datos';
+    E.consumptionManagementQuantitative.innerHTML=`<div><span>Gasto total</span><strong>${eh(formatCurrency(a.total))}</strong></div><div><span>Pedidos entregados</span><strong>${formatQty(a.totalOrders)}</strong></div><div><span>Servicios activos</span><strong>${formatQty(a.services.length)}</strong></div><div><span>SKUs / productos</span><strong>${formatQty(a.productsByAmount.length)}</strong></div><div><span>Servicios para explicar 80% del gasto</span><strong>${a.paretoServices} de ${a.services.length}</strong></div><div><span>Insumos para explicar 80% del gasto</span><strong>${a.paretoProducts} de ${a.productsByAmount.length}</strong></div><div><span>Servicios prioridad alta</span><strong>${a.highPriority.length}</strong></div><div><span>Mayor cantidad de un insumo</span><strong>${eh(quantity)}</strong></div><div><span>Mayor frecuencia</span><strong>${eh(frequent)}</strong></div>`;
   }
 
   function applyConsumptionAnalysisView() {
-    const view = E.consumptionAnalysisView?.value || 'complete';
-    const show = (id,visible) => E[id]?.classList.toggle('d-none', !visible);
-    show('consumptionIntelligenceSection', ['complete','executive','recurrence'].includes(view));
-    show('consumptionFullAnalysisSection', ['complete','services','products'].includes(view));
-    show('consumptionServiceSummarySection', ['complete','services'].includes(view));
-    show('consumptionProductDetailSection', ['complete','products'].includes(view));
-    show('consumptionRecurrenceSection', ['complete','executive','recurrence'].includes(view));
-    if (E.consumptionServiceRankingBlock) E.consumptionServiceRankingBlock.classList.toggle('d-none', view==='products');
-    if (E.consumptionProductRankingBlock) E.consumptionProductRankingBlock.classList.toggle('d-none', view==='services');
+    const view=E.consumptionAnalysisView?.value||'complete';const show=(id,visible)=>E[id]?.classList.toggle('d-none',!visible);
+    show('consumptionManagementAnalysis',['complete','executive'].includes(view));show('consumptionPrioritySection',['complete','executive','services'].includes(view));show('consumptionIntelligenceSection',['complete','executive','recurrence'].includes(view));show('consumptionFullAnalysisSection',['complete','services','products'].includes(view));show('consumptionServiceSummarySection',['complete','services'].includes(view));show('consumptionProductDetailSection',['complete','products'].includes(view));show('consumptionRecurrenceSection',['complete','executive','recurrence'].includes(view));if(E.consumptionServiceRankingBlock)E.consumptionServiceRankingBlock.classList.toggle('d-none',view==='products');if(E.consumptionProductRankingBlock)E.consumptionProductRankingBlock.classList.toggle('d-none',view==='services');
   }
 
   function consumptionExportDetailRows() {
@@ -7747,7 +7796,7 @@
   function consumptionEvolutionExportRows() {
     const source=getConsumptionMode()==='range'?S.consumptionRangeMonthlyRows:S.consumptionAnalyticsRows;
     return (source||[]).map((r)=>({
-      Mes:String(r.consumption_month||'').slice(0,7),Servicio:r.service_name,Producto:r.item_name,SKU:r.item_sku||'',Unidad:r.unit||'unidad',Cantidad:number(r.quantity),Gasto:number(r.amount),Pedidos:number(r.orders)
+      Mes:String(r.consumption_month||'').slice(0,7),Servicio:r.service_name,Producto:r.item_name,SKU:r.item_sku||'',Unidad:r.unit||'unidad',Tipo:consumptionItemClassification({materialId:r.material_id,itemName:r.item_name}).label,Cantidad:number(r.quantity),Precio_efectivo:number(r.quantity)>0?number(r.amount)/number(r.quantity):0,Gasto:number(r.amount),Pedidos:number(r.orders)
     })).sort((a,b)=>a.Mes.localeCompare(b.Mes)||String(a.Servicio).localeCompare(String(b.Servicio),'es'));
   }
 
@@ -7760,18 +7809,19 @@
       const wb=XLSX.utils.book_new();
       const summary=[
         ['ANÁLISIS DE CONSUMOS · CLEAN IT'],['Período',a.period],['Vista',E.consumptionAnalysisView?.selectedOptions?.[0]?.textContent||'Completo'],['Servicio',E.consumptionServiceFilter?.selectedOptions?.[0]?.textContent||'Todos'],
-        [],['INDICADORES'],['Gasto total',a.total],['Pedidos entregados',a.totalOrders],['Gasto promedio por pedido',a.avgOrder],['Servicios con consumo',a.services.length],['Insumos distintos',a.productsByAmount.length],['Top 5 servicios - % gasto',a.top5ServicesShare/100],['Top 5 insumos - % gasto',a.top5ProductsShare/100],['Patrones recurrentes',a.recurrences.length],['Durables repetidos',a.durable.length],['Cantidad alta recurrente',a.highVolume.length],
+        [],['INDICADORES'],['Gasto total',a.total],['Pedidos entregados',a.totalOrders],['Gasto promedio por pedido',a.avgOrder],['Servicios con consumo',a.services.length],['Insumos distintos',a.productsByAmount.length],['Top 5 servicios - % gasto',a.top5ServicesShare/100],['Top 5 insumos - % gasto',a.top5ProductsShare/100],['Patrones recurrentes',a.recurrences.length],['Durables repetidos',a.durable.length],['Semidurables repetidos',a.semidurable.length],['Cantidad alta recurrente',a.highVolume.length],['Servicios prioridad alta',a.highPriority.length],['Servicios que explican 80% gasto',a.paretoServices],['Insumos que explican 80% gasto',a.paretoProducts],
         [],['HALLAZGOS CUALITATIVOS'],...a.findings.map((f,i)=>[i+1,f.title,f.detail,f.level])
       ];
       const wsSummary=XLSX.utils.aoa_to_sheet(summary);wsSummary['!cols']=[{wch:24},{wch:34},{wch:85},{wch:14}];XLSX.utils.book_append_sheet(wb,wsSummary,'Resumen');
-      const serviceRows=a.services.map((r,i)=>({Ranking:i+1,Servicio:r.name,Gasto:r.amount,Participacion:a.total?r.amount/a.total:0,Pedidos:r.orders,Gasto_por_pedido:r.orders?r.amount/r.orders:0,Variacion_pct:r.variation==null?null:r.variation/100}));
-      const wsS=XLSX.utils.json_to_sheet(serviceRows);wsS['!cols']=[{wch:8},{wch:42},{wch:16},{wch:14},{wch:11},{wch:18},{wch:14}];wsS['!autofilter']={ref:wsS['!ref']};XLSX.utils.book_append_sheet(wb,wsS,'Ranking servicios');
-      const productRows=a.productsByAmount.map((r,i)=>({Ranking:i+1,Producto:r.name,SKU:r.sku||'',Unidad:r.unit,Cantidad:r.quantity,Gasto:r.amount,Participacion:a.total?r.amount/a.total:0,Pedidos:r.orders,Servicios:r.serviceCount,Variacion_pct:r.variation==null?null:r.variation/100}));
-      const wsP=XLSX.utils.json_to_sheet(productRows);wsP['!cols']=[{wch:8},{wch:42},{wch:20},{wch:14},{wch:13},{wch:16},{wch:14},{wch:10},{wch:10},{wch:14}];wsP['!autofilter']={ref:wsP['!ref']};XLSX.utils.book_append_sheet(wb,wsP,'Ranking insumos');
-      const recurrenceRows=a.recurrences.map((r)=>({Servicio:r.serviceName,Producto:r.itemName,SKU:r.sku||'',Unidad:r.unit,Patron:r.pattern,Durable:r.durableRepeat?'Sí':'No',Muy_frecuente:r.frequent?'Sí':'No',Cantidad_alta:r.highVolume?'Sí':'No',Meses_activos:r.activeMonths,Meses_analizados:r.periodMonths,Cantidad_acumulada:r.totalQuantity,Pedidos:r.totalOrders,Promedio_mes_activo:r.avgActiveQuantity,Gasto_acumulado:r.totalAmount,Ultimo_mes:r.lastMonth,Score:r.score}));
+      const priorityMap=new Map(a.priorities.map((r)=>[r.serviceId,r]));const serviceRows=a.services.map((r,i)=>{const p=priorityMap.get(r.serviceId)||{};return{Ranking:i+1,Servicio:r.name,Prioridad:p.priority==='high'?'Alta':p.priority==='medium'?'Media':'Normal',Score_revision:p.score||0,Gasto:r.amount,Participacion:a.total?r.amount/a.total:0,Pedidos:r.orders,Gasto_por_pedido:r.orders?r.amount/r.orders:0,Facturacion_mensual:p.billing||0,Consumo_sobre_facturacion_pct:p.billingShare==null?null:p.billingShare/100,Limite_operativo_pct:p.limitPercent?number(p.limitPercent)/100:null,Variacion_pct:r.variation==null?null:r.variation/100,Motivos:(p.reasons||[]).join(' · ')}});
+      const wsS=XLSX.utils.json_to_sheet(serviceRows);wsS['!cols']=[{wch:8},{wch:42},{wch:12},{wch:12},{wch:16},{wch:14},{wch:11},{wch:18},{wch:18},{wch:22},{wch:20},{wch:14},{wch:70}];wsS['!autofilter']={ref:wsS['!ref']};XLSX.utils.book_append_sheet(wb,wsS,'Ranking servicios');
+      const auditRows=a.priorities.map((r,i)=>({Ranking:i+1,Servicio:r.name,Prioridad:r.priority==='high'?'Alta':r.priority==='medium'?'Media':'Normal',Score:r.score,Gasto:r.amount,Gasto_mensual_equivalente:r.monthlyEquivalent,Facturacion_mensual:r.billing||0,Consumo_sobre_facturacion_pct:r.billingShare==null?null:r.billingShare/100,Limite_operativo_pct:number(r.limitPercent)/100,Variacion_pct:r.variation==null?null:r.variation/100,Durables_repetidos:r.durables,Semidurables_repetidos:r.semidurables,Volumen_alto:r.highVolume,Motivos:r.reasons.join(' · ')}));const wsA=XLSX.utils.json_to_sheet(auditRows);wsA['!cols']=[{wch:8},{wch:42},{wch:12},{wch:10},{wch:16},{wch:24},{wch:20},{wch:24},{wch:20},{wch:14},{wch:18},{wch:20},{wch:14},{wch:75}];if(wsA['!ref'])wsA['!autofilter']={ref:wsA['!ref']};XLSX.utils.book_append_sheet(wb,wsA,'Prioridad auditoria');
+      const productRows=a.productsByAmount.map((r,i)=>({Ranking:i+1,Producto:r.name,SKU:r.sku||'',Tipo:consumptionItemClassification(r).label,Unidad:r.unit,Cantidad:r.quantity,Precio_efectivo:r.currentUnitPrice||0,Variacion_precio_pct:r.priceVariation==null?null:r.priceVariation/100,Gasto:r.amount,Participacion:a.total?r.amount/a.total:0,Pedidos:r.orders,Servicios:r.serviceCount,Variacion_cantidad_pct:r.variation==null?null:r.variation/100}));
+      const wsP=XLSX.utils.json_to_sheet(productRows);wsP['!cols']=[{wch:8},{wch:42},{wch:20},{wch:14},{wch:14},{wch:13},{wch:18},{wch:18},{wch:16},{wch:14},{wch:10},{wch:10},{wch:18}];wsP['!autofilter']={ref:wsP['!ref']};XLSX.utils.book_append_sheet(wb,wsP,'Ranking insumos');
+      const recurrenceRows=a.recurrences.map((r)=>({Servicio:r.serviceName,Producto:r.itemName,SKU:r.sku||'',Unidad:r.unit,Patron:r.pattern,Tipo:consumptionItemClassification({materialId:r.materialId,itemName:r.itemName}).label,Durable:r.durableRepeat?'Sí':'No',Semidurable:r.semiDurableRepeat?'Sí':'No',Muy_frecuente:r.frequent?'Sí':'No',Cantidad_alta:r.highVolume?'Sí':'No',Meses_activos:r.activeMonths,Meses_analizados:r.periodMonths,Cantidad_acumulada:r.totalQuantity,Pedidos:r.totalOrders,Promedio_mes_activo:r.avgActiveQuantity,Gasto_acumulado:r.totalAmount,Ultimo_mes:r.lastMonth,Score:r.score}));
       const wsR=XLSX.utils.json_to_sheet(recurrenceRows);wsR['!cols']=[{wch:38},{wch:38},{wch:20},{wch:12},{wch:24},{wch:9},{wch:12},{wch:12},{wch:12},{wch:14},{wch:18},{wch:10},{wch:18},{wch:18},{wch:12},{wch:8}];if(wsR['!ref'])wsR['!autofilter']={ref:wsR['!ref']};XLSX.utils.book_append_sheet(wb,wsR,'Recurrencias');
       const detail=consumptionExportDetailRows();const wsD=XLSX.utils.json_to_sheet(detail);wsD['!cols']=[{wch:38},{wch:40},{wch:20},{wch:12},{wch:13},{wch:16},{wch:10},{wch:18},{wch:18},{wch:18},{wch:18}];if(wsD['!ref'])wsD['!autofilter']={ref:wsD['!ref']};XLSX.utils.book_append_sheet(wb,wsD,'Detalle servicio-insumo');
-      const evolution=consumptionEvolutionExportRows();const wsE=XLSX.utils.json_to_sheet(evolution);wsE['!cols']=[{wch:12},{wch:38},{wch:40},{wch:20},{wch:12},{wch:13},{wch:16},{wch:10}];if(wsE['!ref'])wsE['!autofilter']={ref:wsE['!ref']};XLSX.utils.book_append_sheet(wb,wsE,'Evolucion mensual');
+      const evolution=consumptionEvolutionExportRows();const wsE=XLSX.utils.json_to_sheet(evolution);wsE['!cols']=[{wch:12},{wch:38},{wch:40},{wch:20},{wch:12},{wch:15},{wch:13},{wch:18},{wch:16},{wch:10}];if(wsE['!ref'])wsE['!autofilter']={ref:wsE['!ref']};XLSX.utils.book_append_sheet(wb,wsE,'Evolucion mensual');
       const stamp=new Date().toISOString().slice(0,10).replaceAll('-','');XLSX.writeFile(wb,`Analisis_Consumos_CleanIt_${stamp}.xlsx`);toast('Excel de consumos generado.','success');
     }catch(error){console.error(error);toast(error.message||'No se pudo generar el Excel.','error');}finally{buttonBusy(E.exportConsumptionXlsxButton,false);}
   }
@@ -7790,7 +7840,7 @@
       const table=(section,cols,rows)=>{title(section);const head=7;const drawHead=()=>{doc.setFillColor(242,246,251);doc.rect(mx,y,cw,head,'F');font('bold',6.5);doc.setTextColor(75);cols.forEach(c=>doc.text(pdfSafeText(c.label),c.align==='right'?c.x+c.w-1.5:c.x+1.5,y+4.6,{align:c.align==='right'?'right':'left'}));doc.setTextColor(0);y+=head;};drawHead();rows.forEach(row=>{const cells=cols.map(c=>doc.splitTextToSize(pdfSafeText(row[c.key]??'—'),c.w-3));const lines=Math.max(1,...cells.map(v=>v.length));const rh=Math.max(6,lines*3+2);if(y+rh>H-bottom){newPage();drawHead();}font('normal',6.7);cells.forEach((arr,i)=>{const c=cols[i];doc.text(arr,c.align==='right'?c.x+c.w-1.5:c.x+1.5,y+3.8,{align:c.align==='right'?'right':'left'});});doc.setDrawColor(235);doc.line(mx,y+rh,W-mx,y+rh);y+=rh;});y+=5;};
       doc.setFillColor(13,110,253);doc.roundedRect(mx,y,12,12,2,2,'F');font('bold',8);doc.setTextColor(255);doc.text('CI',mx+6,y+7.8,{align:'center'});doc.setTextColor(0);font('bold',16);doc.text('ANÁLISIS DE CONSUMOS',mx+17,y+5);font('normal',8);doc.setTextColor(100);doc.text(pdfSafeText(`Clean It · ${a.period}`),mx+17,y+10);doc.setTextColor(0);y+=18;
       font('bold',8);doc.text(`Gasto: ${pdfMoney(a.total)}`,mx,y);doc.text(`Pedidos: ${formatQty(a.totalOrders)}`,mx+50,y);doc.text(`Gasto/pedido: ${pdfMoney(a.avgOrder)}`,mx+83,y);doc.text(`Servicios: ${a.services.length}`,mx+140,y);doc.text(`Insumos: ${a.productsByAmount.length}`,mx+174,y);doc.text(`Recurrencias: ${a.recurrences.length}`,mx+207,y);doc.text(`Durables: ${a.durable.length}`,mx+248,y);y+=7;
-      font('normal',7.2);doc.text(`Top 5 servicios: ${formatPercent(a.top5ServicesShare)} del gasto · Top 5 insumos: ${formatPercent(a.top5ProductsShare)} del gasto`,mx,y);y+=8;
+      font('normal',7.2);doc.text(`Top 5 servicios: ${formatPercent(a.top5ServicesShare)} · Top 5 insumos: ${formatPercent(a.top5ProductsShare)} · Prioridad alta: ${a.highPriority.length} servicios · Pareto 80%: ${a.paretoServices} servicios / ${a.paretoProducts} insumos`,mx,y);y+=8;
       title('Conclusiones cualitativas');a.findings.forEach((f,i)=>{const lines=doc.splitTextToSize(pdfSafeText(`${i+1}. ${f.title}: ${f.detail}`),cw-4);ensure(lines.length*3.6+2);font(f.level==='danger'||f.level==='warning'?'bold':'normal',7.2);doc.text(lines,mx+2,y);y+=lines.length*3.6+2;});y+=3;
       const svcCols=[{key:'rank',label:'#',x:mx,w:8},{key:'name',label:'SERVICIO',x:mx+8,w:72},{key:'amount',label:'GASTO',x:mx+80,w:35,align:'right'},{key:'share',label:'% TOTAL',x:mx+115,w:24,align:'right'},{key:'orders',label:'PEDIDOS',x:mx+139,w:22,align:'right'},{key:'avg',label:'GASTO/PED.',x:mx+161,w:34,align:'right'},{key:'variation',label:'EVOLUCIÓN',x:mx+195,w:30,align:'right'}];
       table('Ranking completo de servicios',svcCols,a.services.map((r,i)=>({rank:i+1,name:r.name,amount:formatCurrency(r.amount),share:formatPercent(a.total?r.amount/a.total*100:0),orders:formatQty(r.orders),avg:formatCurrency(r.orders?r.amount/r.orders:0),variation:r.variation==null?'Sin ref.':formatSignedPercent(r.variation)})));
@@ -7802,16 +7852,13 @@
   }
 
   function currentServiceProductRows(serviceId) {
-    const mode=getConsumptionMode();
-    const rows=mode==='range'?S.consumptionRangeRows:S.consumptionRows;
-    return rows.filter((r)=>r.service_id===serviceId && number(mode==='range'?r.range_amount:r.month_amount)>0).map((r)=>({materialKey:consumptionMaterialIdentity(r),name:r.item_name,sku:r.item_sku||'',unit:r.unit||'unidad',quantity:number(mode==='range'?r.range_quantity:r.month_quantity),amount:number(mode==='range'?r.range_amount:r.month_amount),orders:number(mode==='range'?r.range_orders:r.month_orders)})).sort((a,b)=>b.amount-a.amount);
+    const mode=getConsumptionMode(),rows=mode==='range'?S.consumptionRangeRows:S.consumptionRows;
+    return rows.filter((r)=>r.service_id===serviceId&&number(mode==='range'?r.range_amount:r.month_amount)>0).map((r)=>({materialKey:consumptionMaterialIdentity(r),materialId:r.material_id||null,name:r.item_name,sku:r.item_sku||'',unit:r.unit||'unidad',quantity:number(mode==='range'?r.range_quantity:r.month_quantity),amount:number(mode==='range'?r.range_amount:r.month_amount),orders:number(mode==='range'?r.range_orders:r.month_orders),classification:consumptionItemClassification({materialId:r.material_id,itemName:r.item_name}).key})).sort((a,b)=>b.amount-a.amount);
   }
 
   function renderConsumptionServiceProductBreakdown(serviceId) {
-    if(!E.consumptionServiceProductBreakdownBody)return;
-    const rows=currentServiceProductRows(serviceId);const total=rows.reduce((s,r)=>s+r.amount,0);
-    E.consumptionServiceProductBreakdownCaption.textContent=`${consumptionPeriodLabel()} · ${rows.length} insumos`;
-    E.consumptionServiceProductBreakdownBody.innerHTML=rows.map((r,i)=>`<tr><td>${i+1}</td><td><strong>${eh(r.name)}</strong>${r.sku?`<small class="d-block text-secondary">SKU ${eh(r.sku)}</small>`:''}</td><td>${formatQty(r.quantity)} ${eh(r.unit)}</td><td>${formatQty(r.orders)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}" data-consumption-product-service="${ea(serviceId)}">Evolución</button></td></tr>`).join('')||'<tr><td colspan="7" class="text-center text-secondary py-4">Sin consumo para este servicio en el período analizado.</td></tr>';
+    if(!E.consumptionServiceProductBreakdownBody)return;const rows=currentServiceProductRows(serviceId),total=rows.reduce((sum,r)=>sum+r.amount,0);E.consumptionServiceProductBreakdownCaption.textContent=`${consumptionPeriodLabel()} · ${rows.length} insumos`;
+    E.consumptionServiceProductBreakdownBody.innerHTML=rows.map((r,i)=>`<tr><td>${i+1}</td><td><strong>${eh(r.name)}</strong>${r.sku?`<small class="d-block text-secondary">SKU ${eh(r.sku)}</small>`:''}</td><td>${consumptionClassificationBadge(r)}</td><td>${formatQty(r.quantity)} ${eh(r.unit)}</td><td>${formatQty(r.orders)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${total>0?formatPercent(r.amount/total*100):'0%'}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}" data-consumption-product-service="${ea(serviceId)}">Evolución</button></td></tr>`).join('')||'<tr><td colspan="8" class="text-center text-secondary py-4">Sin consumo para este servicio en el período analizado.</td></tr>';
   }
 
   async function openConsumptionProductHistory(materialKey,itemName,serviceId='') {
@@ -7835,20 +7882,22 @@
   }
 
   function renderConsumptionProductHistory(rows,months,untilMonth) {
-    const monthKeys=previousMonthKeys(untilMonth,months);const monthly=new Map(monthKeys.map((k)=>[k,{quantity:0,amount:0,orders:0,services:new Set()}]));const services=new Map();let unit='unidad';let sku='';
-    rows.forEach((r)=>{const k=String(r.consumption_month).slice(0,7);if(!monthly.has(k))return;unit=r.unit||unit;sku=r.item_sku||sku;const b=monthly.get(k);b.quantity+=number(r.quantity);b.amount+=number(r.amount);b.orders+=number(r.orders);b.services.add(r.service_id);if(!services.has(r.service_id))services.set(r.service_id,{name:r.service_name,quantity:0,amount:0,orders:0});const s=services.get(r.service_id);s.quantity+=number(r.quantity);s.amount+=number(r.amount);s.orders+=number(r.orders);});
-    const series=monthKeys.map((k)=>({key:k,...monthly.get(k),serviceCount:monthly.get(k).services.size}));const totalQty=series.reduce((s,r)=>s+r.quantity,0);const totalAmount=series.reduce((s,r)=>s+r.amount,0);const active=series.filter((r)=>r.quantity>0);const avgQty=active.length?totalQty/active.length:0;const maxQty=Math.max(0,...series.map((r)=>r.quantity));
-    E.consumptionProductHistorySubtitle.textContent=`${sku?`SKU ${sku} · `:''}${unit} · ${S.consumptionProductHistoryServiceId?(S.services.find((s)=>s.id===S.consumptionProductHistoryServiceId)?.name||'Servicio'):'Todos los servicios'}`;
+    const monthKeys=previousMonthKeys(untilMonth,months),monthly=new Map(monthKeys.map((k)=>[k,{quantity:0,amount:0,orders:0,services:new Set()}])),services=new Map();let unit='unidad',sku='',materialId=null;
+    rows.forEach((r)=>{const k=String(r.consumption_month).slice(0,7);if(!monthly.has(k))return;unit=r.unit||unit;sku=r.item_sku||sku;materialId=r.material_id||materialId;const b=monthly.get(k);b.quantity+=number(r.quantity);b.amount+=number(r.amount);b.orders+=number(r.orders);b.services.add(r.service_id);if(!services.has(r.service_id))services.set(r.service_id,{name:r.service_name,quantity:0,amount:0,orders:0});const sr=services.get(r.service_id);sr.quantity+=number(r.quantity);sr.amount+=number(r.amount);sr.orders+=number(r.orders);});
+    const series=monthKeys.map((k)=>{const b=monthly.get(k);return{key:k,...b,serviceCount:b.services.size,price:b.quantity>0?b.amount/b.quantity:0};}),totalQty=series.reduce((sum,r)=>sum+r.quantity,0),totalAmount=series.reduce((sum,r)=>sum+r.amount,0),active=series.filter((r)=>r.quantity>0),avgQty=active.length?totalQty/active.length:0,maxQty=Math.max(0,...series.map((r)=>r.quantity)),current=series[series.length-1]||{quantity:0,amount:0,price:0},prev=series[series.length-2]||{quantity:0,amount:0,price:0},qtyVar=prev.quantity>0?(current.quantity-prev.quantity)/prev.quantity*100:null,priceVar=prev.price>0?(current.price-prev.price)/prev.price*100:null,spendVar=prev.amount>0?(current.amount-prev.amount)/prev.amount*100:null;
+    const quantityEffect=prev.price>0?(current.quantity-prev.quantity)*prev.price:0,priceEffect=prev.price>0?(current.price-prev.price)*current.quantity:0;const classification=consumptionItemClassification({materialId,itemName:S.consumptionProductHistoryName});
+    E.consumptionProductHistorySubtitle.textContent=`${sku?`SKU ${sku} · `:''}${unit} · ${S.consumptionProductHistoryServiceId?(S.services.find((s)=>s.id===S.consumptionProductHistoryServiceId)?.name||'Servicio'):'Todos los servicios'}`;E.consumptionProductClassification.innerHTML=`${consumptionClassificationBadge({materialId,itemName:S.consumptionProductHistoryName})}<span class="text-secondary small ms-2">Clasificación automática para priorizar recurrencias y vida útil.</span>`;
+    E.consumptionProductCurrentQty.textContent=`${formatQty(current.quantity)} ${unit}`;E.consumptionProductCurrentPrice.textContent=current.price>0?formatCurrency(current.price):'—';E.consumptionProductQtyVariation.innerHTML=consumptionVariationBadge(qtyVar);E.consumptionProductPriceVariation.innerHTML=consumptionVariationBadge(priceVar);
+    let driver='Sin una base comparable suficiente para explicar el cambio del último mes.';if(spendVar!=null){const parts=[];if(Math.abs(quantityEffect)>=1)parts.push(`efecto cantidad ${quantityEffect>=0?'+':''}${formatCurrency(quantityEffect)}`);if(Math.abs(priceEffect)>=1)parts.push(`efecto precio ${priceEffect>=0?'+':''}${formatCurrency(priceEffect)}`);driver=`El gasto cambió ${formatSignedPercent(spendVar)}. ${parts.length?`Descomposición aproximada: ${parts.join(' · ')}.`:''} ${Math.abs(number(qtyVar))>Math.abs(number(priceVar))?'El movimiento está explicado principalmente por cantidad.':'El precio tiene un peso relevante en el cambio.'}`;}
+    E.consumptionProductDriverInsight.innerHTML=`<div><i class="bi bi-diagram-3-fill"></i></div><div><strong>Qué está explicando el gasto</strong><p>${eh(driver)} ${classification.key==='durable'?'Al ser durable, una reposición frecuente merece validación de pérdida, rotura o asignación.':classification.key==='semidurable'?'Al ser semidurable, conviene contrastar frecuencia con vida útil esperada.':''}</p></div>`;
     E.consumptionProductHistoryTotalQty.textContent=`${formatQty(totalQty)} ${unit}`;E.consumptionProductHistoryTotalAmount.textContent=formatCurrency(totalAmount);E.consumptionProductHistoryAverage.textContent=`${formatQty(avgQty)} ${unit}`;E.consumptionProductHistoryMax.textContent=`${formatQty(maxQty)} ${unit}`;
-    E.consumptionProductQuantityChart.innerHTML=consumptionMiniColumns(series,'quantity',(r)=>`${formatQty(r.quantity)} ${unit}`);
-    E.consumptionProductAmountChart.innerHTML=consumptionMiniColumns(series,'amount',(r)=>formatCurrency(r.amount));
-    E.consumptionProductHistoryBody.innerHTML=series.slice().reverse().map((r)=>{const prev=series.find((x)=>x.key===previousMonthKey(r.key));const qVar=prev&&prev.quantity>0?(r.quantity-prev.quantity)/prev.quantity*100:null;const aVar=prev&&prev.amount>0?(r.amount-prev.amount)/prev.amount*100:null;return`<tr><td><strong>${eh(monthLabel(r.key))}</strong></td><td>${formatQty(r.quantity)} ${eh(unit)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${formatQty(r.orders)}</td><td>${formatQty(r.serviceCount)}</td><td>${consumptionVariationBadge(qVar)}</td><td>${consumptionVariationBadge(aVar)}</td></tr>`;}).join('');
-    const serviceRows=[...services.entries()].map(([id,r])=>({id,...r})).sort((a,b)=>b.amount-a.amount);E.consumptionProductServicesBody.innerHTML=serviceRows.map((r,i)=>`<tr><td>${i+1}</td><td><strong>${eh(r.name)}</strong></td><td>${formatQty(r.quantity)} ${eh(unit)}</td><td>${formatQty(r.orders)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${totalAmount>0?formatPercent(r.amount/totalAmount*100):'0%'}</td><td><button class="btn btn-sm btn-outline-secondary" type="button" data-consumption-service-history="${ea(r.id)}">Servicio</button></td></tr>`).join('')||'<tr><td colspan="7" class="text-center text-secondary py-4">Sin servicios con consumo.</td></tr>';
-    E.consumptionProductHistoryLoading.classList.add('d-none');E.consumptionProductHistoryContent.classList.remove('d-none');
+    E.consumptionProductQuantityChart.innerHTML=consumptionMiniColumns(series,'quantity',(r)=>`${formatQty(r.quantity)} ${unit}`);E.consumptionProductAmountChart.innerHTML=consumptionMiniColumns(series,'amount',(r)=>formatCurrency(r.amount));E.consumptionProductPriceChart.innerHTML=consumptionMiniColumns(series,'price',(r)=>r.price>0?formatCurrency(r.price):'Sin consumo');
+    E.consumptionProductHistoryBody.innerHTML=series.slice().reverse().map((r)=>{const p=series.find((x)=>x.key===previousMonthKey(r.key)),qVar=p&&p.quantity>0?(r.quantity-p.quantity)/p.quantity*100:null,pVar=p&&p.price>0?(r.price-p.price)/p.price*100:null,aVar=p&&p.amount>0?(r.amount-p.amount)/p.amount*100:null;return`<tr><td><strong>${eh(monthLabel(r.key))}</strong></td><td>${formatQty(r.quantity)} ${eh(unit)}</td><td>${r.price>0?eh(formatCurrency(r.price)):'—'}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${formatQty(r.orders)}</td><td>${formatQty(r.serviceCount)}</td><td>${consumptionVariationBadge(qVar)}</td><td>${consumptionVariationBadge(pVar)}</td><td>${consumptionVariationBadge(aVar)}</td></tr>`;}).join('');
+    const serviceRows=[...services.entries()].map(([id,r])=>({id,...r})).sort((a,b)=>b.amount-a.amount);E.consumptionProductServicesBody.innerHTML=serviceRows.map((r,i)=>`<tr><td>${i+1}</td><td><strong>${eh(r.name)}</strong></td><td>${formatQty(r.quantity)} ${eh(unit)}</td><td>${formatQty(r.orders)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${totalAmount>0?formatPercent(r.amount/totalAmount*100):'0%'}</td><td><button class="btn btn-sm btn-outline-secondary" type="button" data-consumption-service-history="${ea(r.id)}">Servicio</button></td></tr>`).join('')||'<tr><td colspan="7" class="text-center text-secondary py-4">Sin servicios con consumo.</td></tr>';E.consumptionProductHistoryLoading.classList.add('d-none');E.consumptionProductHistoryContent.classList.remove('d-none');
   }
 
   function consumptionMiniColumns(series,field,labelFn) {
-    const max=Math.max(1,...series.map((r)=>number(r[field])));return `<div class="consumption-product-history-columns">${series.map((r)=>`<div class="consumption-product-history-column" title="${ea(`${monthLabel(r.key)}: ${labelFn(r)}`)}"><div>${eh(field==='amount'?compactCurrency(r[field]):formatQty(r[field]))}</div><span style="height:${Math.max(number(r[field])>0?4:1,number(r[field])/max*100).toFixed(1)}%"></span><small>${eh(shortMonthLabel(r.key))}</small></div>`).join('')}</div>`;
+    const max=Math.max(1,...series.map((r)=>number(r[field])));const compact=(value)=>field==='amount'||field==='price'?compactCurrency(value):formatQty(value);return `<div class="consumption-product-history-columns">${series.map((r)=>`<div class="consumption-product-history-column" title="${ea(`${monthLabel(r.key)}: ${labelFn(r)}`)}"><div>${eh(compact(r[field]))}</div><span style="height:${Math.max(number(r[field])>0?4:1,number(r[field])/max*100).toFixed(1)}%"></span><small>${eh(shortMonthLabel(r.key))}</small></div>`).join('')}</div>`;
   }
 
   function filteredConsumptionRows() {
@@ -7964,15 +8013,33 @@
 
   async function loadConsumptionServiceHistory() {
     const serviceId=S.consumptionServiceHistoryId;if(!serviceId)return;E.consumptionServiceHistoryLoading.classList.remove('d-none');E.consumptionServiceHistoryContent.classList.add('d-none');E.consumptionServiceHistoryError.classList.add('d-none');
-    try{const months=Number(E.consumptionServiceHistoryMonths.value||24);const{data,error}=await S.sb.rpc('admin_consumption_service_history',{p_service_id:serviceId,p_months:months});if(error)throw error;renderConsumptionServiceHistory(data||[]);}catch(error){console.error(error);E.consumptionServiceHistoryLoading.classList.add('d-none');E.consumptionServiceHistoryError.textContent=consumptionErrorMessage(error);E.consumptionServiceHistoryError.classList.remove('d-none');}
+    try{
+      const requested=Math.max(3,Math.min(60,Number(E.consumptionServiceHistoryMonths.value||24)));const until=getConsumptionMode()==='range'?String(E.consumptionRangeEnd.value||dateInputValue(new Date())).slice(0,7):(E.consumptionMonth.value||monthInputValue(new Date()));
+      const [historyResult,analyticsResult]=await Promise.all([S.sb.rpc('admin_consumption_service_history',{p_service_id:serviceId,p_months:60}),S.sb.rpc('admin_consumption_analytics',{p_until_month:`${until}-01`,p_months:requested,p_service_id:serviceId})]);if(historyResult.error)throw historyResult.error;if(analyticsResult.error)throw analyticsResult.error;
+      const keys=new Set(previousMonthKeys(until,requested));const history=(historyResult.data||[]).filter((r)=>keys.has(String(r.consumption_month).slice(0,7)));renderConsumptionServiceHistory(history,analyticsResult.data||[],until);
+    }catch(error){console.error(error);E.consumptionServiceHistoryLoading.classList.add('d-none');E.consumptionServiceHistoryError.textContent=consumptionErrorMessage(error);E.consumptionServiceHistoryError.classList.remove('d-none');}
   }
 
-  function renderConsumptionServiceHistory(rows) {
-    const sorted=[...rows].sort((a,b)=>String(a.consumption_month).localeCompare(String(b.consumption_month)));const total=sorted.reduce((s,r)=>s+number(r.amount),0);const active=sorted.filter((r)=>number(r.amount)>0);const avg=active.length?total/active.length:0;const max=Math.max(0,...sorted.map((r)=>number(r.amount)));const orders=sorted.reduce((s,r)=>s+number(r.orders),0);
+  function renderConsumptionServiceHistory(rows,analyticsRows,untilMonth) {
+    const sorted=[...rows].sort((a,b)=>String(a.consumption_month).localeCompare(String(b.consumption_month))),total=sorted.reduce((sum,r)=>sum+number(r.amount),0),active=sorted.filter((r)=>number(r.amount)>0),avg=active.length?total/active.length:0,max=Math.max(0,...sorted.map((r)=>number(r.amount))),orders=sorted.reduce((sum,r)=>sum+number(r.orders),0),current=sorted.find((r)=>String(r.consumption_month).slice(0,7)===untilMonth)||sorted[sorted.length-1]||{amount:0,orders:0,products:0};
+    const prevKeys=previousMonthKeys(untilMonth,4).slice(0,3),previous3=sorted.filter((r)=>prevKeys.includes(String(r.consumption_month).slice(0,7))),prevAvg=previous3.length?previous3.reduce((sum,r)=>sum+number(r.amount),0)/3:0,vsAvg=prevAvg>0?(number(current.amount)-prevAvg)/prevAvg*100:null;
+    const service=S.services.find((s)=>s.id===S.consumptionServiceHistoryId)||{},billing=number(service.monthly_billing),share=billing>0?number(current.amount)/billing*100:null,priority=buildConsumptionServicePriorities(buildConsumptionFullRankings()).find((r)=>r.serviceId===S.consumptionServiceHistoryId);
+    E.consumptionServiceHistoryCurrent.textContent=formatCurrency(current.amount);E.consumptionServiceHistoryVsAverage.innerHTML=consumptionVariationBadge(vsAvg);E.consumptionServiceHistoryBudgetShare.textContent=share==null?'Sin facturación':formatPercent(share);E.consumptionServiceHistoryReviewScore.textContent=`${priority?.score||0}/100`;
+    const reasons=priority?.reasons?.slice(0,4)||[];E.consumptionServiceHistoryInsight.innerHTML=`<div><i class="bi ${priority?.priority==='high'?'bi-exclamation-octagon-fill':priority?.priority==='medium'?'bi-exclamation-triangle-fill':'bi-check-circle-fill'}"></i></div><div><strong>${priority?.priority==='high'?'Prioridad alta de revisión':priority?.priority==='medium'?'Prioridad media de revisión':'Comportamiento dentro de parámetros'}</strong><p>${eh(reasons.join(' · ')||'No se detectan señales relevantes con los umbrales actuales.')} ${share==null?'El servicio no tiene facturación mensual configurada, por lo que no puede evaluarse el % de insumos sobre facturación.':`Consumo del mes: ${formatPercent(share)} de la facturación; límite operativo configurado: ${formatPercent(service.budget_limit_percent||5)}.`}</p></div>`;
     E.consumptionServiceHistoryTotal.textContent=formatCurrency(total);E.consumptionServiceHistoryAverage.textContent=formatCurrency(avg);E.consumptionServiceHistoryMax.textContent=formatCurrency(max);E.consumptionServiceHistoryOrders.textContent=formatQty(orders);
-    const maxValue=Math.max(1,max);E.consumptionServiceHistoryBars.innerHTML=sorted.map((r)=>`<div class="consumption-service-history-column" title="${ea(`${monthLabelFromDate(r.consumption_month)}: ${formatCurrency(r.amount)}`)}"><div>${eh(compactCurrency(r.amount))}</div><span style="height:${Math.max(number(r.amount)>0?5:1,number(r.amount)/maxValue*100).toFixed(1)}%"></span><small>${eh(shortMonthLabel(String(r.consumption_month).slice(0,7)))}</small></div>`).join('')||'<div class="consumption-empty">No hay consumos históricos para este servicio.</div>';
-    E.consumptionServiceHistoryBody.innerHTML=sorted.slice().reverse().map((r,i,arr)=>{const prev=sorted.find((x)=>String(x.consumption_month).slice(0,7)===previousMonthKey(String(r.consumption_month).slice(0,7)));const variation=prev&&number(prev.amount)>0?(number(r.amount)-number(prev.amount))/number(prev.amount)*100:null;return `<tr><td><strong>${eh(monthLabelFromDate(r.consumption_month))}</strong></td><td>${formatQty(r.orders)}</td><td>${formatQty(r.products)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${consumptionVariationBadge(variation)}</td></tr>`;}).join('')||'<tr><td colspan="5" class="text-center text-secondary py-4">Sin información histórica.</td></tr>';
-    E.consumptionServiceHistoryLoading.classList.add('d-none');E.consumptionServiceHistoryContent.classList.remove('d-none');
+    E.consumptionServiceHistoryBars.innerHTML=consumptionServiceColumns(sorted,'amount',(r)=>compactCurrency(r.amount),(r)=>formatCurrency(r.amount));E.consumptionServiceOrdersChart.innerHTML=consumptionServiceColumns(sorted,'orders',(r)=>formatQty(r.orders),(r)=>`${formatQty(r.orders)} pedidos`);
+    E.consumptionServiceHistoryBody.innerHTML=sorted.slice().reverse().map((r)=>{const prev=sorted.find((x)=>String(x.consumption_month).slice(0,7)===previousMonthKey(String(r.consumption_month).slice(0,7))),variation=prev&&number(prev.amount)>0?(number(r.amount)-number(prev.amount))/number(prev.amount)*100:null;return`<tr><td><strong>${eh(monthLabelFromDate(r.consumption_month))}</strong></td><td>${formatQty(r.orders)}</td><td>${formatQty(r.products)}</td><td><strong>${eh(formatCurrency(r.amount))}</strong></td><td>${eh(formatCurrency(number(r.orders)>0?number(r.amount)/number(r.orders):0))}</td><td>${consumptionVariationBadge(variation)}</td></tr>`;}).join('')||'<tr><td colspan="6" class="text-center text-secondary py-4">Sin información histórica.</td></tr>';
+    renderConsumptionServiceMonthlyProducts(analyticsRows,untilMonth);E.consumptionServiceHistoryLoading.classList.add('d-none');E.consumptionServiceHistoryContent.classList.remove('d-none');
+  }
+
+  function consumptionServiceColumns(rows,field,valueFn,titleFn) {
+    const max=Math.max(1,...rows.map((r)=>number(r[field])));return rows.map((r)=>`<div class="consumption-service-history-column" title="${ea(`${monthLabelFromDate(r.consumption_month)}: ${titleFn(r)}`)}"><div>${eh(valueFn(r))}</div><span style="height:${Math.max(number(r[field])>0?5:1,number(r[field])/max*100).toFixed(1)}%"></span><small>${eh(shortMonthLabel(String(r.consumption_month).slice(0,7)))}</small></div>`).join('')||'<div class="consumption-empty">No hay consumos históricos para este servicio.</div>';
+  }
+
+  function renderConsumptionServiceMonthlyProducts(rows,untilMonth) {
+    if(!E.consumptionServiceMonthlyProductBody)return;const keys=previousMonthKeys(untilMonth,4),map=new Map();(rows||[]).forEach((r)=>{const key=consumptionMaterialIdentity(r);if(!map.has(key))map.set(key,{materialKey:key,materialId:r.material_id||null,name:r.item_name,sku:r.item_sku||'',unit:r.unit||'unidad',months:new Map(keys.map((k)=>[k,{quantity:0,amount:0}]))});const item=map.get(key),month=String(r.consumption_month).slice(0,7);if(item.months.has(month)){const b=item.months.get(month);b.quantity+=number(r.quantity);b.amount+=number(r.amount);}});
+    const items=[...map.values()].map((item)=>{const vals=keys.map((k)=>item.months.get(k)||{quantity:0,amount:0}),current=vals[3],prev=vals[2],price=current.quantity>0?current.amount/current.quantity:0,prevPrice=prev.quantity>0?prev.amount/prev.quantity:0;return{...item,vals,current,price,priceVariation:prevPrice>0?(price-prevPrice)/prevPrice*100:null};}).filter((r)=>r.vals.some((v)=>v.quantity>0)).sort((a,b)=>b.current.amount-a.current.amount||b.current.quantity-a.current.quantity);
+    E.consumptionServiceMonthlyProductBody.innerHTML=items.map((r)=>`<tr><td><strong>${eh(r.name)}</strong>${r.sku?`<small class="d-block text-secondary">${eh(r.sku)}</small>`:''}</td><td>${consumptionClassificationBadge(r)}</td><td><strong>${formatQty(r.vals[3].quantity)} ${eh(r.unit)}</strong></td><td>${formatQty(r.vals[2].quantity)}</td><td>${formatQty(r.vals[1].quantity)}</td><td>${formatQty(r.vals[0].quantity)}</td><td>${eh(formatCurrency(r.current.amount))}</td><td>${r.price>0?eh(formatCurrency(r.price)):'—'}</td><td>${consumptionVariationBadge(r.priceVariation)}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(r.materialKey)}" data-consumption-product-name="${ea(r.name)}" data-consumption-product-service="${ea(S.consumptionServiceHistoryId)}">Detalle</button></td></tr>`).join('')||'<tr><td colspan="10" class="text-center text-secondary py-4">Sin insumos para comparar.</td></tr>';
   }
 
   function previousMonthKey(value){const[y,m]=String(value).split('-').map(Number);return monthInputValue(new Date(y,m-2,15));}
