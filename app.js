@@ -7872,20 +7872,103 @@
     try{range=consumptionStudioDateRange();}catch(error){E.consumptionStudioError.textContent=error.message;E.consumptionStudioError.classList.remove('d-none');return;}
     const key=`${range.start}|${range.end}`;
     if(!force&&S.consumptionStudioLoadedKey===key){renderConsumptionAnalyticsStudio();return;}
-    S.consumptionStudioLoading=true;E.consumptionStudioError.classList.add('d-none');E.consumptionStudioNotice.classList.add('d-none');E.consumptionStudioLoading.classList.remove('d-none');buttonBusy(E.consumptionStudioApplyButton,true,'Cargando...');
+    S.consumptionStudioLoading=true;E.consumptionStudioError.classList.add('d-none');E.consumptionStudioError.textContent='';E.consumptionStudioNotice.classList.add('d-none');E.consumptionStudioLoading.classList.remove('d-none');buttonBusy(E.consumptionStudioApplyButton,true,'Cargando...');
     try{
-      const {data,error}=await S.sb.rpc('admin_consumption_range_bundle',{p_from_date:range.start,p_to_date:range.end,p_service_id:null});
-      if(error)throw error;
-      const payload=data||{};
-      S.consumptionStudioRows=Array.isArray(payload.monthly)?payload.monthly:[];
-      S.consumptionStudioServiceRows=Array.isArray(payload.monthly_services)?payload.monthly_services:[];
-      S.consumptionStudioTotalRows=Array.isArray(payload.monthly_total)?payload.monthly_total:[];
+      const startDate=new Date(`${range.start}T12:00:00`),endDate=new Date(`${range.end}T12:00:00`);
+      const requestedMonths=Math.max(1,Math.min(60,(endDate.getFullYear()-startDate.getFullYear())*12+endDate.getMonth()-startDate.getMonth()+1));
+      const untilMonth=`${range.end.slice(0,7)}-01`;
+
+      // Fuente principal: las mismas RPC estables que ya alimentan el módulo normal de Consumos.
+      // range_bundle se consulta en paralelo solamente para enriquecer conteos exactos por servicio.
+      const [analyticsResult,overviewResult,bundleResult]=await Promise.all([
+        S.sb.rpc('admin_consumption_analytics',{p_until_month:untilMonth,p_months:requestedMonths,p_service_id:null}),
+        S.sb.rpc('admin_consumption_overview',{p_from_date:range.start,p_to_date:range.end,p_service_id:null}),
+        S.sb.rpc('admin_consumption_range_bundle',{p_from_date:range.start,p_to_date:range.end,p_service_id:null})
+      ]);
+
+      let monthlyRows=[];
+      let monthlyServiceRows=[];
+      let monthlyTotalRows=[];
+      let source='';
+      const bundle=(!bundleResult.error&&bundleResult.data&&typeof bundleResult.data==='object')?bundleResult.data:{};
+      const bundleMonthly=Array.isArray(bundle.monthly)?bundle.monthly:[];
+      const analyticsRows=!analyticsResult.error&&Array.isArray(analyticsResult.data)?analyticsResult.data:[];
+
+      // Para rangos personalizados, range_bundle es exacto a nivel día. Para presets mensuales,
+      // admin_consumption_analytics es la fuente más robusta y ya probada por el resto del tablero.
+      const exactCustom=E.consumptionStudioPeriod?.value==='custom';
+      if(exactCustom&&bundleMonthly.length){monthlyRows=bundleMonthly;source='rango exacto';}
+      else if(analyticsRows.length){monthlyRows=analyticsRows;source='histórico mensual';}
+      else if(bundleMonthly.length){monthlyRows=bundleMonthly;source='rango consolidado';}
+      else if(Array.isArray(S.consumptionAnalyticsRows)&&S.consumptionAnalyticsRows.length){
+        monthlyRows=S.consumptionAnalyticsRows;source='caché del análisis de consumos';
+      }
+
+      if(Array.isArray(bundle.monthly_services)&&bundle.monthly_services.length){
+        monthlyServiceRows=bundle.monthly_services;
+      }else{
+        // Fallback seguro para gasto por servicio. No inventamos pedidos: solo consolidamos monto/productos.
+        const serviceMap=new Map();
+        monthlyRows.forEach((r)=>{
+          const month=String(r.consumption_month||'').slice(0,7);if(!/^\d{4}-\d{2}$/.test(month))return;
+          const k=`${r.service_id}|${month}`;
+          if(!serviceMap.has(k))serviceMap.set(k,{service_id:r.service_id,service_name:r.service_name||'Servicio',consumption_month:`${month}-01`,amount:0,orders:null,products:0,_products:new Set()});
+          const x=serviceMap.get(k);x.amount+=number(r.amount);x._products.add(consumptionMaterialIdentity(r));
+        });
+        monthlyServiceRows=[...serviceMap.values()].map((x)=>({...x,products:x._products.size,_products:undefined}));
+      }
+
+      if(!overviewResult.error&&Array.isArray(overviewResult.data)&&overviewResult.data.length){
+        monthlyTotalRows=overviewResult.data;
+      }else if(Array.isArray(bundle.monthly_total)&&bundle.monthly_total.length){
+        monthlyTotalRows=bundle.monthly_total;
+      }else{
+        const totalMap=new Map();
+        monthlyRows.forEach((r)=>{
+          const month=String(r.consumption_month||'').slice(0,7);if(!/^\d{4}-\d{2}$/.test(month))return;
+          if(!totalMap.has(month))totalMap.set(month,{consumption_month:`${month}-01`,amount:0,orders:null,products:0,services:0,_products:new Set(),_services:new Set()});
+          const x=totalMap.get(month);x.amount+=number(r.amount);x._products.add(consumptionMaterialIdentity(r));x._services.add(r.service_id);
+        });
+        monthlyTotalRows=[...totalMap.values()].map((x)=>({...x,products:x._products.size,services:x._services.size,_products:undefined,_services:undefined}));
+      }
+
+      const allowedMonths=new Set(consumptionStudioMonthKeys());
+      monthlyRows=monthlyRows.filter((r)=>allowedMonths.has(String(r.consumption_month||'').slice(0,7)));
+      monthlyServiceRows=monthlyServiceRows.filter((r)=>allowedMonths.has(String(r.consumption_month||'').slice(0,7)));
+      monthlyTotalRows=monthlyTotalRows.filter((r)=>allowedMonths.has(String(r.consumption_month||'').slice(0,7)));
+
+      S.consumptionStudioRows=monthlyRows;
+      S.consumptionStudioServiceRows=monthlyServiceRows;
+      S.consumptionStudioTotalRows=monthlyTotalRows;
       S.consumptionStudioLoadedKey=key;
       syncConsumptionStudioServiceOptions();syncConsumptionStudioMaterialOptions();
-      if(!S.consumptionStudioServiceRows.length&&S.consumptionStudioRows.length){E.consumptionStudioNotice.innerHTML='<strong>Compatibilidad parcial:</strong> el tablero puede analizar gasto, cantidad y precio. Para contar pedidos sin duplicarlos por producto, ejecutá la versión actualizada de <code>consumos-supabase.sql</code>.';E.consumptionStudioNotice.classList.remove('d-none');}
+
+      if(!monthlyRows.length){
+        const errors=[analyticsResult.error,bundleResult.error,overviewResult.error].filter(Boolean).map((e)=>String(e.message||e.details||e.code||'Error')).join(' · ');
+        E.consumptionStudioNotice.innerHTML=`<strong>Sin datos recibidos.</strong> El tablero consultó las fuentes disponibles pero no obtuvo consumos para ${eh(range.label)}.${errors?`<br><small>${eh(errors)}</small>`:''}`;
+        E.consumptionStudioNotice.classList.remove('d-none');
+      }else if(monthlyServiceRows.some((r)=>r.orders==null)){
+        E.consumptionStudioNotice.innerHTML=`<strong>Analytics Studio activo.</strong> Fuente: ${eh(source||'consumos')}. Gasto, cantidades y precios están disponibles. El conteo exacto de pedidos por servicio se mostrará solo cuando Supabase entregue ese agregado; el total general de pedidos sigue siendo exacto.`;
+        E.consumptionStudioNotice.classList.remove('d-none');
+      }else{
+        E.consumptionStudioNotice.innerHTML=`<strong>Analytics Studio activo.</strong> Fuente: ${eh(source||'consumos')} · ${monthlyRows.length.toLocaleString('es-AR')} registros mensuales analizados.`;
+        E.consumptionStudioNotice.classList.remove('d-none');
+      }
       renderConsumptionAnalyticsStudio();
-    }catch(error){console.error(error);E.consumptionStudioError.textContent=consumptionErrorMessage(error);E.consumptionStudioError.classList.remove('d-none');}
-    finally{S.consumptionStudioLoading=false;E.consumptionStudioLoading.classList.add('d-none');buttonBusy(E.consumptionStudioApplyButton,false);}
+    }catch(error){
+      console.error(error);
+      // Último fallback: reutiliza el histórico ya cargado por el módulo general si existe.
+      if(Array.isArray(S.consumptionAnalyticsRows)&&S.consumptionAnalyticsRows.length){
+        const allowedMonths=new Set(consumptionStudioMonthKeys());
+        S.consumptionStudioRows=S.consumptionAnalyticsRows.filter((r)=>allowedMonths.has(String(r.consumption_month||'').slice(0,7)));
+        S.consumptionStudioServiceRows=[];S.consumptionStudioTotalRows=[];S.consumptionStudioLoadedKey=key;
+        syncConsumptionStudioServiceOptions();syncConsumptionStudioMaterialOptions();
+        E.consumptionStudioNotice.innerHTML='<strong>Modo de respaldo activo.</strong> Analytics Studio está utilizando el histórico que ya cargó el módulo de Consumos. Gasto, cantidades y precios continúan disponibles.';
+        E.consumptionStudioNotice.classList.remove('d-none');renderConsumptionAnalyticsStudio();
+      }else{
+        E.consumptionStudioError.textContent=consumptionErrorMessage(error);E.consumptionStudioError.classList.remove('d-none');
+      }
+    }finally{S.consumptionStudioLoading=false;E.consumptionStudioLoading.classList.add('d-none');buttonBusy(E.consumptionStudioApplyButton,false);}
   }
 
   function resetConsumptionAnalyticsStudio() {
@@ -7920,6 +8003,8 @@
       else value=(metric==='quantity'||metric==='price')?'product':'service';
     }
     if((metric==='quantity'||metric==='price')&&!materialKey)value='product';
+    // Si no hay conteo exacto de pedidos por servicio, el total consolidado sigue siendo exacto.
+    if(metric==='orders'&&!serviceId&&value==='service'&&!(S.consumptionStudioServiceRows||[]).some((r)=>r.orders!=null))value='total';
     return value;
   }
 
@@ -7946,7 +8031,7 @@
     const map=new Map();
     const ensure=(key,label,meta={})=>{if(!map.has(key))map.set(key,{key,label,meta,months:new Map(months.map((m)=>[m,{amount:0,quantity:0,orders:0}]))});return map.get(key);};
     if(breakdown==='service'&&(!materialKey)&&classification==='all'&&['amount','orders'].includes(metric.key)&&S.consumptionStudioServiceRows.length){
-      (S.consumptionStudioServiceRows||[]).filter((r)=>!serviceId||r.service_id===serviceId).forEach((r)=>{const month=String(r.consumption_month||'').slice(0,7);if(!months.includes(month))return;const s=ensure(`service:${r.service_id}`,r.service_name||'Servicio',{type:'service',serviceId:r.service_id});const b=s.months.get(month);b.amount+=number(r.amount);b.orders+=number(r.orders);});
+      (S.consumptionStudioServiceRows||[]).filter((r)=>!serviceId||r.service_id===serviceId).forEach((r)=>{const month=String(r.consumption_month||'').slice(0,7);if(!months.includes(month))return;const s=ensure(`service:${r.service_id}`,r.service_name||'Servicio',{type:'service',serviceId:r.service_id});const b=s.months.get(month);b.amount+=number(r.amount);if(r.orders!=null)b.orders+=number(r.orders);});
     } else if(breakdown==='total'&&!materialKey&&classification==='all'&&['amount','orders'].includes(metric.key)&&S.consumptionStudioTotalRows.length){
       (S.consumptionStudioTotalRows||[]).forEach((r)=>{const month=String(r.consumption_month||'').slice(0,7);if(!months.includes(month))return;const s=ensure('total','Total consolidado',{type:'total'});const b=s.months.get(month);b.amount+=number(r.amount);b.orders+=number(r.orders);});
     } else {
@@ -7983,7 +8068,7 @@
     if((metric.key==='quantity'||metric.key==='price')&&!E.consumptionStudioMaterial.value){E.consumptionStudioNotice.innerHTML='<strong>Lectura correcta:</strong> las cantidades y precios de productos diferentes no se consolidan entre sí. El tablero los compara como series independientes. Seleccioná un insumo concreto para obtener totales y contrastarlo entre servicios.';E.consumptionStudioNotice.classList.remove('d-none');}
     else if(!S.consumptionStudioServiceRows.length&&S.consumptionStudioRows.length){E.consumptionStudioNotice.innerHTML='<strong>Compatibilidad parcial:</strong> gasto, cantidad y precio funcionan. Para contar pedidos sin duplicarlos por producto, ejecutá la versión actualizada de <code>consumos-supabase.sql</code>.';E.consumptionStudioNotice.classList.remove('d-none');}
     else E.consumptionStudioNotice.classList.add('d-none');
-    if(!series.length){destroyConsumptionStudioCharts();E.consumptionStudioInsights.innerHTML='<div class="consumption-empty compact">No hay datos para esta combinación de filtros.</div>';E.consumptionStudioSummaryBody.innerHTML='<tr><td colspan="7" class="text-center text-secondary py-4">Sin datos.</td></tr>';E.consumptionStudioMatrixHead.innerHTML='';E.consumptionStudioMatrixBody.innerHTML='';['consumptionStudioKpiTotal','consumptionStudioKpiAverage','consumptionStudioKpiCurrent','consumptionStudioKpiVariation','consumptionStudioKpiPeak'].forEach((id)=>{if(E[id])E[id].textContent='—';});return;}
+    if(!series.length){destroyConsumptionStudioCharts();E.consumptionStudioInsights.innerHTML='<div class="consumption-empty compact"><strong>No hay series para mostrar.</strong><br>Probá otro período o tocá <em>Aplicar análisis</em>. Si el resto de Consumos tiene datos, el Studio intentará reutilizarlos automáticamente.</div>';E.consumptionStudioSummaryBody.innerHTML='<tr><td colspan="7" class="text-center text-secondary py-4">Sin datos.</td></tr>';E.consumptionStudioMatrixHead.innerHTML='';E.consumptionStudioMatrixBody.innerHTML='';['consumptionStudioKpiTotal','consumptionStudioKpiAverage','consumptionStudioKpiCurrent','consumptionStudioKpiVariation','consumptionStudioKpiPeak'].forEach((id)=>{if(E[id])E[id].textContent='—';});return;}
     const metricSeries=data.allSeries||series,materialKey=E.consumptionStudioMaterial?.value||'';
     const aggregate=months.map((_,i)=>metricSeries.reduce((sum,s)=>sum+s.values[i],0));
     let total=aggregate.reduce((a,b)=>a+b,0),avg=months.length?total/months.length:0,current=aggregate.at(-1)||0,prev=aggregate.at(-2)||0,variation=prev>0?(current-prev)/prev*100:(current>0?100:null),peak=Math.max(0,...aggregate),peakIndex=aggregate.indexOf(peak),aggregateAllowed=true;
