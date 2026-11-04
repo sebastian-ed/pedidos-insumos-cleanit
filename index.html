@@ -426,6 +426,13 @@
               <div><label class="form-label" for="consumptionStudioScale">Escala</label><select id="consumptionStudioScale" class="form-select"><option value="absolute">Valores reales</option><option value="index">Índice base 100</option></select></div>
               <div><label class="form-label" for="consumptionStudioTopN">Series</label><select id="consumptionStudioTopN" class="form-select"><option value="5">Top 5</option><option value="10" selected>Top 10</option><option value="15">Top 15</option><option value="all">Todos</option><option value="none">Ocultar todos</option><option value="custom">Selección personalizada</option></select></div>
             </div>
+            <div class="consumption-studio-projection mt-3">
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" role="switch" id="consumptionStudioProjectionToggle">
+                <label class="form-check-label" for="consumptionStudioProjectionToggle"><strong>Mostrar proyección de pedidos abiertos</strong><span>Agrega Pendientes, En preparación y Enviados como escenario proyectado. No modifica el consumo confirmado.</span></label>
+              </div>
+              <div id="consumptionStudioProjectionSummary" class="consumption-studio-projection-summary"><span>Proyección desactivada</span></div>
+            </div>
             <div id="consumptionStudioSelections" class="consumption-studio-selections mt-3"></div>
             <div id="consumptionStudioCustomPicker" class="consumption-studio-custom-picker mt-3 d-none">
               <div class="consumption-studio-custom-head">
@@ -463,6 +470,28 @@
               <div class="row g-3 mb-3">
                 <div class="col-xl-5"><div class="consumption-studio-panel h-100"><div class="consumption-studio-panel-head"><div><strong>Lectura automática del filtro</strong><span>Señales priorizadas sobre el alcance seleccionado.</span></div></div><div id="consumptionStudioInsights" class="consumption-studio-insights"></div></div></div>
                 <div class="col-xl-7"><div class="consumption-studio-panel h-100"><div class="consumption-studio-panel-head"><div><strong>Resumen por serie</strong><span>Totales, variación, meses activos y pico.</span></div></div><div class="table-responsive"><table class="table admin-table align-middle mb-0 consumption-studio-summary-table"><thead><tr><th>Serie</th><th>Total</th><th>Promedio</th><th>Último</th><th>Δ mes</th><th>Meses activos</th><th>Pico</th></tr></thead><tbody id="consumptionStudioSummaryBody"></tbody></table></div></div></div>
+              </div>
+              <div id="consumptionStudioBudgetControl" class="consumption-studio-budget mb-3">
+                <div class="consumption-studio-panel">
+                  <div class="consumption-studio-panel-head">
+                    <div><strong>Control de límites de pedidos</strong><span>Evolución por mes de creación. Identifica pedidos dentro del límite, sobre el límite operativo y sobre el máximo del 7%.</span></div>
+                    <div class="d-flex align-items-end gap-2"><div><label class="form-label small mb-1" for="consumptionStudioBudgetStatusFilter">Ver pedidos</label><select id="consumptionStudioBudgetStatusFilter" class="form-select form-select-sm"><option value="all">Todos</option><option value="dentro">Dentro del límite</option><option value="sobre_limite">Sobre límite operativo</option><option value="sobre_7">Sobre 7%</option><option value="sin_configurar">Sin configurar</option></select></div></div>
+                  </div>
+                  <div class="row g-3 mb-3">
+                    <div class="col-6 col-xl-3"><div class="consumption-budget-kpi is-success"><span>Dentro del límite</span><strong id="consumptionStudioBudgetWithin">0</strong><small id="consumptionStudioBudgetWithinFoot">Pedidos</small></div></div>
+                    <div class="col-6 col-xl-3"><div class="consumption-budget-kpi is-warning"><span>Sobre límite operativo</span><strong id="consumptionStudioBudgetOverLimit">0</strong><small id="consumptionStudioBudgetOverLimitFoot">Pedidos</small></div></div>
+                    <div class="col-6 col-xl-3"><div class="consumption-budget-kpi is-danger"><span>Sobre 7%</span><strong id="consumptionStudioBudgetOverSeven">0</strong><small id="consumptionStudioBudgetOverSevenFoot">Pedidos</small></div></div>
+                    <div class="col-6 col-xl-3"><div class="consumption-budget-kpi"><span>Sin referencia</span><strong id="consumptionStudioBudgetUnconfigured">0</strong><small>Facturación/límite sin configurar</small></div></div>
+                  </div>
+                  <div class="row g-3">
+                    <div class="col-xl-7"><div class="consumption-budget-chart-wrap"><canvas id="consumptionStudioBudgetChart"></canvas></div></div>
+                    <div class="col-xl-5"><div class="table-responsive consumption-budget-services-wrap"><table class="table admin-table align-middle mb-0"><thead><tr><th>Servicio</th><th>Total</th><th>Dentro</th><th>Sobre límite</th><th>Sobre 7%</th><th>Señal</th></tr></thead><tbody id="consumptionStudioBudgetServiceBody"></tbody></table></div></div>
+                  </div>
+                  <details class="consumption-budget-orders mt-3">
+                    <summary>Ver detalle de pedidos del período <span id="consumptionStudioBudgetOrderCount" class="badge text-bg-light ms-1">0</span></summary>
+                    <div class="table-responsive mt-2"><table class="table admin-table align-middle mb-0"><thead><tr><th>Pedido</th><th>Servicio</th><th>Fecha</th><th>Estado</th><th>Total</th><th>Límite</th><th>7%</th><th>Uso</th><th>Control</th></tr></thead><tbody id="consumptionStudioBudgetOrderBody"></tbody></table></div>
+                  </details>
+                </div>
               </div>
               <div class="consumption-studio-panel"><div class="consumption-studio-panel-head"><div><strong>Matriz mes a mes</strong><span>Mapa de intensidad para detectar rápidamente picos, caídas y recurrencias.</span></div><span class="badge text-bg-light">Más intensidad = mayor valor dentro de cada serie</span></div><div class="table-responsive"><table class="table admin-table align-middle mb-0 consumption-studio-matrix"><thead id="consumptionStudioMatrixHead"></thead><tbody id="consumptionStudioMatrixBody"></tbody></table></div></div>
             </div>
@@ -971,8 +1000,8 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <!-- Build: Analytics Studio + inteligencia avanzada de consumos + conciliación IVA + facturas IA + PWA 2026-11-04-v4-studio-multiselect -->
+  <!-- Build: Analytics Studio + inteligencia avanzada de consumos + conciliación IVA + facturas IA + PWA 2026-11-04-v5-studio-projection-limits -->
   <script src="config.js"></script>
-  <script src="app.js?v=20261104-studio-multiselect-v1"></script>
+  <script src="app.js?v=20261104-studio-projection-limits-v1"></script>
 </body>
 </html>

@@ -45,3 +45,12 @@ Volvé a ejecutar `consumos-supabase.sql` en Supabase → SQL Editor. La versió
 - Corrige un bloqueo donde Supabase devolvía datos pero el Studio no dibujaba las series porque el render se ejecutaba mientras el estado `loading` seguía activo.
 - Prioriza `admin_consumption_range_bundle` para evitar el límite de 1.000 filas de PostgREST en históricos amplios.
 - No requiere SQL adicional si ya se ejecutó `consumos-supabase.sql` de la versión anterior.
+
+
+## Analytics Studio: proyección y límites
+- Por defecto Analytics Studio sigue mostrando solo consumos confirmados (pedidos Entregados).
+- El switch **Mostrar proyección de pedidos abiertos** incorpora únicamente pedidos Pendientes, En preparación y Enviados como escenario proyectado; Cancelados quedan excluidos.
+- La línea continua representa consumo confirmado y la línea punteada representa **confirmado + proyección**. La proyección no altera los históricos ni las RPC de consumos.
+- El bloque **Control de límites de pedidos** clasifica cada pedido con las mismas referencias presupuestarias guardadas en el pedido: dentro del límite, sobre límite operativo, sobre 7% o sin configurar.
+- El control de límites usa el mes de creación del pedido para mostrar recurrencia operativa.
+- Esta versión no requiere un SQL adicional: utiliza pedidos e ítems que la administración ya carga en la app.
