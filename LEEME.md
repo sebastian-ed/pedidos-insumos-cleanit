@@ -39,3 +39,9 @@ La sección Consumos incluye un explorador visual multidimensional para cruzar p
 
 ### SQL requerido para conteos exactos
 Volvé a ejecutar `consumos-supabase.sql` en Supabase → SQL Editor. La versión actual amplía `admin_consumption_range_bundle` con `monthly_services` y `monthly_total`, necesarios para contar pedidos sin duplicarlos cuando se comparan servicios. No modifica pedidos ni borra datos.
+
+
+## Corrección Analytics Studio · render
+- Corrige un bloqueo donde Supabase devolvía datos pero el Studio no dibujaba las series porque el render se ejecutaba mientras el estado `loading` seguía activo.
+- Prioriza `admin_consumption_range_bundle` para evitar el límite de 1.000 filas de PostgREST en históricos amplios.
+- No requiere SQL adicional si ya se ejecutó `consumos-supabase.sql` de la versión anterior.

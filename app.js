@@ -7894,12 +7894,12 @@
       const bundleMonthly=Array.isArray(bundle.monthly)?bundle.monthly:[];
       const analyticsRows=!analyticsResult.error&&Array.isArray(analyticsResult.data)?analyticsResult.data:[];
 
-      // Para rangos personalizados, range_bundle es exacto a nivel día. Para presets mensuales,
-      // admin_consumption_analytics es la fuente más robusta y ya probada por el resto del tablero.
+      // range_bundle devuelve el histórico dentro de un único JSON y no queda truncado por
+      // el límite habitual de 1.000 filas de PostgREST. Por eso es la fuente preferida
+      // siempre que esté disponible. admin_consumption_analytics queda como fallback.
       const exactCustom=E.consumptionStudioPeriod?.value==='custom';
-      if(exactCustom&&bundleMonthly.length){monthlyRows=bundleMonthly;source='rango exacto';}
-      else if(analyticsRows.length){monthlyRows=analyticsRows;source='histórico mensual';}
-      else if(bundleMonthly.length){monthlyRows=bundleMonthly;source='rango consolidado';}
+      if(bundleMonthly.length){monthlyRows=bundleMonthly;source=exactCustom?'rango exacto':'histórico mensual completo';}
+      else if(analyticsRows.length){monthlyRows=analyticsRows;source=analyticsRows.length>=1000?'histórico mensual (límite 1.000 filas)':'histórico mensual';}
       else if(Array.isArray(S.consumptionAnalyticsRows)&&S.consumptionAnalyticsRows.length){
         monthlyRows=S.consumptionAnalyticsRows;source='caché del análisis de consumos';
       }
@@ -7954,6 +7954,10 @@
         E.consumptionStudioNotice.innerHTML=`<strong>Analytics Studio activo.</strong> Fuente: ${eh(source||'consumos')} · ${monthlyRows.length.toLocaleString('es-AR')} registros mensuales analizados.`;
         E.consumptionStudioNotice.classList.remove('d-none');
       }
+      // IMPORTANTE: el render no debe ejecutarse con la bandera de carga activa.
+      // Antes esta llamada quedaba descartada por el guard de renderConsumptionAnalyticsStudio(),
+      // dejando KPIs en "—" y 0 series aun cuando Supabase ya había devuelto datos.
+      S.consumptionStudioLoading=false;
       renderConsumptionAnalyticsStudio();
     }catch(error){
       console.error(error);
@@ -7964,7 +7968,9 @@
         S.consumptionStudioServiceRows=[];S.consumptionStudioTotalRows=[];S.consumptionStudioLoadedKey=key;
         syncConsumptionStudioServiceOptions();syncConsumptionStudioMaterialOptions();
         E.consumptionStudioNotice.innerHTML='<strong>Modo de respaldo activo.</strong> Analytics Studio está utilizando el histórico que ya cargó el módulo de Consumos. Gasto, cantidades y precios continúan disponibles.';
-        E.consumptionStudioNotice.classList.remove('d-none');renderConsumptionAnalyticsStudio();
+        E.consumptionStudioNotice.classList.remove('d-none');
+        S.consumptionStudioLoading=false;
+        renderConsumptionAnalyticsStudio();
       }else{
         E.consumptionStudioError.textContent=consumptionErrorMessage(error);E.consumptionStudioError.classList.remove('d-none');
       }

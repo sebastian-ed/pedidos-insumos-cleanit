@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cleanit-pedidos-20261104-studio-fallback-v1';
+const CACHE_NAME = 'cleanit-pedidos-20261104-studio-render-fix-v2';
 const CORE = ['./','./index.html','./styles.css','./app.js','./config.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/icon-180.png'];
 self.addEventListener('install', (event) => {
   self.skipWaiting();
