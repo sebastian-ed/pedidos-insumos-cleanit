@@ -955,6 +955,15 @@
   </div>
 
 
+
+  <!-- Investigación interactiva de hallazgos y Pareto -->
+  <div class="modal fade" id="consumptionAuditModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header"><div><span class="eyebrow">Auditoría operativa · datos confirmados</span><h5 class="modal-title" id="consumptionAuditTitle">Detalle del indicador</h5><small id="consumptionAuditPeriod" class="text-secondary"></small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+      <div class="modal-body"><p id="consumptionAuditDescription" class="text-secondary mb-3"></p><div id="consumptionAuditSummary" class="audit-metrics mb-3"></div><div class="table-responsive"><table class="table table-sm table-hover align-middle"><thead id="consumptionAuditHead"></thead><tbody id="consumptionAuditRows"></tbody></table></div><p class="small text-secondary mb-0">El análisis considera los consumos confirmados según el período y los filtros activos. Las señales requieren validación operativa: un incremento no implica por sí mismo un gasto injustificado.</p></div>
+      <div class="modal-footer"><button type="button" id="consumptionAuditCsv" class="btn btn-outline-success btn-sm"><i class="bi bi-download me-1"></i>Exportar detalle CSV</button><button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button></div>
+    </div></div>
+  </div>
   <div class="modal fade" id="consumptionServiceHistoryModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
@@ -1009,8 +1018,8 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <!-- Build: Analytics Studio + inteligencia avanzada de consumos + conciliación IVA + facturas IA + PWA 2026-11-06-v6-monthly-audit -->
+  <!-- Build: Analytics Studio + inteligencia avanzada de consumos + conciliación IVA + facturas IA + PWA 2026-11-06-v7-findings-drilldown -->
   <script src="config.js"></script>
-  <script src="app.js?v=20261106-monthly-audit-v6"></script>
+  <script src="app.js?v=20261106-findings-drilldown-v7"></script>
 </body>
 </html>

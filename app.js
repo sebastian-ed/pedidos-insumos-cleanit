@@ -154,6 +154,7 @@
     M.billingImport = new bootstrap.Modal(E.billingImportModal);
     M.user = new bootstrap.Modal(E.userModal);
     M.consumptionHistory = new bootstrap.Modal(E.consumptionHistoryModal);
+    M.consumptionAudit = new bootstrap.Modal(E.consumptionAuditModal);
     M.consumptionServiceHistory = new bootstrap.Modal(E.consumptionServiceHistoryModal);
     M.consumptionProductHistory = new bootstrap.Modal(E.consumptionProductHistoryModal);
     M.toast = new bootstrap.Toast(E.appToast, { delay: 3200 });
@@ -357,6 +358,8 @@
     E.exportConsumptionXlsxButton?.addEventListener('click', exportConsumptionXlsx);
     E.exportConsumptionPdfButton?.addEventListener('click', exportConsumptionPdf);
     E.adminConsumption.addEventListener('click', handleConsumptionInsightClick);
+    E.consumptionAuditModal.addEventListener('click', handleConsumptionInsightClick);
+    E.consumptionAuditCsv.addEventListener('click', exportConsumptionAuditCsv);
     E.consumptionServiceHistoryModal.addEventListener('click', handleConsumptionInsightClick);
     E.consumptionProductHistoryModal.addEventListener('click', handleConsumptionInsightClick);
     E.consumptionServiceHistoryMonths.addEventListener('change', loadConsumptionServiceHistory);
@@ -7500,7 +7503,7 @@
     return `<article class="consumption-alert-item ${severityClass}">
       <div class="consumption-alert-icon"><i class="bi ${ea(alert.icon)}"></i></div>
       <div class="consumption-alert-copy"><span>${eh(alert.serviceName)}</span><strong>${eh(alert.title)}</strong><p>${eh(alert.detail)}</p></div>
-      <div class="d-flex flex-column gap-1">${alert.itemName?`<button class="btn btn-sm btn-primary" type="button" data-consumption-studio-open="1" data-consumption-studio-service="${ea(alert.serviceId)}" data-consumption-studio-item="${ea(alert.itemName)}"><i class="bi bi-graph-up-arrow me-1"></i>Evolución</button>`:''}<button class="btn btn-sm btn-outline-primary" type="button" data-consumption-focus-service="${ea(alert.serviceId)}" ${alert.itemName ? `data-consumption-focus-item="${ea(alert.itemName)}"` : ''}>Ver detalle</button></div>
+      <div class="d-flex flex-column gap-1">${alert.itemName?`<button class="btn btn-sm btn-primary" type="button" data-consumption-studio-open="1" data-consumption-studio-service="${ea(alert.serviceId)}" data-consumption-studio-item="${ea(alert.itemName)}"><i class="bi bi-graph-up-arrow me-1"></i>Evolución</button>`:''}<button class="btn btn-sm btn-outline-primary" type="button" data-consumption-audit="Alerta operativa" data-consumption-audit-service="${ea(alert.serviceId)}" ${alert.itemName ? `data-consumption-audit-material="${ea(alert.itemName)}"` : ''}>Investigar</button></div>
     </article>`;
   }
 
@@ -7524,6 +7527,12 @@
   }
 
   function handleConsumptionInsightClick(event) {
+    const drill=event.target.closest('[data-consumption-audit]');
+    if(drill){openConsumptionAudit(drill.dataset.consumptionAudit,drill.dataset.consumptionAuditService||'',drill.dataset.consumptionAuditMaterial||'');return;}
+    if(E.consumptionAuditModal?.contains(event.target)){
+      const nested=event.target.closest('[data-consumption-service-history],[data-consumption-product-history]');
+      if(nested){event.preventDefault();const service=nested.dataset.consumptionServiceHistory;const product=nested.dataset.consumptionProductHistory;const name=nested.dataset.consumptionProductName||'';const productService=nested.dataset.consumptionProductService||'';E.consumptionAuditModal.addEventListener('hidden.bs.modal',()=>{if(service)openConsumptionServiceHistory(service);else if(product)openConsumptionProductHistory(product,name,productService);},{once:true});M.consumptionAudit.hide();return;}
+    }
     const studioButton=event.target.closest('[data-consumption-studio-open]');
     if(studioButton){
       openConsumptionAnalyticsStudio(studioButton.dataset.consumptionStudioService||'', studioButton.dataset.consumptionStudioMaterial||'', studioButton.dataset.consumptionStudioItem||'');
@@ -7841,8 +7850,8 @@
     if(total<=0)findings.push({level:'info',title:'Sin consumo confirmado',detail:'No hay pedidos Entregados dentro del período y filtros elegidos.'});
     if(highPriority.length)findings.push({level:'danger',title:'Servicios prioritarios para auditoría',detail:`${highPriority.length} servicio${highPriority.length===1?'':'s'} presentan señales combinadas. Prioridad: ${highPriority.slice(0,3).map((r)=>`${r.name} (${r.score}/100)`).join(' · ')}.`});
     if(services[0])findings.push({level:'info',title:'Servicio con mayor gasto',detail:`${services[0].name} concentra ${formatCurrency(services[0].amount)} (${formatPercent(total>0?services[0].amount/total*100:0)} del total).`});
-    if(paretoServices)findings.push({level:'normal',title:'Pareto de servicios',detail:`${paretoServices} de ${services.length} servicios explican aproximadamente el 80% del gasto. Ese grupo debería concentrar el control operativo.`});
-    if(paretoProducts)findings.push({level:'normal',title:'Pareto de insumos',detail:`${paretoProducts} de ${productsByAmount.length} insumos explican aproximadamente el 80% del gasto. Son los productos con mayor impacto para negociación, dosificación y stock.`});
+    if(paretoServices)findings.push({level:'normal',title:'Pareto de servicios',detail:`${paretoServices} de ${services.length} servicios alcanzan al menos el 80% del gasto. Ese grupo debería concentrar el control operativo.`});
+    if(paretoProducts)findings.push({level:'normal',title:'Pareto de insumos',detail:`${paretoProducts} de ${productsByAmount.length} insumos alcanzan al menos el 80% del gasto. Son los productos con mayor impacto para negociación, dosificación y stock.`});
     if(productsByAmount[0])findings.push({level:'info',title:'Insumo de mayor impacto económico',detail:`${productsByAmount[0].name} suma ${formatCurrency(productsByAmount[0].amount)} y representa ${formatPercent(total>0?productsByAmount[0].amount/total*100:0)} del gasto.`});
     const priceIncreases=productsByAmount.filter((r)=>r.priceVariation!=null&&r.priceVariation>=10).sort((a,b)=>b.priceVariation-a.priceVariation);
     if(priceIncreases.length)findings.push({level:'warning',title:'Aumentos de precio efectivo',detail:`${priceIncreases.slice(0,3).map((r)=>`${r.name} (${formatSignedPercent(r.priceVariation)})`).join(' · ')} aumentaron su precio efectivo. Separar este efecto del aumento de cantidades antes de atribuir el desvío a consumo.`});
@@ -7855,11 +7864,62 @@
     return{period:data.period,total,totalOrders,avgOrder:totalOrders?total/totalOrders:0,services,productsByAmount,productsByQuantity,productsByOrders,top5ServicesShare,top5ProductsShare,recurrences,durable,semidurable,highVolume,frequent,findings,priorities,highPriority,paretoServices,paretoProducts,priceIncreases,topService:services[0]||null,topProduct:productsByAmount[0]||null,mostQuantity:productsByQuantity[0]||null,mostFrequent:productsByOrders[0]||null};
   }
 
+
+  // Drill-down: los conteos Pareto se construyen con el mismo universo usado por el indicador.
+  let consumptionAuditExport=[];
+  function consumptionAuditMetric(label,value){return `<div><span>${eh(label)}</span><strong>${eh(String(value))}</strong></div>`;}
+  function openConsumptionAudit(kind,serviceId='',itemName='') {
+    if(!E.consumptionAuditModal)return;
+    const a=buildConsumptionManagementAnalysis(),total=a.total;
+    const svc=()=>a.services,prods=()=>a.productsByAmount;
+    let rows=[],title=kind,description='',productMode=false;
+    if(kind==='Pareto de servicios'){rows=svc().slice(0,a.paretoServices);description='Servicios ordenados por gasto descendente, hasta alcanzar al menos el 80% del gasto confirmado. Seleccioná un servicio para ver su detalle e historial.';}
+    else if(kind==='Pareto de insumos'){rows=prods().slice(0,a.paretoProducts);productMode=true;description='Insumos ordenados por gasto descendente, hasta alcanzar al menos el 80% del gasto confirmado. Las cantidades conservan su unidad y no se suman entre unidades diferentes.';}
+    else if(kind==='Servicios prioritarios para auditoría'){rows=a.highPriority;description='Servicios priorizados por combinación de presupuesto, variación y recurrencia. El puntaje no equivale a desperdicio comprobado.';}
+    else if(kind==='Servicio con mayor gasto'){rows=svc().slice(0,1);description='Mayor gasto confirmado en el período. Ingresá al historial para inspeccionar su desglose mensual.';}
+    else if(kind==='Insumo de mayor impacto económico'){rows=prods().slice(0,1);productMode=true;description='Insumo de mayor participación económica, con acceso a su consumo por servicio y por mes.';}
+    else if(kind==='Aumentos de precio efectivo'){rows=a.priceIncreases;productMode=true;description='Variaciones en el precio unitario efectivo respecto de la referencia anterior. No atribuirlas a mayor consumo sin comprobar cantidades y precios.';}
+    else if(kind==='Insumo más recurrente en pedidos'){rows=a.productsByOrders.slice(0,1);productMode=true;description='Insumo con mayor frecuencia de aparición en pedidos confirmados.';}
+    else if(kind==='Posibles fugas en elementos durables'){rows=a.durable;productMode=true;description='Reposiciones reiteradas de elementos durables por servicio e insumo. Revisar roturas, pérdidas, vida útil y stock físico.';}
+    else if(kind==='Semidurables con reposición reiterada'){rows=a.semidurable;productMode=true;description='Repeticiones por servicio e insumo que requieren evaluar reposición y vida útil.';}
+    else if(kind==='Volumen recurrente elevado'){rows=a.highVolume;productMode=true;description='Combinaciones servicio-insumo con cantidades reiteradamente elevadas según los umbrales configurados.';}
+    else if(kind==='Servicios con aumento fuerte'){rows=svc().filter(r=>r.variation!=null&&r.variation>=30).sort((x,y)=>y.variation-x.variation);description='Servicios con aumentos de al menos 30% frente a la referencia disponible. Analizá si hay estacionalidad, reposiciones extraordinarias o pedidos pendientes.';}
+    else if(kind==='Alerta operativa'){
+      const rec=a.recurrences.filter(r=>r.serviceId===serviceId&&(!itemName||r.itemName===itemName));
+      if(rec.length){rows=rec;productMode=true;description='Detalle de la señal para este servicio y este insumo: se muestran meses activos, pedidos y cantidades confirmadas.';}
+      else {rows=svc().filter(r=>r.serviceId===serviceId);description='Servicio asociado a la alerta. Abrí su historial para investigar pedidos y variaciones del período.';}
+    }
+    else if(kind==='Sin consumo confirmado'||kind==='Sin señales críticas por los umbrales actuales'){rows=[];description='No se encontraron registros de alerta con los filtros actuales. Podés modificar el período o seleccionar otro servicio.';}
+    else {rows=svc();description='Exploración de los servicios y consumos confirmados detrás del diagnóstico.';}
+    let cumulative=0;const list=rows.map((r,i)=>{
+      const amount=number(r.amount??r.totalAmount),name=r.name||r.itemName||r.serviceName||'Registro',service=r.serviceId||'',materialKey=r.materialKey||'',unit=r.unit||'unidad';cumulative+=amount;
+      const isRecurring=!!r.itemName;const isProduct=productMode&&!isRecurring;
+      const row={rank:i+1,name,service:r.serviceName||r.name||'',amount,share:total>0?100*amount/total:0,cumulative:total>0?100*cumulative/total:0,quantity:number(r.quantity??r.totalQuantity),orders:number(r.orders??r.totalOrders),unit,months:r.activeMonths||'',variation:r.variation??r.priceVariation??null,score:r.score??null};
+      const action=isRecurring?`<div class="d-flex gap-1 flex-wrap"><button class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(materialKey)}" data-consumption-product-name="${ea(name)}" data-consumption-product-service="${ea(service)}">Insumo</button><button class="btn btn-sm btn-outline-secondary" data-consumption-service-history="${ea(service)}">Servicio</button></div>`:isProduct?`<button class="btn btn-sm btn-outline-primary" data-consumption-product-history="${ea(materialKey)}" data-consumption-product-name="${ea(name)}">Evolución</button>`:`<button class="btn btn-sm btn-outline-primary" data-consumption-service-history="${ea(service)}">Histórico</button>`;
+      return {row,html:`<tr><td>${i+1}</td><td><strong>${eh(name)}</strong>${isRecurring?`<small class="d-block text-secondary">${eh(r.serviceName)}</small>`:r.sku?`<small class="d-block text-secondary">SKU ${eh(r.sku)}</small>`:''}</td><td class="text-end">${eh(formatCurrency(amount))}</td><td class="text-end">${formatPercent(row.share)}</td><td class="text-end">${formatPercent(row.cumulative)}</td><td>${isRecurring?`${formatQty(row.quantity)} ${eh(unit)} · ${formatQty(row.orders)} pedidos · ${row.months} meses`:(productMode?`${formatQty(row.quantity)} ${eh(unit)} · ${formatQty(row.orders)} pedidos`:`${formatQty(row.orders)} pedidos${row.variation!=null?` · ${formatSignedPercent(row.variation)}`:''}`)}</td><td>${action}</td></tr>`};
+    });
+    consumptionAuditExport=list.map(x=>x.row);
+    E.consumptionAuditTitle.textContent=title;E.consumptionAuditPeriod.textContent=`${a.period} · ${E.consumptionServiceFilter?.selectedOptions?.[0]?.textContent||'Todos los servicios'}`;
+    E.consumptionAuditDescription.textContent=description;
+    E.consumptionAuditSummary.innerHTML=consumptionAuditMetric('Registros',rows.length)+consumptionAuditMetric('Gasto del grupo',formatCurrency(rows.reduce((acc,r)=>acc+number(r.amount??r.totalAmount),0)))+consumptionAuditMetric('Participación del gasto',formatPercent(total>0?rows.reduce((acc,r)=>acc+number(r.amount??r.totalAmount),0)/total*100:0))+consumptionAuditMetric('Gasto total del período',formatCurrency(total));
+    E.consumptionAuditHead.innerHTML='<tr><th>#</th><th>Servicio / insumo</th><th class="text-end">Importe</th><th class="text-end">% total</th><th class="text-end">% acumulado</th><th>Magnitud / frecuencia</th><th>Detalle</th></tr>';
+    E.consumptionAuditRows.innerHTML=list.map(x=>x.html).join('')||'<tr><td colspan="7" class="text-center text-secondary p-4">No hay registros para este hallazgo y los filtros actuales.</td></tr>';
+    E.consumptionAuditCsv.disabled=!rows.length;
+    M.consumptionAudit.show();
+  }
+  function exportConsumptionAuditCsv(){
+    if(!consumptionAuditExport.length)return;
+    const header=['#','Nombre','Servicio','Importe','Porcentaje total','Porcentaje acumulado','Cantidad','Unidad','Pedidos','Meses activos','Variacion','Score'];
+    const values=consumptionAuditExport.map(r=>[r.rank,r.name,r.service,r.amount,r.share,r.cumulative,r.quantity,r.unit,r.orders,r.months,r.variation??'',r.score??'']);
+    const csv='\ufeff'+[header,...values].map(line=>line.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(';')).join('\r\n');
+    const link=document.createElement('a');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));link.href=url;link.download='CleanIt_Auditoria_Hallazgo.csv';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+  }
+
   function renderConsumptionManagementAnalysis(data) {
     if(!E.consumptionManagementAnalysis)return;const a=buildConsumptionManagementAnalysis(data);E.consumptionManagementPeriod.textContent=a.period;E.consumptionMgmtTop5Services.textContent=formatPercent(a.top5ServicesShare);E.consumptionMgmtTop5Products.textContent=formatPercent(a.top5ProductsShare);E.consumptionMgmtAvgOrder.textContent=formatCurrency(a.avgOrder);E.consumptionMgmtTopService.textContent=a.topService?.name||'—';E.consumptionMgmtTopServiceFoot.textContent=a.topService?`${formatCurrency(a.topService.amount)} · ${formatPercent(a.total>0?a.topService.amount/a.total*100:0)}`:'Sin datos';E.consumptionMgmtTopProduct.textContent=a.topProduct?.name||'—';E.consumptionMgmtTopProductFoot.textContent=a.topProduct?`${formatCurrency(a.topProduct.amount)} · ${formatQty(a.topProduct.quantity)} ${a.topProduct.unit}`:'Sin datos';E.consumptionMgmtRecurring.textContent=String(a.recurrences.length);E.consumptionMgmtRecurringFoot.textContent=`${a.durable.length} durables · ${a.semidurable.length} semidurables`;
-    E.consumptionManagementFindings.innerHTML=a.findings.map((f)=>`<article class="consumption-management-finding is-${ea(f.level)}"><i class="bi ${f.level==='danger'?'bi-exclamation-octagon-fill':f.level==='warning'?'bi-exclamation-triangle-fill':f.level==='normal'?'bi-check-circle-fill':'bi-info-circle-fill'}"></i><div><strong>${eh(f.title)}</strong><p>${eh(f.detail)}</p></div></article>`).join('');
+    E.consumptionManagementFindings.innerHTML=a.findings.map((f)=>`<article class="consumption-management-finding is-${ea(f.level)}"><i class="bi ${f.level==='danger'?'bi-exclamation-octagon-fill':f.level==='warning'?'bi-exclamation-triangle-fill':f.level==='normal'?'bi-check-circle-fill':'bi-info-circle-fill'}"></i><div><strong>${eh(f.title)}</strong><p>${eh(f.detail)}</p><button type="button" class="btn btn-sm btn-outline-primary mt-2" data-consumption-audit="${ea(f.title)}"><i class="bi bi-search me-1"></i>Investigar hallazgo</button></div></article>`).join('');
     const quantity=a.mostQuantity?`${a.mostQuantity.name}: ${formatQty(a.mostQuantity.quantity)} ${a.mostQuantity.unit}`:'Sin datos',frequent=a.mostFrequent?`${a.mostFrequent.name}: ${formatQty(a.mostFrequent.orders)} pedidos`:'Sin datos';
-    E.consumptionManagementQuantitative.innerHTML=`<div><span>Gasto total</span><strong>${eh(formatCurrency(a.total))}</strong></div><div><span>Pedidos entregados</span><strong>${formatQty(a.totalOrders)}</strong></div><div><span>Servicios activos</span><strong>${formatQty(a.services.length)}</strong></div><div><span>SKUs / productos</span><strong>${formatQty(a.productsByAmount.length)}</strong></div><div><span>Servicios para explicar 80% del gasto</span><strong>${a.paretoServices} de ${a.services.length}</strong></div><div><span>Insumos para explicar 80% del gasto</span><strong>${a.paretoProducts} de ${a.productsByAmount.length}</strong></div><div><span>Servicios prioridad alta</span><strong>${a.highPriority.length}</strong></div><div><span>Mayor cantidad de un insumo</span><strong>${eh(quantity)}</strong></div><div><span>Mayor frecuencia</span><strong>${eh(frequent)}</strong></div>`;
+    E.consumptionManagementQuantitative.innerHTML=`<div><span>Gasto total</span><strong>${eh(formatCurrency(a.total))}</strong></div><div><span>Pedidos entregados</span><strong>${formatQty(a.totalOrders)}</strong></div><div><span>Servicios activos</span><strong>${formatQty(a.services.length)}</strong></div><div><span>SKUs / productos</span><strong>${formatQty(a.productsByAmount.length)}</strong></div><button type="button" class="audit-metric-link" data-consumption-audit="Pareto de servicios"><span>Servicios para explicar 80% del gasto</span><strong>${a.paretoServices} de ${a.services.length}</strong><small>Explorar grupo</small></button><button type="button" class="audit-metric-link" data-consumption-audit="Pareto de insumos"><span>Insumos para explicar 80% del gasto</span><strong>${a.paretoProducts} de ${a.productsByAmount.length}</strong><small>Explorar grupo</small></button><div><span>Servicios prioridad alta</span><strong>${a.highPriority.length}</strong></div><div><span>Mayor cantidad de un insumo</span><strong>${eh(quantity)}</strong></div><div><span>Mayor frecuencia</span><strong>${eh(frequent)}</strong></div>`;
   }
 
 
