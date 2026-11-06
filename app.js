@@ -335,6 +335,16 @@
     E.consumptionStudioScale?.addEventListener('change', renderConsumptionAnalyticsStudio);
     E.consumptionStudioTopN?.addEventListener('change', handleConsumptionStudioSeriesModeChange);
     E.consumptionStudioProjectionToggle?.addEventListener('change', renderConsumptionAnalyticsStudio);
+    E.studioZoomMonths?.addEventListener('change',()=>{S.studioZoomOffset=0;renderConsumptionAnalyticsStudio();});
+    E.studioZoomBack?.addEventListener('click',()=>{S.studioZoomOffset=(S.studioZoomOffset||0)+1;renderConsumptionAnalyticsStudio();});
+    E.studioZoomForward?.addEventListener('click',()=>{S.studioZoomOffset=Math.max(0,(S.studioZoomOffset||0)-1);renderConsumptionAnalyticsStudio();});
+    E.studioExpandTrend?.addEventListener('click',()=>{E.studioTrendViewport?.classList.toggle('is-expanded');const expanded=E.studioTrendViewport?.classList.contains('is-expanded');E.studioExpandTrend.innerHTML=expanded?'Reducir gráfico':'<i class="bi bi-arrows-fullscreen me-1"></i>Ampliar';S.consumptionStudioCharts.trend?.resize();});
+    E.studioCompareSelected?.addEventListener('click',()=>{E.studioMonthlyInspector?.scrollIntoView({behavior:'smooth',block:'start'});});
+    ['studioInspectorService','studioInspectorMonthA','studioInspectorMonthB'].forEach((id)=>E[id]?.addEventListener('change',renderStudioMonthlyInspector));
+    E.studioInspectorSwap?.addEventListener('click',()=>{const a=E.studioInspectorMonthA.value;E.studioInspectorMonthA.value=E.studioInspectorMonthB.value;E.studioInspectorMonthB.value=a;renderStudioMonthlyInspector();});
+    E.studioInspectorExport?.addEventListener('click',exportStudioMonthlyInspectorCsv);
+    E.studioRadarSearch?.addEventListener('input',renderStudioRadar);
+    E.studioRadarRows?.addEventListener('click',(event)=>{const btn=event.target.closest('[data-studio-audit]');if(!btn)return;E.studioInspectorService.value=btn.dataset.studioAudit;renderStudioMonthlyInspector();E.studioMonthlyInspector?.scrollIntoView({behavior:'smooth',block:'start'});});
     E.consumptionStudioBudgetStatusFilter?.addEventListener('change', renderConsumptionStudioBudgetControl);
     E.consumptionStudioCustomPicker?.addEventListener('click', handleConsumptionStudioCustomPickerClick);
     E.consumptionStudioCustomPicker?.addEventListener('change', handleConsumptionStudioCustomPickerChange);
@@ -8307,6 +8317,8 @@
     renderConsumptionStudioInsights(data);
     renderConsumptionStudioSummary(data);
     renderConsumptionStudioMatrix(data);
+    renderStudioMonthlyInspector();
+    renderStudioRadar();
   }
 
   function destroyConsumptionStudioCharts() {
@@ -8317,16 +8329,81 @@
     if(!window.Chart){E.consumptionStudioNotice.textContent='No se pudo cargar el motor de gráficos Chart.js. Revisá la conexión.';E.consumptionStudioNotice.classList.remove('d-none');return;}
     const {metric,months,series,breakdown}=data;const budgetChart=S.consumptionStudioCharts.budget;['trend','ranking'].forEach((key)=>{try{S.consumptionStudioCharts[key]?.destroy();}catch{}S.consumptionStudioCharts[key]=null;});S.consumptionStudioCharts.budget=budgetChart||null;
     const labels=months.map(shortMonthLabel),projectionOn=consumptionStudioProjectionEnabled(),projection=projectionOn?buildConsumptionStudioProjectionSeries(data):null;
+    // Zoom temporal no modifica los cálculos: únicamente recorta los puntos visibles.
+    const zoomChoice=E.studioZoomMonths?.value||'6',zoomSize=zoomChoice==='all'?months.length:Math.min(months.length,Math.max(1,number(zoomChoice))),maxOffset=Math.max(0,months.length-zoomSize);
+    S.studioZoomOffset=Math.min(maxOffset,Math.max(0,S.studioZoomOffset||0));
+    const zoomStart=Math.max(0,months.length-zoomSize-S.studioZoomOffset),zoomEnd=zoomStart+zoomSize;
+    E.studioZoomBack.disabled=zoomStart===0;E.studioZoomForward.disabled=zoomEnd>=months.length;
+
     const datasets=[];
     series.forEach((s,i)=>{
       const firstPositive=s.values.find((v)=>v>0)||0;const actualValues=scale==='index'&&firstPositive>0?s.values.map((v)=>v>0?v/firstPositive*100:0):s.values;
       datasets.push({label:s.label,data:actualValues,rawValues:s.values,unit:s.meta.unit||'',borderColor:consumptionStudioColor(i,1),backgroundColor:consumptionStudioColor(i,.13),pointBackgroundColor:consumptionStudioColor(i,1),pointRadius:3,pointHoverRadius:5,borderWidth:2,tension:.25,spanGaps:true,fill:false,projection:false});
       if(projectionOn){const p=projection.byKey.get(s.key);if(p){const combined=months.map((m,idx)=>{const pb=p.months.get(m),actualBucket=s.months.get(m)||{amount:0,quantity:0,orders:0};if(metric.key==='price'){const aq=number(actualBucket.quantity),aa=number(actualBucket.amount),pq=number(pb?.quantity),pa=number(pb?.amount);return aq+pq>0?(aa+pa)/(aq+pq):0;}if(metric.key==='orders')return number(s.values[idx])+(pb?.orderIds?.size||0);return number(s.values[idx])+number(pb?.[metric.key]);});const first=combined.find((v)=>v>0)||0;const chartValues=scale==='index'&&first>0?combined.map((v)=>v>0?v/first*100:0):combined;datasets.push({label:`${s.label} · con proyección`,data:chartValues,rawValues:combined,unit:s.meta.unit||'',borderColor:consumptionStudioColor(i,.82),backgroundColor:'transparent',pointRadius:2,pointHoverRadius:4,borderWidth:2,borderDash:[7,5],tension:.25,spanGaps:true,fill:false,projection:true});}}
     });
-    S.consumptionStudioCharts.trend=new Chart(E.consumptionStudioTrendChart,{type:'line',data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:false},plugins:{legend:{position:'bottom',labels:{boxWidth:10,usePointStyle:true,padding:14}},tooltip:{callbacks:{label:(ctx)=>{const ds=ctx.dataset,raw=ds.rawValues?.[ctx.dataIndex]??ctx.raw;const real=consumptionStudioFormatValue(raw,metric,ds.unit);const prefix=ds.projection?'Proyectado total':'Confirmado';return scale==='index'?`${prefix} · ${ds.label}: ${real} · índice ${number(ctx.raw).toLocaleString('es-AR',{maximumFractionDigits:1})}`:`${prefix} · ${ds.label}: ${real}`;}}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,title:{display:true,text:scale==='index'?'Índice base 100':metric.axis},ticks:{callback:(v)=>scale==='index'?v:(metric.key==='amount'||metric.key==='price'?compactCurrency(v):formatQty(v))}}}}});
+    const visibleLabels=labels.slice(zoomStart,zoomEnd);
+    const visibleDatasets=datasets.map((dataset)=>({...dataset,data:dataset.data.slice(zoomStart,zoomEnd),rawValues:dataset.rawValues.slice(zoomStart,zoomEnd),serviceId:series.find((item)=>dataset.label===item.label||dataset.label===`${item.label} · con proyección`)?.meta?.serviceId||''}));
+    S.consumptionStudioCharts.trend=new Chart(E.consumptionStudioTrendChart,{type:'line',data:{labels:visibleLabels,datasets:visibleDatasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:false},plugins:{legend:{display:series.length<=10,position:'bottom',labels:{boxWidth:10,usePointStyle:true,padding:14}},tooltip:{callbacks:{label:(ctx)=>{const ds=ctx.dataset,raw=ds.rawValues?.[ctx.dataIndex]??ctx.raw;const real=consumptionStudioFormatValue(raw,metric,ds.unit);const prefix=ds.projection?'Proyectado total':'Confirmado';return scale==='index'?`${prefix} · ${ds.label}: ${real} · índice ${number(ctx.raw).toLocaleString('es-AR',{maximumFractionDigits:1})}`:`${prefix} · ${ds.label}: ${real}`;}}}},onClick:(_,elements)=>{if(!elements.length)return;const point=elements[0],dataset=visibleDatasets[point.datasetIndex],month=months[zoomStart+point.index];if(dataset?.serviceId)E.studioInspectorService.value=dataset.serviceId;if(month)E.studioInspectorMonthB.value=month;renderStudioMonthlyInspector();E.studioMonthlyInspector?.scrollIntoView({behavior:'smooth',block:'start'});},scales:{x:{grid:{display:false}},y:{beginAtZero:true,title:{display:true,text:scale==='index'?'Índice base 100':metric.axis},ticks:{callback:(v)=>scale==='index'?v:(metric.key==='amount'||metric.key==='price'?compactCurrency(v):formatQty(v))}}}}});
     const ranked=series.slice().sort((a,b)=>b.total-a.total),actualValues=ranked.map((s)=>s.total),rankDatasets=[{label:'Confirmado',data:actualValues,backgroundColor:ranked.map((_,i)=>consumptionStudioColor(i,.62)),borderColor:ranked.map((_,i)=>consumptionStudioColor(i,1)),borderWidth:1}];
     if(projectionOn){rankDatasets.push({label:'Confirmado + proyección',data:ranked.map((s)=>{const p=projection.byKey.get(s.key);if(!p)return s.total;if(metric.key==='price'){let a=0,q=0;months.forEach((m)=>{const ab=s.months.get(m)||{},pb=p.months.get(m)||{};a+=number(ab.amount)+number(pb.amount);q+=number(ab.quantity)+number(pb.quantity);});return q>0?a/q:0;}if(metric.key==='orders')return s.total+[...p.months.values()].reduce((sum,b)=>sum+(b.orderIds?.size||0),0);return s.total+[...p.months.values()].reduce((sum,b)=>sum+number(b[metric.key]),0);}),backgroundColor:ranked.map((_,i)=>consumptionStudioColor(i,.18)),borderColor:ranked.map((_,i)=>consumptionStudioColor(i,.9)),borderWidth:2,borderDash:[5,4]});}
     S.consumptionStudioCharts.ranking=new Chart(E.consumptionStudioRankingChart,{type:'bar',data:{labels:ranked.map((s)=>s.label),datasets:rankDatasets},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:projectionOn,position:'bottom'},tooltip:{callbacks:{label:(ctx)=>`${ctx.dataset.label}: ${consumptionStudioFormatValue(ctx.raw,metric,ranked[ctx.dataIndex]?.meta.unit||'')}`}}},scales:{x:{beginAtZero:true,ticks:{callback:(v)=>metric.key==='amount'||metric.key==='price'?compactCurrency(v):formatQty(v)}},y:{grid:{display:false}}},onClick:(_,elements)=>{if(!elements.length)return;const target=ranked[elements[0].index];if(breakdown==='service'&&target.meta.serviceId){E.consumptionStudioService.value=target.meta.serviceId;renderConsumptionAnalyticsStudio();}else if(breakdown==='product'&&target.meta.materialKey){E.consumptionStudioMaterial.value=target.meta.materialKey;renderConsumptionAnalyticsStudio();}}}});
+  }
+
+  function renderStudioRadar() {
+    if(!E.studioRadarRows||!S.consumptionStudioLoadedKey)return;
+    const months=consumptionStudioMonthKeys(),m1=months.at(-2),m2=months.at(-1);if(!m1||!m2){E.studioRadarRows.innerHTML='<tr><td colspan="7">Se necesitan al menos dos meses.</td></tr>';return;}
+    const map=new Map(),ensure=(id,name)=>{if(!map.has(id))map.set(id,{id,name:name||'Servicio',before:0,now:0,open:0});return map.get(id);};
+    const source=(S.consumptionStudioServiceRows||[]).length?S.consumptionStudioServiceRows:S.consumptionStudioRows;
+    source.forEach((r)=>{const m=String(r.consumption_month||'').slice(0,7);if(![m1,m2].includes(m))return;const item=ensure(r.service_id,r.service_name);item[m===m1?'before':'now']+=number(r.amount);});
+    (S.orders||[]).forEach((o)=>{if(!['pendiente','preparacion','enviado'].includes(o.status)||String(o.created_at||'').slice(0,7)!==m2)return;const service=serviceById(o.service_id);ensure(o.service_id,service?.name).open+=number(o.total_amount);});
+    const search=normalize(E.studioRadarSearch.value||'');const rows=[...map.values()].filter((r)=>!search||normalize(r.name).includes(search)).sort((a,b)=>(b.now+b.open-b.before)-(a.now+a.open-a.before));
+    E.studioRadarRows.innerHTML=rows.map((r)=>{const d=r.now+r.open-r.before,p=r.before>0?d/r.before*100:null;return `<tr><td><strong>${eh(r.name)}</strong></td><td>${eh(formatCurrency(r.before))}</td><td>${eh(formatCurrency(r.now))}</td><td>${eh(formatCurrency(r.open))}</td><td><strong>${eh(formatCurrency(r.now+r.open))}</strong></td><td class="${d>0?'studio-inspector-up':d<0?'studio-inspector-down':''}">${eh(formatCurrency(d))}${p===null?'<small class="d-block text-secondary">Sin base</small>':`<small class="d-block">${eh(formatSignedPercent(p))}</small>`}</td><td><button type="button" class="btn btn-sm btn-outline-primary" data-studio-audit="${ea(r.id)}">Auditar</button></td></tr>`;}).join('')||'<tr><td colspan="7" class="text-center text-secondary py-4">Sin servicios para este filtro.</td></tr>';
+  }
+
+  // Auditoría de variaciones: consumo confirmado consolidado y pedidos aún abiertos.
+  function studioInspectorData() {
+    const serviceId=E.studioInspectorService?.value||'',a=E.studioInspectorMonthA?.value||'',b=E.studioInspectorMonthB?.value||'';
+    const map=new Map();
+    const add=(item,month,projected)=>{
+      if(![a,b].includes(month))return;
+      const key=consumptionMaterialIdentity(item),label=item.item_name||'Insumo',unit=item.unit||'unidad';
+      const id=`${key}|${unit}`;
+      if(!map.has(id))map.set(id,{id,label,unit,sku:item.item_sku||'',aQty:0,bQty:0,aAmount:0,bAmount:0,openQty:0,openAmount:0});
+      const r=map.get(id);if(projected){if(month===b){r.openQty+=number(item.quantity);r.openAmount+=number(item.amount);}}else if(month===a){r.aQty+=number(item.quantity);r.aAmount+=number(item.amount);}else{r.bQty+=number(item.quantity);r.bAmount+=number(item.amount);}
+    };
+    (S.consumptionStudioRows||[]).filter((r)=>r.service_id===serviceId).forEach((r)=>add(r,String(r.consumption_month||'').slice(0,7),false));
+    const openOrders=(S.orders||[]).filter((o)=>o.service_id===serviceId&&['pendiente','preparacion','enviado'].includes(o.status)&&String(o.created_at||'').slice(0,7)===b);
+    const byOrder=new Map(openOrders.map((o)=>[o.id,o]));
+    const detail=[];
+    (S.orderItems||[]).forEach((item)=>{const order=byOrder.get(item.order_id);if(!order)return;const row={...item,item_name:item.item_name||item.custom_name||'Insumo',amount:number(item.line_total)>0?number(item.line_total):number(item.quantity)*number(item.unit_price)};add(row,b,true);detail.push({...row,order});});
+    const rows=[...map.values()].sort((x,y)=>Math.abs(y.bAmount+y.openAmount-y.aAmount)-Math.abs(x.bAmount+x.openAmount-x.aAmount)||x.label.localeCompare(y.label,'es'));
+    return{serviceId,a,b,rows,openOrders,detail};
+  }
+
+  function renderStudioMonthlyInspector() {
+    if(!E.studioInspectorService||!S.consumptionStudioLoadedKey)return;
+    const months=consumptionStudioMonthKeys(),services=[...new Map([...(S.services||[]).map((s)=>[s.id,s]),...(S.consumptionStudioRows||[]).map((r)=>[r.service_id,{id:r.service_id,name:r.service_name||'Servicio'}])].filter(([id])=>Boolean(id))).values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'es'));
+    const prevService=E.studioInspectorService.value,preferred=prevService||E.consumptionStudioService?.value||'';
+    E.studioInspectorService.innerHTML='<option value="">Seleccionar servicio...</option>'+services.map((service)=>`<option value="${ea(service.id)}">${eh(service.name)}</option>`).join('');
+    if(services.some((s)=>s.id===preferred))E.studioInspectorService.value=preferred;
+    const opts=months.map((m)=>`<option value="${ea(m)}">${eh(monthLabel(m))}</option>`).join('');
+    const chosenA=E.studioInspectorMonthA.value,chosenB=E.studioInspectorMonthB.value;
+    E.studioInspectorMonthA.innerHTML=opts;E.studioInspectorMonthB.innerHTML=opts;
+    E.studioInspectorMonthA.value=months.includes(chosenA)?chosenA:(months.at(-2)||months.at(-1)||'');
+    E.studioInspectorMonthB.value=months.includes(chosenB)?chosenB:(months.at(-1)||'');
+    if(!E.studioInspectorService.value){E.studioInspectorRows.innerHTML='<tr><td colspan="10" class="studio-inspector-empty">Seleccioná un servicio para examinar su composición mensual.</td></tr>';E.studioInspectorSummary.innerHTML='';E.studioInspectorOpenOrders.innerHTML='';return;}
+    const info=studioInspectorData(),sum=(key)=>info.rows.reduce((n,r)=>n+number(r[key]),0),a=sum('aAmount'),b=sum('bAmount'),opened=sum('openAmount'),delta=b-a,percentage=a>0?delta/a*100:null;
+    E.studioInspectorSummary.innerHTML=[['Confirmado · referencia',formatCurrency(a)],['Confirmado · evaluado',formatCurrency(b)],['Variación confirmada',`${formatCurrency(delta)}${percentage==null?' (sin base)':` (${formatSignedPercent(percentage)})`}`],['Pendiente de entrega',formatCurrency(opened)],['Escenario total evaluado',formatCurrency(b+opened)]].map(([k,v])=>`<div class="studio-inspector-stat"><small>${eh(k)}</small><strong>${eh(v)}</strong></div>`).join('');
+    E.studioInspectorRows.innerHTML=info.rows.map((r)=>{const dq=r.bQty-r.aQty,da=r.bAmount-r.aAmount;return `<tr><td><strong>${eh(r.label)}</strong>${r.sku?`<small class="d-block text-secondary">${eh(r.sku)}</small>`:''}</td><td>${eh(r.unit)}</td><td>${eh(formatQty(r.aQty))}</td><td>${eh(formatQty(r.bQty))}</td><td class="${dq>0?'studio-inspector-up':dq<0?'studio-inspector-down':''}">${eh((dq>0?'+':'')+formatQty(dq))}</td><td>${eh(formatCurrency(r.aAmount))}</td><td>${eh(formatCurrency(r.bAmount))}</td><td class="${da>0?'studio-inspector-up':da<0?'studio-inspector-down':''}">${eh(formatCurrency(da))}</td><td>${eh(formatQty(r.openQty))}</td><td>${eh(formatCurrency(r.openAmount))}</td></tr>`;}).join('')||'<tr><td colspan="10" class="studio-inspector-empty">Sin insumos registrados en estos meses.</td></tr>';
+    E.studioInspectorOpenOrders.innerHTML=info.openOrders.map((o)=>{const items=info.detail.filter((r)=>r.order.id===o.id);return `<div class="studio-order-card"><strong>${eh(o.order_code||String(o.id).slice(0,8))}</strong> · ${eh(STATUS_LABELS[o.status]||o.status)} · ${eh(String(o.created_at||'').slice(0,10))} · ${eh(formatCurrency(o.total_amount))}${items.length?`<ul>${items.map((r)=>`<li>${eh(r.item_name)} — ${eh(formatQty(r.quantity))} ${eh(r.unit||'unidad')} · ${eh(formatCurrency(r.amount))}</li>`).join('')}</ul>`:'<div class="text-secondary">Sin artículos cargados en memoria.</div>'}</div>`;}).join('')||'<p class="text-secondary small">No hay pedidos abiertos para este servicio en el mes evaluado.</p>';
+  }
+
+  function exportStudioMonthlyInspectorCsv() {
+    const info=studioInspectorData();if(!info.serviceId)return toast('Seleccioná un servicio antes de exportar.','error');
+    const name=E.studioInspectorService.selectedOptions[0]?.textContent||'Servicio';
+    const data=[['Servicio','Mes referencia','Mes evaluado','Insumo','SKU','Unidad','Cantidad referencia','Cantidad evaluado','Diferencia cantidad','Gasto referencia','Gasto evaluado','Diferencia gasto','Cantidad abierta evaluado','Proyección abierta evaluado'],...info.rows.map((r)=>[name,info.a,info.b,r.label,r.sku,r.unit,r.aQty,r.bQty,r.bQty-r.aQty,r.aAmount,r.bAmount,r.bAmount-r.aAmount,r.openQty,r.openAmount])];
+    const csv='\uFEFF'+data.map((row)=>row.map((value)=>`"${String(value??'').replace(/"/g,'""')}"`).join(';')).join('\r\n');
+    const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`auditoria-insumos-${info.a}-vs-${info.b}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
 
   function renderConsumptionStudioInsights(data) {
