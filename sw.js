@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cleanit-pedidos-20261106-audit-drilldown-v7';
+const CACHE_NAME = 'cleanit-pedidos-20261106-audit-scroll-v8';
 const CORE = ['./','./index.html','./styles.css','./app.js','./config.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/icon-180.png'];
 self.addEventListener('install', (event) => {
   self.skipWaiting();

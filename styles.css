@@ -398,3 +398,60 @@
 .audit-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.audit-metrics>div{border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:12px}.audit-metrics span{display:block;color:#64748b;font-size:.72rem}.audit-metrics strong{display:block;font-size:.95rem;margin-top:4px}
 .audit-metric-link{border:1px solid #b8d2ef;background:#f5faff;border-radius:9px;padding:9px;text-align:left;width:100%;cursor:pointer;color:inherit}.audit-metric-link span,.audit-metric-link strong,.audit-metric-link small{display:block}.audit-metric-link small{color:#0d6efd;font-size:.68rem}.audit-metric-link:hover{background:#e7f2ff}
 @media(max-width:700px){.audit-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* V8: scrolling consistente del detalle Pareto y hallazgos */
+#consumptionAuditModal .modal-dialog {
+  height: min(92dvh, 950px);
+  max-height: calc(100dvh - 24px);
+  margin-top: max(12px, 3dvh);
+  margin-bottom: max(12px, 3dvh);
+}
+#consumptionAuditModal .modal-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+#consumptionAuditModal .modal-header,
+#consumptionAuditModal .modal-footer {
+  flex: 0 0 auto;
+  background: #fff;
+  z-index: 2;
+}
+#consumptionAuditModal .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-width: auto;
+  scrollbar-color: #8fa9ca #edf2f8;
+}
+#consumptionAuditModal .modal-body::-webkit-scrollbar,
+#consumptionAuditModal .consumption-audit-table-scroll::-webkit-scrollbar {width: 11px; height: 11px;}
+#consumptionAuditModal .modal-body::-webkit-scrollbar-thumb,
+#consumptionAuditModal .consumption-audit-table-scroll::-webkit-scrollbar-thumb {background: #8fa9ca; border-radius: 10px; border: 2px solid #edf2f8;}
+#consumptionAuditModal .modal-body::-webkit-scrollbar-track,
+#consumptionAuditModal .consumption-audit-table-scroll::-webkit-scrollbar-track {background: #edf2f8;}
+#consumptionAuditModal .consumption-audit-table-scroll {
+  max-height: min(46dvh, 460px);
+  overflow-x: auto;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scrollbar-width: auto;
+  scrollbar-color: #8fa9ca #edf2f8;
+  border: 1px solid #e3eaf3;
+  border-radius: 10px;
+}
+#consumptionAuditModal .consumption-audit-table-scroll thead th {
+  position: sticky; top: 0; z-index: 1; background: #f4f7fc;
+  box-shadow: inset 0 -1px #e1e8f1;
+}
+#consumptionAuditModal .modal-footer {border-top: 1px solid #e3eaf3;}
+@media(max-width: 767px) {
+  #consumptionAuditModal .modal-dialog {height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); margin: 8px;}
+  #consumptionAuditModal .consumption-audit-table-scroll {max-height: 48dvh;}
+  #consumptionAuditModal .modal-header {padding: 12px 14px;}
+  #consumptionAuditModal .modal-body {padding: 12px 14px;}
+}
